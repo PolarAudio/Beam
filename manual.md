@@ -42,6 +42,7 @@
 - [Addressing](#addressing)
 - [Setting channels by hand](#setting-channels-by-hand)
 - [Placing things](#placing-things)
+- [Arranging a selection](#arranging-a-selection)
 - [Groups and structures](#groups-and-structures)
 - [The visualizer](#the-visualizer)
 - [Moving head beams](#moving-head-beams)
@@ -114,7 +115,7 @@ Beam is a receiver and a previewer. On its own it will show you a beautifully pl
 
 Genuinely alpha. Not "we're being modest" alpha.
 
-Concretely: features move and get renamed. The showfile format is JSON and can change between versions without a migration. There are rough edges in the UI you will find within ten minutes. Some things are half-built and visible anyway — the **objects** tab in the patch bay has an "import object" button that's deliberately disabled, because the feature isn't there yet.
+Concretely: features move and get renamed. The showfile format is JSON and can change between versions without a migration. There are rough edges in the UI you will find within ten minutes. Some things are half-built and visible anyway.
 
 What it *does* do, it does properly. Art-Net in, 512 universes, accurate patching including pixels that straddle universe boundaries, and the MadMapper export are all real and working. It's the surrounding polish that's missing.
 
@@ -395,7 +396,7 @@ The list down the left side, holding every fixture in the show. Two buttons at t
 **new** opens the patch dialog, which has three tabs:
 
 - **fixtures** — the fixture library. Real profiles plus any generics you've built. Filterable.
-- **objects** — non-emitting scenery. Trusses, staging, decks. A truss has no channels, so nothing here gets addressed. *The "import object" button is disabled — this feature isn't finished.*
+- **objects** — non-emitting scenery. Trusses, staging, decks. A truss has no channels, so nothing here gets addressed. **import object** copies a GLB, OBJ, FBX or STL file into your object library, with an OBJ's materials and textures. Only GLB states its units and which way is up, so the dialog asks for both and shows the model's size in metres as you choose: a truss that reads three kilometres long is in millimetres.
 - **structures** — saved groups, ready to patch again as a unit. You put things here with **save as structure** in a group's widget.
 
 Two more buttons live under the fixtures list:
@@ -496,6 +497,26 @@ Fields are **colour-coded by axis**, consistently, so you can see which is which
 
 **Alt+click reaches inside.** Clicking a fixture that belongs to a structure selects the whole structure, which is what you want for moving it. Hold **Alt** and the click lands on the individual fixture instead: its widgets open, so you can address it, set its channels or change its settings without breaking the structure up. No handle appears — the structure is still the thing you move.
 
+## Arranging a selection
+
+Select two or more fixtures or structures and press **arrange** in the patch bay. The panel lays the whole selection out at once; a new selection closes it. The shape shows as you type; nothing is changed until you press **Apply**, and **Cancel** puts everything back. One Ctrl+Z undoes a whole Apply.
+
+**Shapes**
+- **Line** — **Spacing X / Y / Z** is the step between neighbours, in metres. The line is centred where the selection was.
+- **Circle** — **Radius**, **End radius** and **Sweep °**. A sweep of 360 is a closed ring; less is an arc with a fixture at each end; 720 goes round twice. Set **End radius** different from **Radius** and the ring becomes a spiral: the first fixture sits on the radius, the last on the end radius. End radius follows Radius until you change it.
+- **Grid** — **Columns**, **Gap across**, **Gap down**, and **Snake rows** to run alternate rows backwards.
+- **Align** — per axis, leave it, line everything up (to the average, lowest, highest, first or last), or spread it evenly without changing the order.
+
+**Positions**
+- **Replace** — the shape is built around the middle of the selection, and where each item stood is ignored.
+- **Add** — the shape is added to where each item already stands. This is how you stack shapes. A helix: arrange a circle and Apply, then choose **Line**, set **Positions** to **Add**, set only **Spacing Z**, and Apply again. Each fixture climbs by that much more than the one before.
+
+Add turns on **Keep heading**, because a second pass usually shouldn't re-aim what the first one set up. Untick it if you want it to.
+
+**Heading** — **Heading °** aims every item, measured from **the shape** (for a circle 0° is outward, 90° along the ring, 180° inward) or from **the world**. Only the turn about the vertical changes, so a head hanging upside down stays hanging. **Keep heading** leaves facing alone.
+
+**Order** — which item goes first: **Address**, **Name** or **Selection**, and **Reverse**. Address is the default, so a patched run goes round a circle in order. The panel opens on the order you last applied. An Add pass hands its steps out in this order too, so if it differs from the pass underneath, the panel says so — mixing orders scrambles the result.
+
 ## Groups and structures
 
 A group is a named set of fixtures. It gives you:
@@ -535,6 +556,8 @@ Each group owns its mappings independently — one group can go out as a front e
 ## Moving head beams
 
 A beam is light scattered by the haze, so with haze off there is no beam, only the pool it throws. The air and the pool are drawn from the same numbers, so they always agree on where the light is.
+
+- **Brightness.** A head is as bright as its profile says: its lumens spread over its stated beam angle. A profile that gives only power is taken at 22 lumens per watt, and a lumen figure that makes no sense for the stated power is ignored in favour of the power. So an 80 W LED spot is a fraction of a big discharge head, and a narrow beam fixture is very bright in a small spot. Zooming in concentrates the same light into a smaller spot.
 
 - **Width and edge.** The fixture's stated angle is the edge of the light. The focus channel sets how soft that edge is, from nearly hard at full focus to soft halfway in. A fixture without a focus channel gets a middling edge.
 - **Where it stops.** Each lit head keeps a small depth view from its lens. The beam stops at the first thing it hits, and the pool is shadowed by it, so a wall ends both and a cube in the beam casts a shadow on the floor. With hundreds of heads moving, only a few of those views are redrawn each frame, the most visible first; a beam can briefly lag where it cuts a truss.

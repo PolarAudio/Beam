@@ -467,6 +467,23 @@ class Projector {
   }
 
   /**
+   * Whether the fixture is hidden from the scene: not drawn, and throwing
+   * nothing -- `projection()` answers null, so neither the picture nor its
+   * depth tile is made.
+   * Picking skips it by asking the fixture, not this.
+   *
+   * @type {Boolean}
+   */
+  set hidden(state) {
+    this._hidden = !!state;
+    this._dummy.visible = !this._hidden;
+  }
+
+  get hidden() {
+    return !!this._hidden;
+  }
+
+  /**
    * Drops a projector and everything it owns.
    *
    * The shared geometries and materials are left alone -- they belong to the
@@ -505,6 +522,7 @@ class Projector {
    * @returns {Object|null} `{ camera, lensMatrix, rect, lumensPerArea, gain }`
    */
   projection() {
+    if (this._hidden) return null;
     const connector = this._connectorAt();
     if (!connector) return null;
 

@@ -63,13 +63,22 @@
         v-if="hasRadius"
         v-model="radius"
         class="object_params_field"
-        label="Radius"
+        :label="type === 'tube' ? 'Outer radius' : 'Radius'"
         :min="0.001"
         :max="100"
         :precision="3"
       />
       <uk-num-input
-        v-if="type === 'cylinder'"
+        v-if="type === 'tube'"
+        v-model="thickness"
+        class="object_params_field"
+        label="Wall"
+        :min="0.001"
+        :max="100"
+        :precision="3"
+      />
+      <uk-num-input
+        v-if="hasArc"
         v-model="height"
         class="object_params_field"
         label="Height"
@@ -78,6 +87,20 @@
         :precision="3"
       />
     </uk-flex>
+
+    <template v-if="hasArc">
+      <span class="object_params_section">Arc (°)</span>
+      <uk-flex :gap="8">
+        <uk-num-input
+          v-model="angle"
+          class="object_params_field"
+          label="Angle"
+          :min="1"
+          :max="360"
+          :precision="1"
+        />
+      </uk-flex>
+    </template>
 
     <span class="object_params_section">Colour</span>
     <uk-colour-input
@@ -90,7 +113,7 @@
 </template>
 
 <script>
-import { PRIMITIVE_TYPES } from '@/plugins/visualizer/primitive_geometry';
+import { PRIMITIVE_TYPES, arcDegrees } from '@/plugins/visualizer/primitive_geometry';
 
 /**
  * @file The fields that define a created object.
@@ -108,7 +131,7 @@ import { PRIMITIVE_TYPES } from '@/plugins/visualizer/primitive_geometry';
 
 /** The shapes this can describe, in the order they are offered. */
 export const OBJECT_TYPES = PRIMITIVE_TYPES;
-const TYPE_LABELS = ['Cube', 'Cylinder', 'Sphere', 'Plane'];
+const TYPE_LABELS = ['Cube', 'Cylinder', 'Tube', 'Sphere', 'Plane'];
 
 /** A neutral grey, so a new object reads as geometry rather than as a colour. */
 export const DEFAULT_OBJECT_COLOR = '#b0b4b8';
@@ -131,7 +154,18 @@ export function defaultSize(type, from = {}) {
   };
   switch (type) {
     case 'cylinder':
-      return { radius: take(from.radius, 0.5), height: take(from.height, 1) };
+      return {
+        radius: take(from.radius, 0.5),
+        height: take(from.height, 1),
+        angle: arcDegrees(from.angle),
+      };
+    case 'tube':
+      return {
+        radius: take(from.radius, 0.5),
+        thickness: take(from.thickness, 0.05),
+        height: take(from.height, 1),
+        angle: arcDegrees(from.angle),
+      };
     case 'sphere':
       return { radius: take(from.radius, 0.5) };
     case 'plane':
@@ -188,7 +222,11 @@ export default {
       return this.type === 'cube' || this.type === 'plane';
     },
     hasRadius() {
-      return this.type === 'cylinder' || this.type === 'sphere';
+      return this.hasArc || this.type === 'sphere';
+    },
+    /** Swept about its axis, so it has a height and an angle. */
+    hasArc() {
+      return this.type === 'cylinder' || this.type === 'tube';
     },
     /**
      * Whether the name is still the one this type suggested.
@@ -246,6 +284,14 @@ export default {
     height: {
       get() { return this.sizeField('height', 1); },
       set(value) { this.emitSize({ height: value }); },
+    },
+    thickness: {
+      get() { return this.sizeField('thickness', 0.05); },
+      set(value) { this.emitSize({ thickness: value }); },
+    },
+    angle: {
+      get() { return arcDegrees((this.modelValue.size || {}).angle); },
+      set(value) { this.emitSize({ angle: arcDegrees(value) }); },
     },
   },
   methods: {

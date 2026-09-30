@@ -79,8 +79,8 @@
             v-if="activeKind === 'objects'"
             icon="export"
             label="import object"
-            title="Not built yet. Copy a .glb into Library/Objects and it appears here."
-            disabled
+            title="Copy a GLB, OBJ, FBX or STL model into the object library"
+            @click="importObject"
           />
         </uk-flex>
       </uk-flex>
@@ -332,6 +332,11 @@
       :existing="objects"
       @created="handleObjectCreated"
     />
+    <import-object-popup
+      v-model="importObjectPopupState"
+      :pending="pendingImport"
+      @imported="handleObjectImported"
+    />
   </uk-popup>
 </template>
 
@@ -343,6 +348,7 @@ import Fixture from '@/models/DMX/fixture.model';
 import { normaliseMatrixProfile } from '@/models/DMX/ofl_matrix';
 import CreateFixturePopup from './popup.create.fixture.vue';
 import CreateObjectPopup from './popup.create.object.vue';
+import ImportObjectPopup from './popup.import.object.vue';
 import ObjectBrowser from './object.browser.vue';
 import { generateMissing } from '@/plugins/visualizer/thumbnailer';
 
@@ -372,6 +378,7 @@ export default {
   components: {
     CreateFixturePopup,
     CreateObjectPopup,
+    ImportObjectPopup,
     ObjectBrowser,
   },
   mixins: [PopupMixin],
@@ -394,6 +401,9 @@ export default {
       headerData: { title: 'Add to show' },
       createPopupState: false,
       createObjectPopupState: false,
+      importObjectPopupState: false,
+      /** The model being imported: `{ id, entry, skipped }` while its dialog is open. */
+      pendingImport: null,
       /** Guards the preview render, so opening the tab twice does not run it twice. */
       thumbnailing: false,
       /**
@@ -404,14 +414,7 @@ export default {
       activeKind: 'fixtures',
       /** Path most recently exported to, shown briefly on the button. */
       exported: false,
-      /**
-       * The list for whichever kind is showing.
-       *
-       * Held as data and rebuilt whole, never as a computed: uk-list rewrites
-       * the array it is given, wrapping each sub-item in place, so handing it
-       * one that has already been through that produces doubly wrapped entries
-       * and a row with no name.
-       */
+      /** The list for whichever kind is showing. */
       items: [],
       selectedStructure: null,
       /**
@@ -745,10 +748,9 @@ export default {
             const position_tmp = {};
             const rotation_tmp = {};
             const chCount = this.modeChannelCount;
-            // Left as the profile's own name means the user did not name it,
-            // so number it instead. Named fixtures are left exactly as typed.
-            const profileName = this.fixture.OFLData.name;
-            const autoName = this.fixture.name === profileName;
+            // The name as typed, or the profile's when the field was cleared.
+            // Each fixture is numbered under it as it joins the pool.
+            const name = (this.fixture.name || '').trim() || this.fixture.OFLData.name;
             Object.assign(position_tmp, this.fixture.position);
             Object.assign(rotation_tmp, this.fixture.rotation);
             // Asked for rather than multiplied out: a fixture keeping its
@@ -773,11 +775,8 @@ export default {
                 y: rotation_tmp.y + this.rotationOffsets.y * i,
                 z: rotation_tmp.z + this.rotationOffsets.z * i,
               };
-              // Recomputed per fixture: each one added raises the highest
-              // number, so a batch numbers itself as it goes.
-              this.fixture.name = autoName
-                ? this.$show.fixturePool.numberedName(profileName)
-                : this.$show.fixturePool.uniqueName(this.fixture.name);
+              this.fixture.name = name;
+              this.fixture.instance = null;
               const fixture = this.$show.fixturePool.addRaw(
                 JSON.parse(
                   JSON.stringify(this.fixture),
@@ -1067,6 +1066,39 @@ export default {
     confirmObjectModel(model) {
       this.selectObjectModel(model);
       this.submit();
+    },
+    /**
+     * Picks a model file, copies it into the library and opens the dialog that
+     * describes it.
+     *
+     * @public
+     * @async
+     */
+    async importObject() {
+      if (!window.library || !window.library.importObject) return;
+      const result = await window.library.importObject();
+      if (!result || !result.ok) {
+        if (result && result.reason && result.reason !== 'cancelled') {
+          // eslint-disable-next-line no-console
+          console.warn(`[import] ${result.reason}`);
+        }
+        return;
+      }
+      this.pendingImport = result;
+      this.importObjectPopupState = true;
+    },
+    /**
+     * Shows a model just imported, picked and ready to place.
+     *
+     * @public
+     * @async
+     * @param {String} key its library key
+     */
+    async handleObjectImported(key) {
+      this.pendingImport = null;
+      await this.loadObjects();
+      const model = this.objects.find((entry) => entry.key === key);
+      if (model) this.selectObjectModel(model);
     },
     async selectItem(item) {
       if (this.activeKind === 'fixtures') {

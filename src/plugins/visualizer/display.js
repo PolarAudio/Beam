@@ -579,6 +579,22 @@ class Display {
   }
 
   /**
+   * Whether the fixture is hidden from the scene: not drawn, and its screen with
+   * it. A display puts no light anywhere else.
+   * Picking skips it by asking the fixture, not this.
+   *
+   * @type {Boolean}
+   */
+  set hidden(state) {
+    this._hidden = !!state;
+    this._dummy.visible = !this._hidden;
+  }
+
+  get hidden() {
+    return !!this._hidden;
+  }
+
+  /**
    * Rebuilds every display, for when the source or a connector changes.
    *
    * @static

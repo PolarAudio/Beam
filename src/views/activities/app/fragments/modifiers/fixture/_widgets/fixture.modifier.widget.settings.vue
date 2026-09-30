@@ -2,7 +2,7 @@
   <uk-widget
     class="fixture_settings"
     dockable
-    :header="header"
+    :header="headerShown"
   >
     <uk-flex
       v-if="fixture"
@@ -10,14 +10,26 @@
       col
       class="fixture_settings_body"
     >
-      <uk-flex :gap="8">
+      <uk-flex
+        v-if="!many"
+        :gap="8"
+      >
         <uk-txt-input
           v-model.lazy="name"
           style="flex: 1"
           label="Name"
         />
       </uk-flex>
-      <uk-flex :gap="8">
+      <span
+        v-if="many"
+        class="hint"
+      >{{ targets.length }} fixtures of one model: a field shows * where they differ, and
+        what you set is written to all of them. Addresses and names are set one
+        fixture at a time.</span>
+      <uk-flex
+        v-if="!many"
+        :gap="8"
+      >
         <uk-num-input
           v-model.lazy="universe"
           style="width: 70px"
@@ -45,6 +57,7 @@
       <uk-checkbox
         v-show="canSpan"
         v-model="universeAligned"
+        :mixed="alignedMixed"
         label="Prevent cross universe pixels"
       />
       <uk-txt-input
@@ -54,15 +67,28 @@
       />
       <uk-select-input
         v-if="fixture.modeIndex != null"
-        v-model="fixture.modeIndex"
+        :model-value="modeShown"
         label="Mode"
-        :options="fixture.modeNames"
+        :options="modeOptions"
+        @input="pickMode"
       />
       <uk-checkbox
         v-if="canCastShadow"
         v-model="castsShadow"
+        :mixed="shadowMixed"
         :disabled="shadowBudgetSpent"
         :label="shadowLabel"
+      />
+      <uk-num-input
+        v-if="hasManualFocus"
+        :mixed="focusMixed"
+        :model-value="fixture.focus"
+        style="width: 92px"
+        label="Focus %"
+        :precision="0"
+        :min="0"
+        :max="100"
+        @update:model-value="writeFocus"
       />
 
       <!-- A video device's own settings live here for the same reason the
@@ -86,6 +112,7 @@
           >
             <uk-num-input
               v-show="byHand('zoom')"
+              :mixed="isMixed('zoom')"
               :model-value="read('zoom')"
               style="width: 92px"
               label="Throw ratio"
@@ -104,6 +131,7 @@
           >
             <uk-num-input
               v-show="byHand('shiftH')"
+              :mixed="isMixed('shiftH')"
               :model-value="read('shiftH')"
               style="width: 92px"
               label="Shift H %"
@@ -115,6 +143,7 @@
             />
             <uk-num-input
               v-show="byHand('shiftV')"
+              :mixed="isMixed('shiftV')"
               :model-value="read('shiftV')"
               style="width: 92px"
               label="Shift V %"
@@ -136,6 +165,7 @@
             class="row"
           >
             <uk-num-input
+              :mixed="isMixed('blendLeft')"
               :model-value="read('blendLeft')"
               style="width: 72px"
               label="Left"
@@ -145,6 +175,7 @@
               @update:model-value="writeDevice('blendLeft', $event)"
             />
             <uk-num-input
+              :mixed="isMixed('blendRight')"
               :model-value="read('blendRight')"
               style="width: 72px"
               label="Right"
@@ -154,6 +185,7 @@
               @update:model-value="writeDevice('blendRight', $event)"
             />
             <uk-num-input
+              :mixed="isMixed('blendTop')"
               :model-value="read('blendTop')"
               style="width: 72px"
               label="Top"
@@ -163,6 +195,7 @@
               @update:model-value="writeDevice('blendTop', $event)"
             />
             <uk-num-input
+              :mixed="isMixed('blendBottom')"
               :model-value="read('blendBottom')"
               style="width: 72px"
               label="Bottom"
@@ -182,7 +215,8 @@
              Dream and LaserCube name a device by its address alone, so one
              laser each, while IDN offers a named service per laser at one
              address. -->
-        <template v-if="isLaser">
+        <!-- Not for several at once: an address is where one device lives. -->
+        <template v-if="isLaser && !many">
           <uk-flex
             :gap="8"
             class="row"
@@ -252,6 +286,7 @@
             />
             <uk-num-input
               v-show="byHand('rate')"
+              :mixed="isMixed('rate')"
               :model-value="Number(read('rate')) || 0"
               style="flex: 1 1 72px; min-width: 72px"
               label="Rate Hz"
@@ -262,6 +297,7 @@
             />
             <uk-num-input
               v-show="byHand('duration')"
+              :mixed="isMixed('duration')"
               :model-value="Math.round(read('duration') || 0)"
               style="flex: 1 1 72px; min-width: 72px"
               label="Duration ms"
@@ -277,6 +313,7 @@
           >
             <uk-num-input
               v-show="byHand('dimmer')"
+              :mixed="isMixed('dimmer')"
               :model-value="Math.round(read('dimmer') || 0)"
               style="flex: 1 1 72px; min-width: 72px"
               label="Dimmer %"
@@ -287,6 +324,7 @@
             />
             <uk-checkbox
               v-show="byHand('blinder')"
+              :mixed="isMixed('blinder')"
               :model-value="!!read('blinder')"
               label="Blinder"
               @update:model-value="writeDevice('blinder', $event)"
@@ -305,6 +343,7 @@
             class="control_wrap"
           >
             <uk-num-input
+              :mixed="isMixed('gel')"
               :model-value="device.gelPosition"
               style="flex: 0 1 80px; min-width: 72px"
               label="Scroller"
@@ -324,6 +363,7 @@
               v-for="hue in ['red', 'green', 'blue']"
               v-show="byHand(hue)"
               :key="hue"
+              :mixed="isMixed(hue)"
               :model-value="Math.round(read(hue) || 0)"
               style="flex: 1 1 56px; min-width: 56px"
               :label="hue.charAt(0).toUpperCase() + hue.slice(1)"
@@ -344,6 +384,7 @@
         >
           <uk-num-input
             v-show="byHand('dimmer')"
+            :mixed="isMixed('dimmer')"
             :model-value="Math.round(read('dimmer') || 0)"
             style="width: 92px"
             label="Dimmer %"
@@ -354,6 +395,7 @@
           />
           <uk-checkbox
             v-show="byHand('shutter')"
+            :mixed="isMixed('shutter')"
             :model-value="!!read('shutter')"
             :label="isProjector ? 'Shutter open' : 'Picture on'"
             @update:model-value="writeDevice('shutter', $event)"
@@ -385,6 +427,7 @@
                 v-for="row in line"
                 v-show="byHand(row.key)"
                 :key="row.key"
+                :mixed="isMixed(row.key)"
                 :model-value="Math.round(read(row.key) || 0)"
                 :style="{ flex: `1 1 ${row.basis}px`, minWidth: `${row.basis}px` }"
                 :label="row.label"
@@ -401,6 +444,7 @@
             >
               <uk-checkbox
                 v-if="group.shutter && byHand('shutter')"
+                :mixed="isMixed('shutter')"
                 :model-value="!!read('shutter')"
                 label="Shutter open"
                 @update:model-value="writeDevice('shutter', $event)"
@@ -455,6 +499,9 @@
             <thead>
               <tr>
                 <th class="num">
+                  #
+                </th>
+                <th class="num">
                   Addr
                 </th>
                 <th>Channel</th>
@@ -469,26 +516,34 @@
                 v-for="row in handChannels"
                 :key="row.index"
               >
+                <!-- The fixture's own channel number, as its manual counts. -->
+                <td class="num">
+                  {{ row.index + 1 }}
+                </td>
                 <td class="num">
                   {{ row.address }}
                 </td>
-                <td class="channel_name">
+                <td
+                  class="channel_name"
+                  :title="row.isFine ? `${row.name} (fine)` : row.name"
+                >
                   {{ row.name }}<span
                     v-if="row.isFine"
                     class="fine_tag"
                   >fine</span>
                 </td>
                 <td class="num">
-                  <uk-num-input
+                  <channel-value-field
                     :model-value="row.value"
-                    style="width: 62px"
-                    :precision="0"
-                    :min="0"
-                    :max="255"
+                    :mixed="row.mixed"
+                    :ranges="channelMaps[row.index] || null"
                     @update:model-value="setChannelValue(row.index, $event)"
                   />
                 </td>
-                <td class="channel_text">
+                <td
+                  class="channel_text"
+                  :title="row.text"
+                >
                   {{ row.text }}
                 </td>
               </tr>
@@ -509,6 +564,10 @@ import LaserStream from '@/plugins/laser_stream';
 import Laser from '@/plugins/visualizer/laser';
 import { SELECTABLE_PROTOCOLS, PROTOCOL_LABELS } from '@/models/DMX/laser_settings';
 import { SHUTTER_MODE_ORDER, SHUTTER_MODE_LABELS } from '@/plugins/visualizer/shutter';
+import { formatAddress } from '@/models/DMX/address_format';
+import fixtureGuide from '@/models/DMX/fixture_guide';
+import { channelRanges } from '@/models/DMX/channel_ranges';
+import ChannelValueField from './channel.value.field.vue';
 
 /**
  * The Ponk stream list always begins with "first live one", so a laser that
@@ -542,13 +601,23 @@ export default {
     // or, for full vue 3 compat in this component:
     MODE: 3,
   },
+  components: { ChannelValueField },
   props: {
     /**
-     * Handle to fixture instance
+     * Handle to fixture instance: the one shown, or with several selected the
+     * first of them, which answers for what the model is.
      */
     fixture: {
       type: Object,
       default: null,
+    },
+    /**
+     * Every fixture the panel writes to when several of one definition are
+     * selected; empty for one.
+     */
+    fixtures: {
+      type: Array,
+      default: () => [],
     },
   },
   data() {
@@ -587,6 +656,62 @@ export default {
     };
   },
   computed: {
+    /**
+     * What the panel writes to: the selected fixtures of one definition, or
+     * the one fixture.
+     *
+     * @type {Array}
+     */
+    targets() {
+      if (this.fixtures && this.fixtures.length > 1) return this.fixtures;
+      return this.fixture ? [this.fixture] : [];
+    },
+    /** Whether the panel stands for several fixtures. */
+    many() {
+      return this.targets.length > 1;
+    },
+    headerShown() {
+      if (!this.many) return this.header;
+      return { ...this.header, title: `${this.header.title} · ${this.targets.length}` };
+    },
+    /** Whether the selected fixtures run different modes. */
+    modeMixed() {
+      if (!this.many) return false;
+      const first = this.fixture.modeIndex;
+      return this.targets.some((target) => target.modeIndex !== first);
+    },
+    /** The mode list, led by "*" while the fixtures disagree. */
+    modeOptions() {
+      const names = (this.fixture && this.fixture.modeNames) || [];
+      return this.modeMixed ? ['*', ...names] : names;
+    },
+    modeShown() {
+      if (this.modeMixed) return 0;
+      return this.fixture ? this.fixture.modeIndex : 0;
+    },
+    alignedMixed() {
+      if (!this.many) return false;
+      const first = !!this.fixture.universeAligned;
+      return this.targets.some((target) => !!target.universeAligned !== first);
+    },
+    shadowMixed() {
+      if (!this.many) return false;
+      const first = !!this.fixture.castsShadow;
+      return this.targets.some((target) => !!target.castsShadow !== first);
+    },
+    /**
+     * Whether the lens is focused by hand, so the placement holds the focus.
+     *
+     * @type {Boolean}
+     */
+    hasManualFocus() {
+      return !!(this.fixture && this.fixture.hasManualFocus);
+    },
+    focusMixed() {
+      if (!this.many) return false;
+      const first = this.fixture.focus;
+      return this.targets.some((target) => target.focus !== first);
+    },
     /**
      * Whether this fixture can cast a shadow at all. An emitter bar has no
      * beam behind which to cast one, so it is not offered the choice.
@@ -629,13 +754,16 @@ export default {
     strobeGelName() {
       // Read through `deviceState`, so a write or a channel re-evaluates it.
       if (!this.isStrobe || !this.device || this.read('gel') === undefined) return '';
+      if (this.isMixed('gel')) return '';
       return this.device.gelName;
     },
     /** The strobe's modes, as the select lists them. */
     strobeModeOptions() {
-      return SHUTTER_MODE_ORDER.map((mode) => SHUTTER_MODE_LABELS[mode] || mode);
+      const labels = SHUTTER_MODE_ORDER.map((mode) => SHUTTER_MODE_LABELS[mode] || mode);
+      return this.isMixed('mode') ? ['*', ...labels] : labels;
     },
     strobeModeIndex() {
+      if (this.isMixed('mode')) return 0;
       const at = SHUTTER_MODE_ORDER.indexOf(this.read('mode'));
       return at < 0 ? 0 : at;
     },
@@ -700,8 +828,29 @@ export default {
       const at = this.deviceRevision;
       const { device } = this;
       if (!device) return null;
-      return {
-        at,
+      const state = this.deviceSnapshot(device);
+      state.at = at;
+      // Several fixtures: the first one's values, and which of them the rest
+      // do not share.
+      state.mixed = new Set();
+      if (this.many) {
+        this.targets.slice(1).forEach((target) => {
+          if (!target.device) return;
+          const other = this.deviceSnapshot(target.device);
+          Object.keys(other).forEach((key) => {
+            if (other[key] !== state[key]) state.mixed.add(key);
+          });
+        });
+      }
+      return state;
+    },
+    /**
+     * Every setting the device rows show, from one device.
+     *
+     * @type {Function}
+     */
+    deviceSnapshot() {
+      return (device) => ({
         zoom: device.value('zoom'),
         shiftH: device.value('shiftH'),
         shiftV: device.value('shiftV'),
@@ -732,7 +881,7 @@ export default {
         duration: device.value('duration'),
         blinder: device.value('blinder'),
         gel: device.value('gel'),
-      };
+      });
     },
     /**
      * The channels this fixture can be driven by hand.
@@ -741,6 +890,18 @@ export default {
      * has its own named controls above, and a bar's channels are one thing
      * repeated thousands of times, which is a texture rather than a list.
      */
+    /**
+     * Each channel's ranges as a map, by channel index, from the profile's
+     * own words; null for a channel with none. What the value fields show
+     * beside themselves while they move.
+     *
+     * @type {Array}
+     */
+    channelMaps() {
+      const { fixture } = this;
+      if (!fixture || !fixture.OFLData || !fixture.mode) return [];
+      return fixtureGuide(fixture.OFLData, fixture.mode).channels.map(channelRanges);
+    },
     handChannels() {
       // Read so a write re-evaluates this; channels are a plain model and DMX
       // writes into them from outside Vue entirely. A device's controls are
@@ -749,19 +910,32 @@ export default {
       void this.deviceRevision; // eslint-disable-line no-void
       const { fixture } = this;
       if (!fixture || !Array.isArray(fixture.channels)) return [];
-      return fixture.channels.map((channel, index) => ({
-        index,
-        // The absolute address when there is one; otherwise the channel's own
-        // number, since an unpatched fixture has no address for it to be an
-        // offset from -- and unpatched is the case this list exists for.
-        address: fixture.address > -1 && fixture.addressOf
-          ? fixture.addressOf(index) + 1 : index + 1,
-        name: channel.name || channel.type || 'Unset',
-        isFine: !!channel.isFine,
-        value: channel.value ? channel.value.DMX : 0,
-        // What the byte means, in the control's own units, on a device.
-        text: this.channelValueText(index),
-      }));
+      // Several fixtures share a table only when their channels line up,
+      // which is one definition in one mode.
+      if (this.many) {
+        if (this.modeMixed) return [];
+        const { length } = fixture.channels;
+        if (this.targets.some((target) => !Array.isArray(target.channels)
+          || target.channels.length !== length)) return [];
+      }
+      const byteOf = (target, index) => {
+        const channel = target.channels[index];
+        return channel && channel.value ? channel.value.DMX : 0;
+      };
+      return fixture.channels.map((channel, index) => {
+        const value = byteOf(fixture, index);
+        const mixed = this.many && this.targets.some((target) => byteOf(target, index) !== value);
+        return {
+          index,
+          // Each fixture has its own address, so several show none.
+          address: this.many ? '*' : this.addressFor(fixture, index),
+          name: channel.name || channel.type || 'Unset',
+          isFine: !!channel.isFine,
+          value,
+          mixed,
+          text: mixed ? '' : this.channelValueText(index) || this.rangeTextAt(index, value),
+        };
+      });
     },
     /**
      * What these fields are, said once rather than per row.
@@ -774,6 +948,11 @@ export default {
     channelHint() {
       const { fixture } = this;
       if (!fixture) return '';
+      if (this.many) {
+        return this.handChannels.length
+          ? 'A value set here is written to every selected fixture. Held until DMX arrives.'
+          : '';
+      }
       // A device's rows say what each byte means beside it; no sentence needed.
       if (fixture.device) return '';
       return fixture.address > -1
@@ -906,10 +1085,13 @@ export default {
     },
     sourceOptions() {
       // A laser's source is which Ponk stream feeds it, not a video connector.
-      if (this.isLaser) return this.laserSources.map((source) => source.label);
-      return ['— none —', ...this.connectors.map((c) => c.name)];
+      const list = this.isLaser
+        ? this.laserSources.map((source) => source.label)
+        : ['— none —', ...this.connectors.map((c) => c.name)];
+      return this.isMixed('source') ? ['*', ...list] : list;
     },
     sourceIndex() {
+      if (this.isMixed('source')) return 0;
       const value = this.read('source');
       if (this.isLaser) {
         const at = this.laserSources.findIndex((source) => source.value === value);
@@ -933,6 +1115,7 @@ export default {
      */
     throwHint() {
       if (!this.device) return '';
+      if (this.isMixed('zoom')) return 'throw ratios differ';
       const params = this.fixture.OFLData.asls.projector;
       const at = imageSizeAt(5, this.read('zoom'), params);
       const size = `at 5 m ${at.width.toFixed(2)} × ${at.height.toFixed(2)} m`;
@@ -954,7 +1137,18 @@ export default {
         return !!(this.fixture && this.fixture.castsShadow);
       },
       set(state) {
-        if (this.fixture) this.fixture.castsShadow = state;
+        if (!state) {
+          this.targets.forEach((target) => { target.castsShadow = false; });
+          return;
+        }
+        // Turned on for as many as the budget has room for, in selection order.
+        let casting = this.shadowCasters;
+        this.targets.forEach((target) => {
+          if (target.castsShadow) return;
+          if (casting >= MAX_SHADOW_CASTERS) return;
+          target.castsShadow = true;
+          casting += 1;
+        });
       },
     },
     /**
@@ -1001,7 +1195,7 @@ export default {
       },
       set(value) {
         if (!this.fixture) return;
-        this.fixture.name = this.$show.fixturePool.uniqueName(value, this.fixture.id);
+        this.$show.renameItem(this.fixture, value);
       },
     },
     universe: {
@@ -1046,9 +1240,7 @@ export default {
         return this.fixture ? this.fixture.universeAligned : false;
       },
       set(value) {
-        if (this.fixture) {
-          this.fixture.universeAligned = !!value;
-        }
+        this.targets.forEach((target) => { target.universeAligned = !!value; });
       },
     },
     /**
@@ -1056,8 +1248,8 @@ export default {
      * the option stays hidden for the rest.
      */
     canSpan() {
-      if (!this.fixture) return false;
-      return this.fixture.chStart + this.fixture.channels.length > DMX_UNIVERSE_LENGTH;
+      return this.targets.some((target) => target.channels
+        && target.chStart + target.channels.length > DMX_UNIVERSE_LENGTH);
     },
   },
   mounted() {
@@ -1073,10 +1265,10 @@ export default {
     // Only a patched fixture can change underneath the panel, and only its
     // channel list and device values are what the wire writes.
     this.wireTimer = setInterval(() => {
-      const { fixture } = this;
-      if (!fixture || fixture.address < 0) return;
+      const patched = this.targets.filter((target) => target.address > -1);
+      if (!patched.length) return;
       this.channelRevision += 1;
-      if (fixture.device) this.deviceRevision += 1;
+      if (this.device) this.deviceRevision += 1;
     }, WIRE_POLL_MS);
   },
   beforeUnmount() {
@@ -1097,6 +1289,46 @@ export default {
       return this.deviceState ? this.deviceState[key] : null;
     },
     /**
+     * Whether the selected fixtures disagree about a device setting.
+     *
+     * @public
+     * @param {String} key attribute name
+     * @returns {Boolean}
+     */
+    isMixed(key) {
+      return !!(this.many && this.deviceState && this.deviceState.mixed.has(key));
+    },
+    /**
+     * A channel's absolute address, 1-based, or its number when unpatched.
+     *
+     * @public
+     * @param {Object} fixture
+     * @param {Number} index
+     * @returns {Number}
+     */
+    addressFor(fixture, index) {
+      // The address when there is one, spelled as the user chose; otherwise
+      // the channel's own number, since an unpatched fixture has no address
+      // for it to be an offset from -- and unpatched is the case this list
+      // exists for.
+      return fixture.address > -1 && fixture.addressOf
+        ? formatAddress(fixture.addressOf(index))
+        : String(index + 1);
+    },
+    /**
+     * Sets the mode on every fixture the panel stands for.
+     *
+     * @public
+     * @param {Number} index into `modeOptions`
+     */
+    pickMode(index) {
+      const at = Number(index) - (this.modeMixed ? 1 : 0);
+      if (!(at >= 0)) return;
+      this.targets.forEach((target) => {
+        if (target.modeIndex !== at) target.modeIndex = at;
+      });
+    },
+    /**
      * Whether a control is set here, by hand: neither baked into the profile
      * nor on a channel. A driven control is shown in the channel table
      * instead, as its byte and its meaning, so it is not on screen twice.
@@ -1108,6 +1340,20 @@ export default {
     byHand(key) {
       if (!this.device) return false;
       return !this.device.isFixed(key) && !this.device.isDriven(key);
+    },
+    /**
+     * The name of the range a channel's byte falls in, from the profile.
+     *
+     * @public
+     * @param {Number} index channel index
+     * @param {Number} value 0..255
+     * @returns {String}
+     */
+    rangeTextAt(index, value) {
+      const ranges = this.channelMaps[index];
+      if (!ranges) return '';
+      const range = ranges.find((r) => value >= r.lo && value <= r.hi);
+      return range ? range.text : '';
     },
     /**
      * What a channel's byte means on a device, in the control's own units:
@@ -1144,12 +1390,18 @@ export default {
      * @param {String} key attribute name
      * @param {*} value
      */
+    writeFocus(value) {
+      this.targets.forEach((target) => { target.focus = value; });
+    },
     writeDevice(key, value) {
       if (!this.device) return;
-      this.device.set(key, value);
+      this.targets.forEach((target) => {
+        if (!target.device) return;
+        target.device.set(key, value);
+        const model = target._3DModel;
+        if (model && model.refresh) model.refresh();
+      });
       this.deviceRevision += 1;
-      const model = this.fixture && this.fixture._3DModel;
-      if (model && model.refresh) model.refresh();
     },
     /**
      * Binds this projector to a video connector, by id.
@@ -1157,8 +1409,11 @@ export default {
      * @public
      * @param {Number} index into `sourceOptions`, nought being unbound
      */
-    pickSource(index) {
+    pickSource(pick) {
       if (!this.device) return;
+      // "*" leads the list while the fixtures disagree, and says nothing.
+      const index = Number(pick) - (this.isMixed('source') ? 1 : 0);
+      if (index < 0) return;
       if (this.isLaser) {
         // Index 0 is the first live stream (null); otherwise the chosen one.
         this.writeDevice('source', (this.laserSources[index] || {}).value || null);
@@ -1184,22 +1439,22 @@ export default {
      * @param {Number} value 0-255
      */
     setChannelValue(index, value) {
-      if (!this.fixture) return;
-      if (this.fixture.device) {
-        // Straight to the channel: a device's values are its controls, and
-        // the show saves those. Parking the byte as well would store the
-        // same fact twice and let the two disagree on the next load.
-        this.fixture.setChannel(index, Math.max(0, Math.min(255, Math.round(Number(value) || 0))));
-        this.deviceRevision += 1;
-      } else {
-        if (!this.fixture.parkChannel) return;
-        this.fixture.parkChannel(index, value);
-      }
+      this.targets.forEach((target) => {
+        if (target.device) {
+          // Straight to the channel: a device's values are its controls, and
+          // the show saves those. Parking the byte as well would store the
+          // same fact twice and let the two disagree on the next load.
+          target.setChannel(index, Math.max(0, Math.min(255, Math.round(Number(value) || 0))));
+        } else if (target.parkChannel) {
+          target.parkChannel(index, value);
+        }
+        // The renderer reads the fixture rather than watching it, the same as
+        // every other write in this widget.
+        const model = target._3DModel;
+        if (model && model.refresh) model.refresh();
+      });
+      if (this.device) this.deviceRevision += 1;
       this.channelRevision += 1;
-      // The renderer reads the fixture rather than watching it, the same as
-      // every other write in this widget.
-      const model = this.fixture._3DModel;
-      if (model && model.refresh) model.refresh();
     },
     /**
      * Sets how the strobe's lamp runs.
@@ -1208,7 +1463,7 @@ export default {
      * @param {Number} index into `strobeModeOptions`
      */
     pickStrobeMode(index) {
-      const mode = SHUTTER_MODE_ORDER[Number(index)];
+      const mode = SHUTTER_MODE_ORDER[Number(index) - (this.isMixed('mode') ? 1 : 0)];
       if (mode) this.writeDevice('mode', mode);
     },
     /**
@@ -1219,14 +1474,25 @@ export default {
      * @async
      */
     async copyChannels() {
-      const lines = [
-        ['#', 'Addr', 'Channel'].join('\t'),
-        ...this.handChannels.map((row) => [
-          row.index + 1,
-          row.address,
-          row.name + (row.isFine ? ' (fine)' : ''),
-        ].join('\t')),
-      ];
+      // Several fixtures: every one's sheet, one after another, named.
+      const lines = this.many
+        ? [
+          ['Fixture', '#', 'Addr', 'Channel'].join('\t'),
+          ...this.targets.flatMap((target) => this.handChannels.map((row) => [
+            target.label,
+            row.index + 1,
+            this.addressFor(target, row.index),
+            row.name + (row.isFine ? ' (fine)' : ''),
+          ].join('\t'))),
+        ]
+        : [
+          ['#', 'Addr', 'Channel'].join('\t'),
+          ...this.handChannels.map((row) => [
+            row.index + 1,
+            row.address,
+            row.name + (row.isFine ? ' (fine)' : ''),
+          ].join('\t')),
+        ];
       try {
         await navigator.clipboard.writeText(lines.join('\n'));
         this.copied = true;
@@ -1272,9 +1538,10 @@ export default {
 <style scoped>
 .fixture_settings {
   /* A laser's input is a protocol beside an address, and two selects in 230px
-     leave neither readable. */
-  max-width: 300px;
-  min-width: 300px;
+     leave neither readable; the channel table wants the rest of the width
+     for its names. */
+  max-width: 340px;
+  min-width: 340px;
 }
 .fixture_settings_body {
   height: 100%;
@@ -1377,14 +1644,23 @@ export default {
 .channel_table .num {
   text-align: right;
 }
+/* The name takes whatever the other columns leave and cuts off with an
+   ellipsis, the full name in its tooltip. `max-width: 0` is what lets a table
+   cell shrink below its text at all: without it the cell grows to fit, the
+   table outgrows the widget, and a long name brings a horizontal scrollbar. */
 .channel_name {
   width: 100%;
+  max-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* What the byte means, in the control's own units, beside its box. */
+/* What the byte means, in the control's own units, beside its box. Capped
+   for the same reason, since a range's comment can run to a sentence. */
 .channel_text {
   color: var(--secondary-lighter-alt);
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .fine_tag {
   margin-left: 4px;

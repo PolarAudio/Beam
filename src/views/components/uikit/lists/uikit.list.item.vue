@@ -9,17 +9,13 @@
       deletable: deletable,
       focused: focused,
       disabled: value.disabled || disabled,
+      dimmed: value.dimmed,
       empty: empty,
       tall: tall,
       noSelect: noSelect,
     }"
     @click="(e)=>$emit('click',e)"
   >
-    <uk-checkbox
-      v-if="toggleable"
-      v-model="toggled"
-      :disabled="value.disabled"
-    />
     <span
       v-if="!value.icon && colored && value.color"
       class="uikit_list_item_colored_dot"
@@ -71,6 +67,7 @@
       :class="['uikit_list_item_action', {
         bare: !entry.label,
         active: entry.active,
+        small: entry.small,
       }]"
       :icon="entry.icon"
       :label="entry.label"
@@ -103,16 +100,19 @@ export default {
   },
   props: {
     /**
-     * Handle to the list item
+     * What the row shows: `name`, and optionally `icon`, `more`, `color`,
+     * `unfold` and the rest.
      */
-    item: {
+    value: {
       type: Object,
-      default: null,
+      default: () => ({}),
     },
-    /**
-     * Whether the list item is toggleable or not (appends checkbox to item)
-     */
-    toggleable: Boolean,
+    /** Whether this is the row whose details are open. */
+    selected: Boolean,
+    /** Whether the row is part of a selection of several. */
+    highlighted: Boolean,
+    /** Whether the row's children are showing. */
+    unfolded: Boolean,
     /**
      * Whether item highlighting should be disabled orr not
      */
@@ -147,42 +147,6 @@ export default {
     empty: Boolean,
   },
   emits: ['unfold', 'click'],
-  data() {
-    return {
-      /**
-       * The item's value
-       */
-      value: this.item.value,
-      /**
-       * Whether the item is currently selected or not
-       */
-      selected: this.item.selected,
-      /**
-       * Whether the item is currently highlighted or not
-       */
-      highlighted: this.item.highlighted,
-      /**
-       * Whether the item is currently toggled or not
-       */
-      toggled: this.item.toggled,
-      /**
-       * Whether the item is currently unfolded or not
-       */
-      unfolded: this.item.unfolded,
-    };
-  },
-  watch: {
-    item: {
-      deep: true,
-      handler() {
-        this.value = this.item.value;
-        this.selected = this.item.selected;
-        this.highlighted = this.item.highlighted;
-        this.unfolded = this.item.unfolded;
-        this.toggled = this.item.toggled;
-      },
-    },
-  },
 };
 </script>
 
@@ -263,9 +227,30 @@ export default {
 .highlighted:not(.noSelect){
   background: rgba(28, 166, 189, 0.16) !important;
 }
+/* Darker than the selected row's teal: white on the bright accent is about
+   3:1 and hard to read across a column of rows, where this is about 5:1 --
+   and it keeps the one selected row standing out from the rest. */
 .highlighted.focused:not(.noSelect)  {
-  border-color: var(--accent-teal)!important;
-  background: var(--accent-teal)!important;
+  border-color: #127080 !important;
+  background: #127080 !important;
+}
+/* On either solid fill the text and glyph go white, and the row drops its
+   resting translucency: grey on teal is what made these hard to read. */
+.highlighted.focused:not(.noSelect),
+.selected.focused:not(.noSelect) {
+  opacity: 1;
+}
+.highlighted.focused:not(.noSelect) h4,
+.selected.focused:not(.noSelect) h4 {
+  color: #fff !important;
+}
+.highlighted.focused:not(.noSelect) .uikit_list_item_glyph :deep(svg),
+.selected.focused:not(.noSelect) .uikit_list_item_glyph :deep(svg) {
+  fill: #fff !important;
+}
+.highlighted.focused:not(.noSelect) .uikit_list_item_more,
+.selected.focused:not(.noSelect) .uikit_list_item_more {
+  color: rgba(255, 255, 255, 0.85) !important;
 }
 .unfold:active {
   background: var(--secondary-dark) !important;
@@ -358,6 +343,40 @@ export default {
 
 .uikit_list_item_action:hover {
   opacity: 1;
+}
+
+/* A quieter toggle, for one on every row where the name should lead. Spelled
+   out to outrank the button's own flat glyph size, which is !important. */
+.uikit_list_item .uikit_list_item_action.bare.small.icon_only :deep(.uikit_button_icon) {
+  width: 12px !important;
+  height: 12px !important;
+}
+
+/* The other way round from an ordinary toggle: bright while the item is in
+   the scene, dim once it is hidden, so the icon fades with what it hides.
+   The same glyph colour both ways -- the difference is the opacity alone.
+   Hover brings a dim one back. */
+.uikit_list_item_action.bare.small :deep(svg),
+.uikit_list_item_action.bare.small.active :deep(svg) {
+  fill: var(--secondary-lighter);
+}
+.uikit_list_item_action.bare.small.active:not(:hover) {
+  opacity: 0.4;
+}
+
+/* Present but out of the picture -- a hidden scene item. Still a row that can
+   be clicked, unlike `disabled`; only its glyph and text recede, so the
+   toggles at the end stay as readable as on any other row. */
+.uikit_list_item.dimmed > .uikit_list_item_glyph,
+.uikit_list_item.dimmed > h4 {
+  opacity: 0.4;
+}
+/* Less so on a solid highlight, where 40% of white sinks into the teal. */
+.uikit_list_item.dimmed.highlighted.focused > .uikit_list_item_glyph,
+.uikit_list_item.dimmed.highlighted.focused > h4,
+.uikit_list_item.dimmed.selected.focused > .uikit_list_item_glyph,
+.uikit_list_item.dimmed.selected.focused > h4 {
+  opacity: 0.65;
 }
 
 .uikit_list_item_more {

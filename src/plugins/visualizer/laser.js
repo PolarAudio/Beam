@@ -980,6 +980,22 @@ class Laser {
   }
 
   /**
+   * Whether the fixture is hidden from the scene: not drawn, and its beam with it;
+   * `projections()` leaves it out, so no figure lands on a surface.
+   * Picking skips it by asking the fixture, not this.
+   *
+   * @type {Boolean}
+   */
+  set hidden(state) {
+    this._hidden = !!state;
+    this._dummy.visible = !this._hidden;
+  }
+
+  get hidden() {
+    return !!this._hidden;
+  }
+
+  /**
    * The scan half-angles, in radians -- what the beam renderer will map the
    * DAC's full scale onto. Exposed here so a later step reads it off the model
    * rather than the profile.
@@ -1057,6 +1073,7 @@ class Laser {
   static projections() {
     const out = [];
     instances.forEach((laser) => {
+      if (laser._hidden) return;
       if (laser._depthSlot < 0 || laser._figureSlot < 0) return;
       out.push({
         matrix: laser._depthMatrix,

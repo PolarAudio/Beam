@@ -21,6 +21,7 @@ import * as THREE from 'three';
 import { profileBands, profileParts, bandGrid } from './madmapper';
 import { SCAN_AXES, isPanel } from './led_bar';
 import { DMX_UNIVERSE_LENGTH, channelAddress } from '../patch.model';
+import { labelOf } from '../item_naming';
 
 /** SVG units per metre. Fixed, so exports of the same rig stay comparable. */
 export const UNITS_PER_METRE = 200;
@@ -660,8 +661,8 @@ function prepare(fixture, projection, definitionName, frame, perspective, option
         // and nothing stands above it. That is the whole point -- one click on
         // `Pan Tilt` takes every head's movement, and the group takes one
         // material.
-        name: islandPart !== null || parts.length === 1 ? fixture.name : part.suffix,
-        owner: islandPart === null && parts.length > 1 ? fixture.name : null,
+        name: islandPart !== null || parts.length === 1 ? labelOf(fixture) : part.suffix,
+        owner: islandPart === null && parts.length > 1 ? labelOf(fixture) : null,
         universe: Math.floor(address / DMX_UNIVERSE_LENGTH),
         channel: (address % DMX_UNIVERSE_LENGTH) + 1,
         definition: definitionName(fixture, part.index),
@@ -703,7 +704,7 @@ function prepare(fixture, projection, definitionName, frame, perspective, option
 
     const common = {
       edgeOn,
-      name: band.count > 1 ? `${fixture.name} ${band.index + 1}` : fixture.name,
+      name: band.count > 1 ? `${labelOf(fixture)} ${band.index + 1}` : labelOf(fixture),
       universe: Math.floor(address / DMX_UNIVERSE_LENGTH),
       channel: (address % DMX_UNIVERSE_LENGTH) + 1,
       definition: definitionName(fixture, band.index),
@@ -792,7 +793,7 @@ export function edgeOnFixtures(fixtures, projection, perspective = null) {
     if (!ends) return false;
     const [a, b] = ends.map(flatten);
     return Math.hypot(b.x - a.x, b.y - a.y) < MIN_PROJECTED_LENGTH;
-  }).map((f) => f.name);
+  }).map((f) => labelOf(f));
 }
 
 /** Side of the square each mapped group is fitted into, in SVG units. */
@@ -920,7 +921,7 @@ export function buildMadMapperLayout({
     mappingsOf(group, projection).forEach((mapping) => {
       if (!byIsland) {
         islands.push({
-          members, mapping, name: group.name, fromGroup: true,
+          members, mapping, name: labelOf(group), fromGroup: true,
         });
         return;
       }
@@ -933,7 +934,7 @@ export function buildMadMapperLayout({
           // holding movers would otherwise both want a group called `Pan
           // Tilt`, and MadMapper will not hold two groups of one name
           // anywhere in its tree.
-          name: part ? `${group.name} ${part}` : group.name,
+          name: part ? `${labelOf(group)} ${part}` : labelOf(group),
           part,
         });
       });

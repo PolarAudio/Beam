@@ -225,6 +225,27 @@ class LedBar {
   }
 
   /**
+   * Whether the bar is hidden from the scene: not drawn and giving no light.
+   *
+   * A hidden bar is left out of the rebuild, so it puts no body, emitters or
+   * glow into the shared field, and a grid gives up its panel. Picking skips
+   * it by asking the fixture, not this.
+   *
+   * @type {Boolean}
+   */
+  set hidden(state) {
+    const hidden = !!state;
+    if (hidden === !!this._hidden) return;
+    this._hidden = hidden;
+    this._dummy.visible = !hidden;
+    LedBar.rebuild();
+  }
+
+  get hidden() {
+    return !!this._hidden;
+  }
+
+  /**
    * Pushes this bar's body and emitters into the shared field.
    *
    * @public
@@ -232,6 +253,13 @@ class LedBar {
   emit() {
     const params = this._params;
     if (!params) return;
+    if (this._hidden) {
+      if (this._panel) {
+        LEDPanel.release(this._panel);
+        this._panel = null;
+      }
+      return;
+    }
 
     scratch.euler.set(this._rotation.x, this._rotation.y, this._rotation.z);
     scratch.quaternion.setFromEuler(scratch.euler);

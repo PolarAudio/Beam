@@ -194,6 +194,10 @@ export default class Shutter {
     this._pulses = [];
     /** Strokes still to come in the current lightning burst. */
     this._strokesLeft = 0;
+    /** When the last scheduled flash started. Null when the train is fresh. */
+    this._lastFlash = null;
+    /** The interval `_next` was scheduled with. */
+    this._scheduledMean = 0;
     /** Single flashes asked for since the last frame. */
     this._pending = 0;
     /** The last level handed out. */
@@ -287,6 +291,7 @@ export default class Shutter {
     if (this._last !== null && Math.abs(end - this._last) > CLOCK_JUMP_SECONDS) {
       this._last = null;
       this._pulses = [];
+      this._lastFlash = null;
     }
     if (this._last === null) {
       // The first frame is taken as a nominal one rather than as nothing: a
@@ -367,6 +372,7 @@ export default class Shutter {
   dropSchedule(now) {
     this._next = now;
     this._strokesLeft = 0;
+    this._lastFlash = null;
     // A pulse already under way is kept: a single flash asked for during a
     // ramp must not be cut short by the ramp.
     this._pulses = this._pulses.filter((pulse) => pulse.end > now);
@@ -409,6 +415,15 @@ export default class Shutter {
     // A schedule left behind -- the rate was zero, the mode was off -- resumes
     // now rather than pouring every missed flash into this frame.
     if (this._next < start) this._next = start;
+    // A new rate takes over from the last flash, not from the flash the old
+    // rate queued: a speed raised from 1 Hz would otherwise wait out the rest
+    // of a second in the dark. A lightning burst keeps its own short gaps.
+    if (mean !== this._scheduledMean) {
+      if (this._lastFlash !== null && this._strokesLeft === 0) {
+        this._next = Math.max(start, this._lastFlash + mean);
+      }
+      this._scheduledMean = mean;
+    }
 
     const flashLength = this.flashSeconds();
     let guard = 0;
@@ -428,6 +443,7 @@ export default class Shutter {
       while (this._next < end && guard < MAX_FLASHES_PER_FRAME) {
         guard += 1;
         this._pulses.push({ start: this._next, end: this._next + flashLength });
+        this._lastFlash = this._next;
         this._gridCount += 1;
         this._next = this._gridOrigin + this._gridCount * mean;
       }
@@ -436,6 +452,7 @@ export default class Shutter {
     while (this._next < end && guard < MAX_FLASHES_PER_FRAME) {
       guard += 1;
       this._pulses.push({ start: this._next, end: this._next + flashLength });
+      this._lastFlash = this._next;
       this._next += this.nextGap(mean);
     }
   }

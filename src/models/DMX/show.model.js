@@ -15,6 +15,8 @@ import FixturePool from './fixture.pool.model';
 import Group from './group.model';
 import Structure from './structure.model';
 import SceneObject from './object.model';
+import { SCENE_ITEM_KINDS, kindOf } from './scene_item';
+import { claimInstance, setSiblingResolver } from './item_naming';
 import Live from './live.model';
 import {
   expandLedBarProfile, withoutLedBarChannels,
@@ -36,9 +38,9 @@ const fixtureDataCache = {};
 /**
  * The names the app hands out when nobody has given one.
  *
- * `untitled`, `untitled 2`, `Group`, `Group 3`, `Structure 1` -- what
- * `numberedStructureName`, `uniqueStructureName` and `uniqueGroupName` fall
- * back to, with or without the number that keeps them apart.
+ * `untitled`, `Group`, `Structure` -- what a structure or a group is
+ * called when it is made without a name. The trailing number is for names
+ * saved before the instance number was kept apart from the name.
  *
  * @constant {RegExp}
  */
@@ -117,12 +119,39 @@ async function fetchProfile(profileKey) {
  * @todo Refactor whole class. it's messy
  * @extends {EventEmitter}
  */
+/**
+ * An item's show data with its place in the item list, when it has one.
+ *
+ * Written by the show rather than by each item: the place belongs to the list,
+ * and a copy on the clipboard deliberately arrives without one.
+ *
+ * @param {Object} item a fixture, object, structure or group
+ * @returns {Object} its show data
+ */
+function withListOrder(item) {
+  const data = item.showData;
+  return Number.isFinite(item.listOrder) ? { ...data, listOrder: item.listOrder } : data;
+}
+
+/**
+ * Gives a loaded item back the place in the item list it was saved with.
+ *
+ * @param {Object} item the item just made
+ * @param {Object} data the record it was made from
+ */
+function restoreListOrder(item, data) {
+  if (item && data && Number.isFinite(data.listOrder)) item.listOrder = data.listOrder;
+}
+
 class Show extends EventEmitter {
   /**
    * Creates an instance of Show.
    */
   constructor() {
     super();
+    // So an item can be named on screen -- with its number only when another
+    // of its kind shares its name -- without the models reaching for the show.
+    setSiblingResolver((item) => this.siblingsOf(item));
     /**
      * Absolute path of the document this show was opened from or last saved
      * to, or null when it has never been saved.
@@ -278,16 +307,16 @@ class Show extends EventEmitter {
       diffInput: PatchSingleton.diffInput,
       // Addressing lives entirely on the fixtures. Universe records are
       // kept only for the name and colour the patch bay displays.
-      groups: this.groups.map((group) => group.showData),
-      structures: this.structures.map((structure) => structure.showData),
+      groups: this.groups.map(withListOrder),
+      structures: this.structures.map(withListOrder),
       // Keys and transforms. The geometry stays in the library until an export
       // collects it, which is the same bargain profiles make.
-      objects: this.objects.map((object) => object.showData),
+      objects: this.objects.map(withListOrder),
       // The show's own fixture definitions travel with it, so it opens on a
       // machine whose library has never seen them. Pruned first: a definition
       // nothing references any more is not part of this show.
       definitions: this.pruneDefinitions().toJSON(),
-      fixtures: this.fixturePool.fixtures.map((f) => f.showData),
+      fixtures: this.fixturePool.fixtures.map(withListOrder),
       // The rectangles, and deliberately not which sender fills them: that is
       // a fact about one machine, and this file opens on others.
       videoConnectors: this.videoConnectors.map((connector) => connector.showData),
@@ -302,6 +331,7 @@ class Show extends EventEmitter {
       // whatever the view was when studio was last left rather than the one
       // being saved.
       cameras: Studio.showData,
+      studio: Studio.showSettings,
     };
   }
 
@@ -616,8 +646,11 @@ class Show extends EventEmitter {
    */
   async writeDocument(target) {
     const json = JSON.stringify(this.showData, null, 2);
-    const written = await window.documentStore.write(target, json);
-    if (!written) return false;
+    const written = await window.documentStore.write(target, json, this.referencedResources());
+    if (!written || !written.ok) return false;
+    // A document that carries files carries only what the show uses once
+    // saved, so what resolves from it has to shrink to match.
+    if (written.carried) this.collected = Show.collectedFrom(written);
     await this.setDocument(target);
     this.isSaved = true;
     this.emit('saveState', this.isSaved);
@@ -730,8 +763,11 @@ class Show extends EventEmitter {
 
     // Mounted inside the load rather than before it, because loads queue: two
     // documents opened in quick succession must each load against their own
-    // files, not both against whichever was mounted last.
-    await this.mountDocument(options.document || null);
+    // files, not both against whichever was mounted last. A refresh has
+    // already replaced the mount and hands over what it now carries: mounting
+    // again would unpack the file on disk and bring the old copies back.
+    if (options.carried) this.collected = Show.collectedFrom(options.carried);
+    else await this.mountDocument(options.document || null);
 
     this.loading.message = 'Preloading fixture library';
     this.loading.percentage = 40;
@@ -753,11 +789,12 @@ class Show extends EventEmitter {
     this.loading.message = 'Restoring groups';
     this.prepareGroups(showData);
 
-    this.loading.message = 'Restoring structures';
-    this.prepareStructures(showData);
-
+    // Objects before structures, which may hold them.
     this.loading.message = 'Placing objects';
     await this.prepareObjects(showData);
+
+    this.loading.message = 'Restoring structures';
+    this.prepareStructures(showData);
 
     this.videoConnectors = (showData.videoConnectors || [])
       .map((data) => new VideoConnector(data));
@@ -771,6 +808,7 @@ class Show extends EventEmitter {
     // down rather than here -- `frameDefault` runs at the end of this method
     // and would fly straight over the top of it.
     const storedView = Studio.loadCameras(showData.cameras);
+    Studio.loadSettings(showData.studio);
 
     this.loading.message = 'Patching fixtures';
     this.loading.percentage = 80;
@@ -841,6 +879,7 @@ class Show extends EventEmitter {
           merge(fixtureData.OFLData, this.fixtureOverrides[profileKey]);
         }
         const created = this.fixturePool.addRaw(fixtureData);
+        restoreListOrder(created, fixtureData);
         if (fixtureData.id !== undefined) this.loadedFixturesById.set(fixtureData.id, created);
       }
     }
@@ -898,13 +937,55 @@ class Show extends EventEmitter {
       await window.documentStore.unmount();
       return;
     }
-    const carried = (await window.documentStore.mount(target)) || {};
+    this.collected = Show.collectedFrom(await window.documentStore.mount(target));
+  }
+
+  /**
+   * What a document carries, in the shape `collected` holds it.
+   *
+   * @param {Object} [carried] `{ profiles, overrides }` from the document store
+   * @returns {Object} `{ profiles, overrides }`
+   */
+  static collectedFrom(carried) {
+    const { profiles, overrides } = carried || {};
     // Bars are stored without their channels, as the library stores them.
-    this.collected = {
-      profiles: Object.fromEntries(Object.entries(carried.profiles || {})
+    return {
+      profiles: Object.fromEntries(Object.entries(profiles || {})
         .map(([key, profile]) => [key, expandLedBarProfile(profile)])),
-      overrides: carried.overrides || {},
+      overrides: overrides || {},
     };
+  }
+
+  /**
+   * Replaces the copies an exported project carries with the library's.
+   *
+   * An export resolves what it carries ahead of the library, so a profile or
+   * model edited in the library afterwards never reaches it. This collects
+   * every item the show references again from the library, reloads the show
+   * against the new copies, and leaves it unsaved: the file takes them on the
+   * next save, and closing without saving keeps it as it was.
+   *
+   * @public
+   * @async
+   * @returns {Promise<Object>} `{ carried, refreshed, kept }` -- whether the
+   *   project carries anything, the items whose copy changed, and the items
+   *   only the project has
+   */
+  async refreshFromLibrary() {
+    const nothing = { carried: false, refreshed: [], kept: [] };
+    if (typeof window === 'undefined' || !window.documentStore || !this.documentPath) return nothing;
+    const result = (await window.documentStore.refresh(this.referencedResources())) || nothing;
+    if (result.refreshed && result.refreshed.length) {
+      await this.loadFromData(JSON.parse(JSON.stringify(this.showData)), {
+        document: this.documentPath,
+        carried: result,
+      });
+      // The load treats the show as freshly opened; it is not, until saved.
+      this.isSaved = false;
+      this.emit('saveState', this.isSaved);
+    }
+    this.emit('refreshed', result);
+    return result;
   }
 
   /**
@@ -1023,6 +1104,7 @@ class Show extends EventEmitter {
     // that is the whole difference between loading a chunk and loading a file.
     const made = (showData.groups || []).map((groupData) => {
       const group = new Group(groupData);
+      restoreListOrder(group, groupData);
       (groupData.members || []).forEach((id) => {
         // Resolved through the load index rather than the pool: addRaw hands
         // out fresh ids, so a saved member id means nothing once a fixture has
@@ -1032,53 +1114,59 @@ class Show extends EventEmitter {
       });
       return group;
     });
-    this.groups.push(...made);
+    Show.joinNumbered(this.groups, made);
     return made;
   }
 
   /**
-   * The nearest free group name to the one asked for.
-   *
-   * Groups are told apart by name in the patch bay, so two sharing one makes
-   * the list ambiguous. A taken name gains a number rather than being refused.
+   * The items of one kind, which instance numbers are counted among.
    *
    * @public
-   * @param {String} desired name the user asked for
-   * @param {Number} [ignoreId] id of the group allowed to keep this name
-   * @returns {String} a name no other group is using
+   * @param {Object} item any scene item
+   * @returns {Array}
    */
-  uniqueGroupName(desired, ignoreId = null) {
-    const wanted = (desired || '').trim() || 'Group';
-    const taken = new Set(
-      this.groups.filter((group) => group.id !== ignoreId).map((group) => group.name),
-    );
-    if (!taken.has(wanted)) return wanted;
-    let n = 2;
-    while (taken.has(`${wanted} ${n}`)) n += 1;
-    return `${wanted} ${n}`;
+  siblingsOf(item) {
+    switch (kindOf(item)) {
+      case SCENE_ITEM_KINDS.FIXTURE: return this.fixturePool.fixtures;
+      case SCENE_ITEM_KINDS.OBJECT: return this.objects;
+      case SCENE_ITEM_KINDS.STRUCTURE: return this.structures;
+      case SCENE_ITEM_KINDS.GROUP: return this.groups;
+      default: return [];
+    }
   }
 
   /**
-   * The nearest free object name to the one asked for.
+   * Gives an item a new name, and the lowest free instance number under it.
    *
-   * The counterpart of `uniqueGroupName` and `uniqueStructureName`, and it
-   * exists for the same reason they do: a copy has to be told apart from what
-   * it was copied from, and the list is where that happens.
+   * The number follows the name rather than the item: renaming `Truss 3` to
+   * `Stage` makes `Stage 1` when no other stage is there.
    *
    * @public
-   * @param {String} desired name the user asked for
-   * @param {Number} [ignoreId] id of the object allowed to keep this name
-   * @returns {String} a name no other object is using
+   * @param {Object} item any scene item
+   * @param {String} desired the name typed; blank keeps the current one
    */
-  uniqueObjectName(desired, ignoreId = null) {
-    const wanted = (desired || '').trim() || 'Object';
-    const taken = new Set(
-      this.objects.filter((object) => object.id !== ignoreId).map((object) => object.name),
-    );
-    if (!taken.has(wanted)) return wanted;
-    let n = 2;
-    while (taken.has(`${wanted} ${n}`)) n += 1;
-    return `${wanted} ${n}`;
+  renameItem(item, desired) {
+    const name = (desired || '').trim();
+    if (!name || name === item.name) return;
+    item.name = name;
+    item.instance = null;
+    claimInstance(item, this.siblingsOf(item));
+  }
+
+  /**
+   * Adds items to one of the show's lists, each numbered as it goes in.
+   *
+   * One at a time, so items added together number against each other as
+   * well as against what was already there.
+   *
+   * @param {Array} list the show's list for their kind
+   * @param {Array} items
+   */
+  static joinNumbered(list, items) {
+    items.forEach((item) => {
+      claimInstance(item, list);
+      list.push(item);
+    });
   }
 
   /**
@@ -1121,6 +1209,19 @@ class Show extends EventEmitter {
         const local = member.localTransform
           ? member.localTransform.clone()
           : inverse.clone();
+        // An object keeps what it is -- its library key, or the parameters of
+        // a created one -- and its own scale, beside where it stands.
+        if (kindOf(member) === SCENE_ITEM_KINDS.OBJECT) {
+          const data = member.showData;
+          return {
+            kind: SCENE_ITEM_KINDS.OBJECT,
+            name: data.name,
+            model: data.model,
+            primitive: data.primitive,
+            scale: data.scale,
+            transform: local.elements.slice(),
+          };
+        }
         return {
           manufacturer: member.manufacturer,
           model: member.model,
@@ -1183,7 +1284,10 @@ class Show extends EventEmitter {
     // microtasks without exception: one yield here rather than one per member,
     // and the distinct profiles fetched together rather than in series.
     const wanted = new Set();
+    const isObject = (member) => member.kind === SCENE_ITEM_KINDS.OBJECT;
+    if (definition.members.some(isObject)) await this.preloadObjectLibrary();
     const distinct = definition.members.filter((member) => {
+      if (isObject(member)) return false;
       const key = `${member.manufacturer}/${member.model}`;
       if (wanted.has(key)) return false;
       wanted.add(key);
@@ -1195,6 +1299,29 @@ class Show extends EventEmitter {
 
     for (let i = 0; i < definition.members.length; i += 1) {
       const member = definition.members[i];
+      if (isObject(member)) {
+        world.multiplyMatrices(origin, new THREE.Matrix4().fromArray(member.transform));
+        world.decompose(position, quaternion, scale);
+        euler.setFromQuaternion(quaternion);
+        // A missing library model still arrives, unresolved, as it does when
+        // a show is opened without it.
+        const object = new SceneObject({
+          model: member.primitive ? undefined : member.model,
+          primitive: member.primitive || null,
+          name: member.name || member.model || 'object',
+          position: { x: position.x, y: position.y, z: position.z },
+          rotation: { x: euler.x, y: euler.y, z: euler.z },
+          scale: member.scale,
+        });
+        // eslint-disable-next-line no-await-in-loop
+        await object.attach(member.primitive
+          ? null
+          : (this.objectLibrary[foldModelKey(member.model)] || null));
+        Show.joinNumbered(this.objects, [object]);
+        members.push(object);
+        // eslint-disable-next-line no-continue
+        continue;
+      }
       // eslint-disable-next-line no-await-in-loop
       const OFLData = await this.resolveProfile(member.manufacturer, member.model);
       if (OFLData) {
@@ -1207,7 +1334,7 @@ class Show extends EventEmitter {
           manufacturer: member.manufacturer,
           model: member.model,
           category: OFLData.categories[0],
-          name: this.fixturePool.numberedName(OFLData.name),
+          name: OFLData.name,
           mode: member.mode,
           universeAligned: !!member.universeAligned,
           position: { x: position.x, y: position.y, z: position.z },
@@ -1266,6 +1393,7 @@ class Show extends EventEmitter {
     structure.members.forEach((member) => {
       const model = member._3DModel;
       if (model && model.expandGeometryBounds) model.expandGeometryBounds(box);
+      else if (model && model.expandBounds) model.expandBounds(box);
     });
     if (box.isEmpty()) return;
     const centre = box.getCenter(new THREE.Vector3());
@@ -1349,7 +1477,15 @@ class Show extends EventEmitter {
   async prepareObjects(showData) {
     const records = showData.objects || [];
     const made = records.map((data) => new SceneObject(data));
-    this.objects.push(...made);
+    made.forEach((object, i) => restoreListOrder(object, records[i]));
+    // By the id the record was saved or copied with, for the structures that
+    // name their members by it.
+    this.loadedObjectsById = new Map();
+    records.forEach((data, i) => {
+      const id = data.sourceId !== undefined ? data.sourceId : data.id;
+      if (id !== undefined) this.loadedObjectsById.set(id, made[i]);
+    });
+    Show.joinNumbered(this.objects, made);
     if (!made.length) return made;
     await this.preloadObjectLibrary();
     // Awaited, all of them. Fired and left to land, the load would report
@@ -1439,13 +1575,13 @@ class Show extends EventEmitter {
       // `objectLibrary` is keyed by.
       model: inline ? undefined : (descriptor.key || descriptor.name),
       primitive: inline,
-      name: this.numberedObjectName(descriptor.name),
+      name: descriptor.name,
       position: transform.position,
       rotation: transform.rotation,
       scale: transform.scale,
     });
     await object.attach(inline ? null : descriptor);
-    this.objects.push(object);
+    Show.joinNumbered(this.objects, [object]);
     return object;
   }
 
@@ -1572,10 +1708,11 @@ class Show extends EventEmitter {
     // load index maps to the new instances.
     const fresh = (records) => (records || []).map(({ id, ...rest }) => rest);
 
+    // Names travel with the copies; each is given the lowest free instance
+    // number under its name as it joins the show -- see `joinNumbered`.
     await this.prepareFixtures({ fixtures: data.fixtures || [] });
     const fixtures = [...this.loadedFixturesById.values()];
     fixtures.forEach((fixture) => {
-      fixture.name = this.fixturePool.uniqueName(fixture.name, fixture.id);
       // With the patch not strict, a copy keeps the address it was copied with.
       if (!PatchSingleton.strict) {
         PatchSingleton.patchFixture(fixture);
@@ -1594,15 +1731,15 @@ class Show extends EventEmitter {
     });
 
     const groups = this.prepareGroups({ groups: fresh(data.groups) });
-    groups.forEach((group) => { group.name = this.uniqueGroupName(group.name, group.id); });
 
-    const structures = this.prepareStructures({ structures: fresh(data.structures) });
-    structures.forEach((structure) => {
-      structure.name = this.uniqueStructureName(structure.name, structure.id);
+    // Objects before structures, which may hold them. A copy gets a new id,
+    // and keeps the one it was copied from as `sourceId`, which is what a
+    // pasted structure names its members by.
+    const objects = await this.prepareObjects({
+      objects: (data.objects || []).map(({ id, ...rest }) => ({ ...rest, sourceId: id })),
     });
 
-    const objects = await this.prepareObjects({ objects: fresh(data.objects) });
-    objects.forEach((object) => { object.name = this.uniqueObjectName(object.name, object.id); });
+    const structures = this.prepareStructures({ structures: fresh(data.structures) });
 
     this.capShadowCasters();
     // A fixture inside a pasted structure or group is not a loose item, and
@@ -1627,81 +1764,29 @@ class Show extends EventEmitter {
     return true;
   }
 
-  /**
-   * A name not already taken by another object.
-   *
-   * @public
-   * @param {String} base the model's name
-   * @returns {String}
-   */
-  numberedObjectName(base) {
-    const taken = new Set(this.objects.map((object) => object.name));
-    if (!taken.has(base)) return base;
-    let n = 2;
-    while (taken.has(`${base} ${n}`)) n += 1;
-    return `${base} ${n}`;
-  }
-
   prepareStructures(showData) {
     const made = (showData.structures || []).map((structureData) => {
       const structure = new Structure(structureData);
-      (structureData.members || []).forEach((id) => {
+      restoreListOrder(structure, structureData);
+      (structureData.members || []).forEach((ref) => {
+        // An object member is `{ kind, id }`, resolved through the objects
+        // just loaded.
+        if (ref && typeof ref === 'object') {
+          if (ref.kind !== SCENE_ITEM_KINDS.OBJECT) return;
+          const object = (this.loadedObjectsById || new Map()).get(ref.id);
+          if (object) structure.add(object);
+          return;
+        }
         // Resolved through the load index rather than the pool: addRaw hands
         // out fresh ids, so a saved member id means nothing once a fixture has
         // been deleted and the rest have shuffled down.
-        const fixture = this.loadedFixturesById.get(id);
+        const fixture = this.loadedFixturesById.get(ref);
         if (fixture) structure.add(fixture);
       });
       return structure;
     });
-    this.structures.push(...made);
+    Show.joinNumbered(this.structures, made);
     return made;
-  }
-
-  /**
-   * The next free numbered name for a structure, e.g. "Fusion 2".
-   *
-   * Numbered from one even when it is the only one, so a name never has to be
-   * rewritten once a second arrives -- and so every name in an export reads
-   * the same way. The counterpart of `FixturePool.numberedName`; renaming goes
-   * through `uniqueStructureName` instead, which leaves a typed name alone.
-   *
-   * @public
-   * @param {String} base name to number
-   * @returns {String} a name no structure is using
-   */
-  numberedStructureName(base) {
-    const wanted = (base || '').trim() || 'untitled';
-    const taken = new Set(this.structures.map((structure) => structure.name));
-    let n = 1;
-    while (taken.has(`${wanted} ${n}`)) n += 1;
-    return `${wanted} ${n}`;
-  }
-
-  /**
-   * The nearest free structure name to the one asked for.
-   *
-   * Placing the same definition twice is normal, so a clash is expected rather
-   * than exceptional: the second one gains a number instead of being refused.
-   *
-   * @public
-   * @param {String} desired name the user asked for
-   * @param {Number} [ignoreId] id of the structure allowed to keep this name
-   * @returns {String} a name no other structure is using
-   */
-  uniqueStructureName(desired, ignoreId = null) {
-    // Untitled, as an unsaved show is: the name is the user's to give, and a
-    // made-up one reads as though it had already been named.
-    const wanted = (desired || '').trim() || 'untitled';
-    const taken = new Set(
-      this.structures
-        .filter((structure) => structure.id !== ignoreId)
-        .map((structure) => structure.name),
-    );
-    if (!taken.has(wanted)) return wanted;
-    let n = 2;
-    while (taken.has(`${wanted} ${n}`)) n += 1;
-    return `${wanted} ${n}`;
   }
 
   /**
@@ -1720,13 +1805,13 @@ class Show extends EventEmitter {
    */
   createStructure(members = [], name = undefined, origin = null) {
     const structure = new Structure({
-      name: this.numberedStructureName(name),
+      name: (name || '').trim() || 'untitled',
       position: (origin || {}).position,
       rotation: (origin || {}).rotation,
     });
     members.forEach((member) => structure.add(member));
     if (members.length && !origin) structure.centreOnMembers();
-    this.structures.push(structure);
+    Show.joinNumbered(this.structures, [structure]);
     return structure;
   }
 
@@ -1764,6 +1849,10 @@ class Show extends EventEmitter {
     const index = this.structures.indexOf(structure);
     if (index === -1) return;
     structure.release().forEach((member) => {
+      if (kindOf(member) === SCENE_ITEM_KINDS.OBJECT) {
+        this.removeObject(member);
+        return;
+      }
       const handle = this.fixturePool.findFromId(member.id);
       if (!handle) return;
       PatchSingleton.unpatchFixture(handle);
@@ -1788,7 +1877,7 @@ class Show extends EventEmitter {
     const group = new Group({ name });
     members.forEach((member) => group.add(member));
     if (members.length) group.centreOnMembers();
-    this.groups.push(group);
+    Show.joinNumbered(this.groups, [group]);
     return group;
   }
 
@@ -1840,6 +1929,19 @@ class Show extends EventEmitter {
     if (!member) return;
     if (member.group) member.group.remove(member);
     if (group) group.add(member);
+  }
+
+  /**
+   * Sets the order of the item list, first to last.
+   *
+   * @public
+   * @param {Array} items fixtures, objects, structures and groups, in order
+   */
+  setListOrder(items) {
+    items.forEach((item, i) => {
+      item.listOrder = i;
+    });
+    this.touch();
   }
 
   /**

@@ -124,8 +124,12 @@
             v-for="fact in deviceFacts"
             :key="fact.label"
           >
-            <dt>{{ fact.label }}</dt>
-            <dd>{{ fact.value }}</dd>
+            <dt :class="{ fact_warning: fact.warning }">
+              {{ fact.label }}
+            </dt>
+            <dd :class="{ fact_warning: fact.warning }">
+              {{ fact.value }}
+            </dd>
           </template>
         </dl>
       </div>
@@ -254,7 +258,9 @@
 </template>
 
 <script>
-import { pixelFill, pixelPitch, displayCurve } from '@/models/DMX/generic/display';
+import {
+  pixelFill, pitchText, displayCurve, emitterSize, unusualEmitter,
+} from '@/models/DMX/generic/display';
 import {
   throwRange, throwAngles, imageSizeAt, illuminanceAt,
 } from '@/models/DMX/generic/projector';
@@ -262,6 +268,7 @@ import { DEFAULT_PAN_SPEED, DEFAULT_TILT_SPEED } from '@/models/DMX/fixture.mode
 import { fixtureIcon } from '@/models/DMX/generic/fixture_kind';
 import { isShowKey } from '@/models/DMX/definition_store';
 import fixtureGuide from '@/models/DMX/fixture_guide';
+import { formatAddress } from '@/models/DMX/address_format';
 
 /** How long the copy button confirms for, in ms. */
 const COPY_FEEDBACK_MS = 1500;
@@ -479,7 +486,7 @@ export default {
       // last channel sits further out than the count alone implies.
       const first = fixture.addressOf(0);
       const last = fixture.addressOf(total - 1);
-      const at = (address) => `U${Math.floor(address / 512)}:${(address % 512) + 1}`;
+      const at = formatAddress;
 
       const wiring = [
         bar.scanAxis === 'column' ? 'down columns' : 'along rows',
@@ -582,7 +589,6 @@ export default {
       const wide = Math.round(p.pixelsWide);
       const high = Math.round(p.pixelsHigh);
       const fill = pixelFill(p);
-      const pitch = pixelPitch(p);
       const diagonal = Math.sqrt((p.width * 1000) ** 2 + (p.height * 1000) ** 2) / 25.4;
       const lit = fill.x >= 0.999 && fill.y >= 0.999
         ? 'pixels meet'
@@ -590,7 +596,7 @@ export default {
       const facts = [
         { label: 'Takes', value: `${wide} x ${high} video` },
         { label: 'Panel', value: `${(p.width * 1000).toFixed(0)} x ${(p.height * 1000).toFixed(0)} mm · ${diagonal.toFixed(0)}"` },
-        { label: 'Pitch', value: `${pitch.toFixed(2)} mm · ${(p.pixelSize * 1000).toFixed(1)} mm pixel · ${lit}` },
+        { label: 'Pitch', value: `${pitchText(p)} · ${(emitterSize(p) * 1000).toFixed(1)} mm emitter · ${lit}` },
         { label: 'Brightness', value: `${p.nits} nits` },
       ];
       // Only when it is bent. The arc and the chord are both worth saying: the
@@ -609,6 +615,11 @@ export default {
             + ` · r ${(curve.radius * 1000).toFixed(0)} mm · spans ${(chord * 1000).toFixed(0)} mm`,
         });
       }
+      // Said outright rather than left to the Pitch line: a panel built with
+      // an emitter nobody uses is the explanation for a wall that looks odd,
+      // and a definition cannot be edited, so this is all that can be done.
+      const unusual = unusualEmitter(p);
+      if (unusual) facts.push({ label: 'Unusual', value: unusual, warning: true });
       return facts;
     },
     /**
@@ -759,6 +770,9 @@ export default {
   font-size: 11px;
   color: var(--secondary-lighter);
   margin: 0;
+}
+.device_facts .fact_warning {
+  color: var(--accent-red, #d9534f);
 }
 .fixture_guide {
   font-family: Roboto-Regular, sans-serif;

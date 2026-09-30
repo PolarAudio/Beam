@@ -24,10 +24,12 @@
     "power": 80,
     "DMXconnector": "3-pin",
     "bulb": {
-      "type": "LED"
+      "type": "LED",
+      "lumens": 1750
     },
     "lens": {
-      "degreesMinMax": [11, 11]
+      "degreesMinMax": [11, 11],
+      "focus": "manual"
     },
     "focus": {
       "type": "Head",

@@ -16,6 +16,8 @@ import { kindOf } from './generic/fixture_kind';
 import Controls from '../../plugins/visualizer/controls';
 import withTransform from './scene_item.transform';
 import { SCENE_ITEM_KINDS } from './scene_item';
+import { itemLabel, splitSavedName } from './item_naming';
+import { formatAddress } from './address_format';
 
 /**
  * Splitting pattern for parsing fine channels
@@ -64,6 +66,8 @@ const CAPABILITY_TYPES = {
   Prism: 'Prism',
   PrismRotation: 'PrismRotation',
   Iris: 'Iris',
+  Frost: 'Frost',
+  FrostEffect: 'FrostEffect',
   Effect: 'Effect',
   BeamAngle: 'BeamAngle',
   BeamPosition: 'BeamPosition',
@@ -112,6 +116,14 @@ const DEFAULT_COLOR_TEMP = 8000;
  */
 export const DEFAULT_PAN_SPEED = 270;
 export const DEFAULT_TILT_SPEED = 210;
+
+/**
+ * Where a hand-focused lens starts, 0 fully out to 100 fully in. Halfway gives
+ * close to the edge a head without any focus control is drawn with.
+ *
+ * @constant {Number}
+ */
+const DEFAULT_MANUAL_FOCUS = 50;
 
 /**
  * Stand-in for a fixture the renderer has no model for.
@@ -234,6 +246,17 @@ class Fixture extends withTransform(Proxify) {
       this.modeName = data.mode;
       this.wheels = {};
       this.name = data.name || DEFAULT_FIXTURE_NAME;
+      /**
+       * Beam's number for this item among others of its kind with the same
+       * name; see item_naming.js. Given when the item joins the show.
+       */
+      this.instance = Number.isInteger(data.instance) ? data.instance : null;
+      if (this.instance === null) {
+        // Saved before instances existed: the number was part of the name.
+        const split = splitSavedName(this.name, [data.baseName, data.model]);
+        this.name = split.name;
+        this.instance = split.instance;
+      }
       this.category = data.category;
       this.channels = [];
       this.quickChannelsAccessors = {};
@@ -251,6 +274,11 @@ class Fixture extends withTransform(Proxify) {
        * see MovingHead's own accessor for why it is not given away freely.
        */
       this._castsShadow = !!data.castsShadow;
+      /** Where a hand-set lens is wound to: see `focus`. */
+      this._focus = data.focus != null && Number.isFinite(Number(data.focus))
+        ? Number(data.focus) : DEFAULT_MANUAL_FOCUS;
+      /** Hidden from the scene: see `hidden`. */
+      this._hidden = !!data.hidden;
       /**
        * What this device is set to, or null for a fixture that is neither a
        * projector nor a display.
@@ -352,14 +380,23 @@ class Fixture extends withTransform(Proxify) {
     return !!(this.OFLData && this.OFLData.asls && this.OFLData.asls.bar);
   }
 
+  /**
+   * How the fixture is shown and exported: its name and instance, `name N`.
+   *
+   * @readonly
+   * @type {String}
+   */
+  get label() {
+    return itemLabel(this.name, this.instance);
+  }
+
   get listable() {
     return {
-      name: this.name,
+      name: this.label,
       icon: this.isBar ? 'ledbar' : 'movinghead',
       id: this.id,
       universe: this.universe,
-      // chStart is 0-based internally; DMX addresses are shown 1-based.
-      more: `U${this.universe}-CH${this.chStart + 1}`,
+      more: this.address > -1 ? formatAddress(this.address) : 'unpatched',
     };
   }
 
@@ -376,6 +413,7 @@ class Fixture extends withTransform(Proxify) {
       category: this.category,
       manufacturer: this.manufacturer,
       name: this.name,
+      instance: this.instance || undefined,
       address: this.address,
       universeAligned: this.universeAligned,
       universe: this.universe,
@@ -388,6 +426,8 @@ class Fixture extends withTransform(Proxify) {
       groupId: this.group ? this.group.id : undefined,
       structureId: this.structure ? this.structure.id : undefined,
       castsShadow: this._castsShadow,
+      focus: this.hasManualFocus ? this._focus : undefined,
+      hidden: this._hidden || undefined,
       // Only the parked values, never what DMX happens to be saying -- the
       // same line the app already draws between an address and the wire.
       device: this.device ? this.device.showData : undefined,
@@ -613,10 +653,6 @@ class Fixture extends withTransform(Proxify) {
    */
   get modeNames() {
     return this.modes.map((mode) => mode.name);
-  }
-
-  get instance() {
-    return this;
   }
 
   /**
@@ -1071,6 +1107,23 @@ class Fixture extends withTransform(Proxify) {
       this._3DModel.setPrism(false);
       this._prismChannelId = null;
     }
+    // The speed channel that set a pan/tilt speed releases it the same way,
+    // back to the fixture's full speed.
+    if (this._panTiltSpeedChannelId === id
+      && (!capability || capability.type !== CAPABILITY_TYPES.PanTiltSpeed)
+      && typeof this._3DModel.setPanTiltSpeed === 'function') {
+      this._3DModel.setPanTiltSpeed(null);
+      this._panTiltSpeedChannelId = null;
+    }
+    // And frost: the channel that put it in clears it when it moves to a
+    // range that is neither frost nor a frost effect.
+    if (this._frostChannelId === id
+      && (!capability || (capability.type !== CAPABILITY_TYPES.Frost
+        && capability.type !== CAPABILITY_TYPES.FrostEffect))
+      && typeof this._3DModel.setFrost === 'function') {
+      this._3DModel.setFrost(0);
+      this._frostChannelId = null;
+    }
     if (capability) { // Making sure channel's capability is defined
       const values = capability.getValue(value); // Fetching values from capability value
       switch (capability.type) { // Checking capability type
@@ -1119,9 +1172,39 @@ class Fixture extends withTransform(Proxify) {
             this._3DModel.setPrismRotation(values);
           }
           break;
+        case CAPABILITY_TYPES.PanTiltSpeed:
+          if (typeof this._3DModel.setPanTiltSpeed === 'function') {
+            this._3DModel.setPanTiltSpeed({
+              speed: values.panTiltSpeed,
+              duration: values.panTiltDuration,
+            });
+            this._panTiltSpeedChannelId = id;
+          }
+          break;
+        case CAPABILITY_TYPES.Frost:
+          if (typeof this._3DModel.setFrost === 'function') {
+            this._3DModel.setFrost(values.frostIntensity / 100);
+            this._frostChannelId = id;
+          }
+          break;
+        case CAPABILITY_TYPES.FrostEffect:
+          if (typeof this._3DModel.setFrostEffect === 'function') {
+            this._3DModel.setFrostEffect(`${values.effectName || ''} ${values.comment || ''}`, values.speed);
+            this._frostChannelId = id;
+          }
+          break;
         case CAPABILITY_TYPES.Iris:
           if (typeof this._3DModel.setIris === 'function') {
             this._3DModel.setIris(values.openPercent / 100);
+          }
+          break;
+        case CAPABILITY_TYPES.Zoom:
+          // Degrees or a share of the zoom range, whichever the profile used.
+          if (typeof this._3DModel.setZoom === 'function') {
+            const entity = capability.entities.zoom || {};
+            this._3DModel.setZoom(values.zoom, !!entity.inUnit);
+          } else {
+            this._3DModel.zoom = values.zoom;
           }
           break;
         case CAPABILITY_TYPES.ColorTemperature:
@@ -1162,6 +1245,7 @@ class Fixture extends withTransform(Proxify) {
     this.setupFineChannels();
     this.setupQuickAccessors();
     this.prepare3DModelInstance();
+    this.applyHidden();
   }
 
   /**
@@ -1323,6 +1407,7 @@ class Fixture extends withTransform(Proxify) {
           // Not every profile carries a bulb block; a daylight-ish default is
           // better than refusing to build the fixture.
           colorTemp: (this.OFLData.physical.bulb || {}).colorTemperature || DEFAULT_COLOR_TEMP,
+          lumens: MovingHead.lumensOf(this.OFLData.physical),
           // Absent from OFL, which has no notion of how fast a head travels.
           // A profile may carry its own `panSpeed` and `tiltSpeed` keys.
           panSpeed: this.panSpeed,
@@ -1346,6 +1431,7 @@ class Fixture extends withTransform(Proxify) {
         // Pushed down after building: a fixture reloaded from a show carries
         // its own answer, and the renderer starts every head with shadows off.
         movingHead.castsShadow = this._castsShadow;
+        if (this.hasManualFocus) movingHead.focus = this._focus;
         break;
       }
       default: {
@@ -1472,6 +1558,72 @@ class Fixture extends withTransform(Proxify) {
 
   get castsShadow() {
     return !!this._castsShadow;
+  }
+
+  /**
+   * Whether the profile says the lens is focused by hand. OFL has no word for
+   * it, so a profile marks it Beam's way: `physical.lens.focus: "manual"`.
+   *
+   * @readonly
+   * @type {Boolean}
+   */
+  get hasManualFocus() {
+    const lens = ((this.OFLData || {}).physical || {}).lens || {};
+    return lens.focus === 'manual';
+  }
+
+  /**
+   * Where a hand-focused lens is wound to, 0 fully out to 100 fully in. On
+   * the placement, because each unit's lens is set on its own.
+   *
+   * @type {Number}
+   */
+  set focus(value) {
+    this._focus = Math.min(Math.max(Number(value) || 0, 0), 100);
+    if (this.hasManualFocus && this._3DModel && 'focus' in this._3DModel) {
+      this._3DModel.focus = this._focus;
+    }
+  }
+
+  get focus() {
+    return this._focus;
+  }
+
+  /**
+   * Whether this item is hidden from the scene: not drawn, giving no light,
+   * and not picked in the 3D view. Saved with the show. DMX still arrives,
+   * so showing it again shows what it is doing now.
+   *
+   * @type {Boolean}
+   */
+  set hidden(state) {
+    this._hidden = !!state;
+    this.applyHidden();
+  }
+
+  get hidden() {
+    return !!this._hidden;
+  }
+
+  /**
+   * Hidden by its own flag or by the structure or group holding it.
+   *
+   * @readonly
+   * @type {Boolean}
+   */
+  get isHidden() {
+    return !!(this._hidden
+      || (this.structure && this.structure.hidden)
+      || (this.group && this.group.hidden));
+  }
+
+  /**
+   * Pushes whether this is hidden down to what draws it.
+   *
+   * @public
+   */
+  applyHidden() {
+    if (this._3DModel && 'hidden' in this._3DModel) this._3DModel.hidden = this.isHidden;
   }
 
   /**

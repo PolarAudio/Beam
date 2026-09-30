@@ -308,12 +308,32 @@ float viewDistance(float depth) {
 }
 
 /**
+ * The share of a cell the round aperture covers; outside it the atlas is
+ * black, so a cell's mean over this is the pattern's mean inside the hole.
+ */
+#define GOBO_DISC_SHARE 0.7238
+
+/**
+ * @function beamGoboMean
+ * @brief how much light a gobo passes overall, for full frost
+ * @param vec2 cell the pattern's cell in the atlas
+ * @returns float 0..1
+ *
+ * The atlas's mip at one texel per cell is the cell's mean.
+ */
+float beamGoboMean(vec2 cell) {
+  float lod = log2(float(textureSize(goboAtlas, 0).x) / GOBO_GRID);
+  return min(textureLod(goboAtlas, (cell + 0.5) / GOBO_GRID, lod).r / GOBO_DISC_SHARE, 1.0);
+}
+
+/**
  * @function beamGobo
  * @brief a gobo's stencil at a point of the aperture
  * @param vec2 p aperture position, (0,0) the axis, 1 the field's radius
  * @param vec2 patternAngle the gobo's pattern index and its angle
  * @param float lod how blurred to read it for the air, in mip levels
- * @param float defocus the focus blur, 0 sharp to 2 fully out
+ * @param float defocus the focus blur, 0 sharp to 2 fully out; past 2, frost,
+ *   blending on to the pattern's mean by 3
  * @returns float 1 where light passes
  *
  * Pattern 0 is open and costs no read. The pattern is rotated about the
@@ -332,7 +352,10 @@ float beamGobo(vec2 p, vec2 patternAngle, float lod, float defocus) {
   float index = floor(patternAngle.x + 0.5);
   vec2 cell = vec2(mod(index, GOBO_GRID), floor(index / GOBO_GRID));
   vec3 levels = textureLod(goboAtlas, (cell + q) / GOBO_GRID, min(lod, GOBO_LOD_MAX)).rgb;
-  return mix(mix(levels.r, levels.g, clamp(defocus, 0.0, 1.0)), levels.b, clamp(defocus - 1.0, 0.0, 1.0));
+  float v = mix(mix(levels.r, levels.g, clamp(defocus, 0.0, 1.0)), levels.b, clamp(defocus - 1.0, 0.0, 1.0));
+  float wash = clamp(defocus - 2.0, 0.0, 1.0);
+  if (wash > 0.0) v = mix(v, beamGoboMean(cell), wash);
+  return v;
 }
 
 /**

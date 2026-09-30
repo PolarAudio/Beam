@@ -201,6 +201,49 @@ function clearCache() {
 }
 
 /**
+ * Writes container entries out under a mount root.
+ *
+ * Entry names come from a file, so they are not trusted to stay inside the
+ * root: anything that would land elsewhere is skipped by name and the rest
+ * still unpacks.
+ *
+ * @param {String} root absolute path of the mount's library folder
+ * @param {Array<String>} names entry names to write, each under `Library/`
+ * @param {Object} entries entry name to bytes
+ * @param {String} source what the entries came from, for the log
+ */
+function unpack(root, names, entries, source) {
+  names.forEach((name) => {
+    const file = path.resolve(root, name.slice(LIBRARY_PREFIX.length));
+    const relative = path.relative(root, file);
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+      console.error(`[documentstore] skipping ${name} in ${source}: outside the library`);
+      return;
+    }
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, entries[name]);
+    } catch (err) {
+      console.error(`[documentstore] could not unpack ${name} from ${source}: ${err.message}`);
+    }
+  });
+}
+
+/**
+ * The profiles and overrides under a mount root, as `mount` returns them.
+ *
+ * @param {String|null} root
+ * @returns {Object} `{ profiles, overrides }`
+ */
+function carriedAt(root) {
+  if (!root) return { profiles: {}, overrides: {} };
+  return {
+    profiles: library.readAll('profiles', root),
+    overrides: library.readAll('overrides', root),
+  };
+}
+
+/**
  * Makes a document the open one, unpacking what it carries.
  *
  * Entry names come from the file, so they are not trusted to stay inside the
@@ -226,25 +269,31 @@ function mount(target) {
 
   const digest = crypto.createHash('sha1').update(target).digest('hex').slice(0, 12);
   const root = path.join(cacheRoot(), digest, 'Library');
-  names.forEach((name) => {
-    const file = path.resolve(root, name.slice(LIBRARY_PREFIX.length));
-    const relative = path.relative(root, file);
-    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
-      console.error(`[documentstore] skipping ${name} in ${target}: outside the library`);
-      return;
-    }
-    try {
-      fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, entries[name]);
-    } catch (err) {
-      console.error(`[documentstore] could not unpack ${name} from ${target}: ${err.message}`);
-    }
-  });
+  unpack(root, names, entries, target);
   mounted.root = root;
-  return {
-    profiles: library.readAll('profiles', root),
-    overrides: library.readAll('overrides', root),
-  };
+  return carriedAt(root);
+}
+
+/**
+ * Replaces what the open document carries, in the mount only.
+ *
+ * The `.beam` on disk is untouched: the next save writes the new set into it,
+ * because a save carries the mount forward. Until then, closing without saving
+ * leaves the file as it was, the same as any other edit.
+ *
+ * @public
+ * @param {Object} entries entry name to bytes, each under `Library/`
+ * @returns {Object|null} `{ profiles, overrides }` as now carried, or null when
+ *   the open document carries nothing to replace
+ */
+function replaceMounted(entries) {
+  const root = mountRoot();
+  if (!root) return null;
+  removeFolder(root);
+  const names = Object.keys(entries).filter((name) => name.startsWith(LIBRARY_PREFIX)
+    && !name.endsWith('/') && entries[name] && entries[name].length > 0);
+  unpack(root, names, entries, 'the library refresh');
+  return carriedAt(root);
 }
 
 /**
@@ -388,6 +437,8 @@ export default {
   mount,
   unmount,
   mountRoot,
+  mountedEntries,
+  replaceMounted,
   clearCache,
   write,
   openDialog,

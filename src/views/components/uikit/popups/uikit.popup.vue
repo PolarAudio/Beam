@@ -417,9 +417,13 @@ export default {
   border-radius: 5px;
   z-index: 200;
   height: auto;
+  /* Never taller than the window: past this the body scrolls, and the header
+     you drag by and the buttons stay where they are. */
+  max-height: calc(100vh - 32px);
   transform-origin: 50% 50%;
 }
 .header {
+  flex-shrink: 0;
   min-height: 30px;
   width: 100%;
   padding: 0 10px;
@@ -447,11 +451,20 @@ export default {
   cursor: pointer;
   opacity: 1;
 }
+/* `safe`: once the content is taller than the body, plain centring would push
+   its top above where scrolling starts, out of reach. */
 .body {
-  align-items: center;
+  align-items: safe center;
   height: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  /* The scrollbar's room is kept whether it is showing or not, so a dialog
+     does not change width when the window gets short enough to need it. */
+  scrollbar-gutter: stable;
 }
 .popup_validation {
+  flex-shrink: 0;
   width: 100%;
   padding: 8px;
   border-top: 1px solid var(--primary-dark);

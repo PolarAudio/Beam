@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { Proxify } from '../utils/proxify.utils';
 import GroupHandle from '../../plugins/visualizer/group_handle';
 import { SCENE_ITEM_KINDS, newUid } from './scene_item';
+import { itemLabel, splitSavedName } from './item_naming';
 
 /**
  * @file A named group of scene objects that moves as one.
@@ -44,7 +45,18 @@ class Group extends Proxify {
     this.uid = newUid();
     this._id = data.id !== undefined ? data.id : groupCount;
     groupCount = Math.max(groupCount, this._id + 1);
-    this._name = data.name || `Group ${this._id + 1}`;
+    this._name = data.name || 'Group';
+    /**
+     * Beam's number for this item among others of its kind with the same
+     * name; see item_naming.js. Given when the item joins the show.
+     */
+    this.instance = Number.isInteger(data.instance) ? data.instance : null;
+    if (this.instance === null) {
+      // Saved before instances existed: the number was part of the name.
+      const split = splitSavedName(this._name, [data.baseName]);
+      this._name = split.name;
+      this.instance = split.instance;
+    }
     this._position = {
       x: (data.position || {}).x || 0,
       y: (data.position || {}).y || 0,
@@ -57,6 +69,8 @@ class Group extends Proxify {
     };
     /** Members, in list order. Held as objects, not ids. */
     this.members = [];
+    /** Hidden from the scene: see `hidden`. */
+    this._hidden = !!data.hidden;
     /**
      * Which flattenings of this group are wanted when exporting a layout.
      *
@@ -84,6 +98,16 @@ class Group extends Proxify {
   }
 
   /**
+   * How the item is shown and exported: its name and instance, `name N`.
+   *
+   * @readonly
+   * @type {String}
+   */
+  get label() {
+    return itemLabel(this._name, this.instance);
+  }
+
+  /**
    * Exportable show data chunk. Members are referenced by id; they serialise
    * themselves in the fixture list, as ordinary fixtures.
    *
@@ -94,6 +118,8 @@ class Group extends Proxify {
     return {
       id: this._id,
       name: this._name,
+      instance: this.instance || undefined,
+      hidden: this._hidden || undefined,
       position: { ...this._position },
       rotation: { ...this._rotation },
       members: this.members.map((member) => member.id),
@@ -207,6 +233,29 @@ class Group extends Proxify {
     this.members.push(member);
     member.group = this;
     this.captureLocal(member);
+    if (member.applyHidden) member.applyHidden();
+  }
+
+  /**
+   * Whether the group is hidden, which hides every member with it.
+   *
+   * Members are told rather than asked each frame: their renderers hold the
+   * state, and a member reads its container's flag when it works out its own.
+   *
+   * @type {Boolean}
+   */
+  set hidden(state) {
+    this._hidden = !!state;
+    this.members.forEach((member) => { if (member.applyHidden) member.applyHidden(); });
+  }
+
+  get hidden() {
+    return !!this._hidden;
+  }
+
+  /** @readonly @type {Boolean} */
+  get isHidden() {
+    return !!this._hidden;
   }
 
   /**
@@ -221,6 +270,7 @@ class Group extends Proxify {
     this.members.splice(index, 1);
     member.group = null;
     member.localTransform = null;
+    if (this._hidden && 'hidden' in member) member.hidden = true;
   }
 
   /**
@@ -292,6 +342,10 @@ class Group extends Proxify {
       z: centre.z / this.members.length,
     };
     this.members.forEach((member) => this.captureLocal(member));
+    // The handle the gizmo holds follows the new centre. Left where it was,
+    // the gizmo writes its old position back when it lets go, and every
+    // member moves by the difference.
+    if (this._3DModel) this._3DModel.sync();
   }
 }
 

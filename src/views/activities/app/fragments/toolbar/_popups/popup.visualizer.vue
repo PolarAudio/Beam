@@ -222,6 +222,7 @@
         <uk-num-input
           v-model="$show.visualizerHandle.gridOpacity"
           :precision="2"
+          :step="0.05"
           :min="0"
           :max="1"
           style="width: 100px"
@@ -278,12 +279,23 @@
         <uk-spacer />
         <uk-checkbox v-model="$show.visualizerHandle.debug" />
       </uk-flex>
+      <uk-flex center-h>
+        <div>
+          <h4>Channel range guide:</h4>
+          <p class="subtitle">
+            Show a channel's ranges beside its DMX value while the value changes.
+          </p>
+        </div>
+        <uk-spacer />
+        <uk-checkbox v-model="channelRangeGuide" />
+      </uk-flex>
     </uk-flex>
   </uk-popup>
 </template>
 
 <script>
 import PopupMixin from '@/views/mixins/popup.mixin';
+import Preferences from '@/plugins/visualizer/preferences';
 
 export default {
   name: 'VisualizerPopup',
@@ -300,9 +312,25 @@ export default {
       headerData: { title: 'Visualizer settings' },
       /** Environment images in the library, as `{ key, name, url }`. */
       environments: [],
+      /** Mirrors the preference, which is not reactive on its own. */
+      channelRangeGuideState: Preferences.get('channelRangeGuide'),
     };
   },
   computed: {
+    /**
+     * Whether DMX value fields show their channel's ranges while moving.
+     *
+     * @type {Boolean}
+     */
+    channelRangeGuide: {
+      get() {
+        return this.channelRangeGuideState;
+      },
+      set(value) {
+        this.channelRangeGuideState = !!value;
+        Preferences.set('channelRangeGuide', !!value);
+      },
+    },
     /**
      * Every choice the two room lists offer.
      *
@@ -402,6 +430,7 @@ export default {
       // including changes already accepted with OK.
       if (state && this.$show.visualizerHandle) {
         this.initialValues = this.$show.visualizerHandle.showData;
+        this.channelRangeGuideState = Preferences.get('channelRangeGuide');
         // Re-read the folder on every opening: the user may have put a file in
         // it since, and the dialog is the only place that would show it.
         this.loadEnvironments();

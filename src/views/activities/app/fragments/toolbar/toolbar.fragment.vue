@@ -15,19 +15,18 @@
     <newshow-popup v-model="newProjectPopupState" />
     <artnet-popup v-model="artnetPopupState" />
     <video-popup v-model="videoPopupState" />
-    <madmapper-popup v-model="madmapperPopupState" />
   </uk-flex>
 </template>
 
 <script>
 import EventBus from '@/plugins/eventbus';
+import confirm from '@/plugins/confirm';
 import VisualizerPopup from './_popups/popup.visualizer.vue';
 import LicensePopup from './_popups/popup.license.vue';
 import CreditsPopup from './_popups/popup.credits.vue';
 import NewshowPopup from './_popups/popup.newshow.vue';
 import ArtnetPopup from './_popups/popup.artnet.vue';
 import VideoPopup from './_popups/popup.video.vue';
-import MadmapperPopup from './_popups/popup.madmapper.vue';
 
 export default {
   name: 'ToolbarFragment',
@@ -41,7 +40,6 @@ export default {
     CreditsPopup,
     NewshowPopup,
     ArtnetPopup,
-    MadmapperPopup,
     VideoPopup,
   },
   data() {
@@ -60,10 +58,6 @@ export default {
        */
       artnetPopupState: false,
       videoPopupState: false,
-      /**
-       * MadMapper layout export popup state
-       */
-      madmapperPopupState: false,
       /**
        * New project popup state
        */
@@ -131,10 +125,10 @@ export default {
               },
             },
             {
-              name: 'Export MadMapper Layout',
-              icon: 'export',
+              name: 'Refresh from Library',
+              icon: 'folder',
               callback: () => {
-                this.madmapperPopupState = true;
+                this.refreshFromLibrary();
               },
             },
           ],
@@ -330,6 +324,42 @@ export default {
      */
     async exportShow() {
       await this.$show.exportDocument();
+    },
+    /**
+     * Replaces the profiles and objects an exported project carries with the
+     * library's, after asking: the show reloads, and is unsaved afterwards.
+     *
+     * @public
+     * @async
+     */
+    async refreshFromLibrary() {
+      const notice = (message, detail = '') => confirm({
+        title: 'Refresh from Library', message, detail, yes: 'OK', no: 'Close',
+      });
+      if (!this.$show.documentPath) {
+        await notice('This project has not been saved, so it carries nothing to refresh.');
+        return;
+      }
+      const go = await confirm({
+        title: 'Refresh from Library',
+        message: 'Replace the fixture profiles and objects this project carries with the ones in your library?',
+        detail: 'The show reloads with the library copies. Save to keep them in the file; '
+          + 'close without saving to keep the old ones.',
+        yes: 'Refresh',
+        no: 'Cancel',
+      });
+      if (!go) return;
+      const { carried, refreshed, kept } = await this.$show.refreshFromLibrary();
+      const onlyHere = kept.length
+        ? `Not in your library, so kept as carried: ${kept.join(', ')}`
+        : '';
+      if (!carried) {
+        await notice('This project carries no copies of its own. It already uses your library.');
+      } else if (!refreshed.length) {
+        await notice('Everything this project carries already matches your library.', onlyHere);
+      } else if (onlyHere) {
+        await notice(`Refreshed ${refreshed.length} item(s): ${refreshed.join(', ')}`, onlyHere);
+      }
     },
     /**
      * Display visualizer popup

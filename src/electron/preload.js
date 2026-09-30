@@ -211,6 +211,28 @@ contextBridge.exposeInMainWorld('library', {
    */
   writeThumbnail: (key, dataUrl) => ipcRenderer.invoke('library:writeThumbnail', key, dataUrl),
   /**
+   * Asks for a model file and copies it, with the files it refers to, into
+   * `Library/Objects`. It is not an object until `finishImport` describes it.
+   *
+   * @returns {Promise<Object>} `{ ok, id, entry, skipped }` or `{ ok: false, reason }`
+   */
+  importObject: () => ipcRenderer.invoke('library:importObject'),
+  /**
+   * Writes an imported model's units and up axis, and its name if changed.
+   *
+   * @param {Number} id from `importObject`
+   * @param {Object} settings `{ name, scale, upAxis }`
+   * @returns {Promise<Object>} `{ ok, key }` or `{ ok: false, reason }`
+   */
+  finishImport: (id, settings) => ipcRenderer.invoke('library:finishImport', id, settings),
+  /**
+   * Removes a cancelled import's files from the library.
+   *
+   * @param {Number} id from `importObject`
+   * @returns {Promise<Object>} `{ ok }`
+   */
+  cancelImport: (id) => ipcRenderer.invoke('library:cancelImport', id),
+  /**
    * Environment images in `Library/Environments`.
    *
    * Metadata only. Each carries a `library://` url, which is what `RGBELoader`
@@ -295,13 +317,15 @@ contextBridge.exposeInMainWorld('documentStore', {
   /** Forgets the open document: a new or imported show has none. */
   unmount: () => ipcRenderer.invoke('document:unmount'),
   /**
+   * Saves the show. A document that carries files keeps carrying the ones the
+   * show still references, and only those.
+   *
    * @param {String} target
    * @param {String} json serialised show
-   * @param {Object} [resources] entry path to serialised contents; collecting
-   *   these is what makes the file an export rather than an ordinary save
-   * @returns {Promise<Boolean>} whether the write succeeded
+   * @param {Object} wanted `{ profiles, objects }`, each an array of keys
+   * @returns {Promise<Object>} `{ ok, carried, profiles, overrides }`
    */
-  write: (target, json, resources) => ipcRenderer.invoke('document:write', target, json, resources),
+  write: (target, json, wanted) => ipcRenderer.invoke('document:write', target, json, wanted),
   /**
    * Writes an export: the show with every profile and model it references
    * collected into the file, found by key in the library and shipped assets.
@@ -312,6 +336,15 @@ contextBridge.exposeInMainWorld('documentStore', {
    * @returns {Promise<Object>} `{ ok, collected, missing }`
    */
   export: (target, json, wanted) => ipcRenderer.invoke('document:export', target, json, wanted),
+  /**
+   * Replaces what the open document carries with this machine's library
+   * copies, for the items the show references. Only the unpacked copy
+   * changes; the file takes it on the next save.
+   *
+   * @param {Object} wanted `{ profiles, objects }`, each an array of keys
+   * @returns {Promise<Object>} `{ carried, refreshed, kept, objects, profiles, overrides }`
+   */
+  refresh: (wanted) => ipcRenderer.invoke('document:refresh', wanted),
   /** @returns {Promise<String|null>} chosen path, or null when cancelled */
   open: () => ipcRenderer.invoke('document:open'),
   /** @returns {Promise<String|null>} chosen path, or null when cancelled */

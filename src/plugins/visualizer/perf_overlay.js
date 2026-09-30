@@ -40,7 +40,28 @@ const state = {
   active: null,
   cpuStart: 0,
   renderer: null,
+  /** Which graphics adapter is drawing, as the driver names it. */
+  adapter: '-',
 };
+
+/**
+ * The graphics adapter's name, as the driver reports it.
+ *
+ * On a laptop with two GPUs this is the only way to tell from a screenshot
+ * which one is drawing: every other number here reads the same on both, only
+ * slower on the integrated one.
+ *
+ * @param {Object} gl WebGL context
+ * @returns {String}
+ */
+function adapterName(gl) {
+  const debug = gl.getExtension('WEBGL_debug_renderer_info');
+  const name = gl.getParameter(debug ? debug.UNMASKED_RENDERER_WEBGL : gl.RENDERER);
+  // ANGLE wraps it: "ANGLE (NVIDIA, NVIDIA GeForce RTX 3050 Laptop GPU (0x...)
+  // Direct3D11 vs_5_0 ps_5_0, D3D11)". The part after the vendor is the card.
+  const wrapped = /^ANGLE \([^,]+,\s*(.+?)(?:\s+\(0x[0-9a-f]+\))?\s+Direct3D/i.exec(String(name || ''));
+  return wrapped ? wrapped[1] : String(name || '-');
+}
 
 const average = (samples) => (
   samples.length ? samples.reduce((a, b) => a + b, 0) / samples.length : 0
@@ -113,8 +134,11 @@ function init(renderer) {
   // Often unavailable: browsers gate it because precise GPU timing is a
   // fingerprinting and side-channel vector. CPU time and draw counts still work.
   state.ext = state.gl.getExtension('EXT_disjoint_timer_query_webgl2');
+  state.adapter = adapterName(state.gl);
   // eslint-disable-next-line no-console
   console.log('[perf] GPU timer query:', state.ext ? 'available' : 'unavailable');
+  // eslint-disable-next-line no-console
+  console.log('[perf] adapter:', state.adapter);
   state.lastReport = performance.now();
 }
 
@@ -204,6 +228,7 @@ function end() {
   }
 
   state.element.textContent = [
+    `adapter    ${state.adapter}`,
     `camera     ${cameraLine()}`,
     `fps        ${state.fps.toFixed(1)}`,
     `gpu        ${gpu}`,

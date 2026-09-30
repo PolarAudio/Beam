@@ -253,9 +253,10 @@ button {
 }
 
 /** Global Scrollbar styling */
+/* The platform's full width: a thin bar is too hard to hit with a mouse. */
 * {
   scrollbar-color: var(--secondary-dark) var(--primary-dark);
-  scrollbar-width: thin;
+  scrollbar-width: auto;
   z-index: 0;
 }
 

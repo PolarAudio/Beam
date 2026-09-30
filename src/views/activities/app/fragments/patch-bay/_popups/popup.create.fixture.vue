@@ -33,11 +33,9 @@
         />
       </uk-flex>
 
-      <p
-        v-if="nameTaken"
-        class="create_warning"
-      >
-        This show already has a "{{ name }}". Pick another name.
+      <!-- Always present, empty until needed: see .create_warning. -->
+      <p class="create_warning one_line">
+        {{ nameTaken ? `This show already has a "${name}". Pick another name.` : '' }}
       </p>
 
       <template v-if="isBar">
@@ -374,10 +372,7 @@
           :controls="projectorControls"
         />
 
-        <p
-          v-if="lensWarning"
-          class="create_warning"
-        >
+        <p class="create_warning">
           {{ lensWarning }}
         </p>
 
@@ -433,8 +428,8 @@
         <uk-flex :gap="8">
           <uk-num-input
             v-model="screenCurveAngle"
-            class="wide_field"
-            label="Curve ° (+ convex, − concave, 0 flat)"
+            class="wide_field one_line_label"
+            label="Curve angle ° (+ convex, − concave, 0 flat)"
             :precision="1"
             :min="-180"
             :max="180"
@@ -462,17 +457,6 @@
             :min="16"
             :max="32768"
           />
-          <!-- Tenths, because a pixel is small: a fine-pitch wall runs a
-               1.5 mm emitter in a 2.6 mm cell and whole millimetres cannot say
-               so. The same field the LED bar creator calls emitter size. -->
-          <uk-num-input
-            v-model="pixelSize"
-            class="field"
-            label="Pixel (mm)"
-            :precision="1"
-            :min="0.1"
-            :max="200"
-          />
           <uk-num-input
             v-model="nits"
             class="wide_field"
@@ -481,13 +465,39 @@
             :max="20000"
           />
         </uk-flex>
+        <!-- The emitter's width as a share of the pitch, linear, so that
+             resizing the panel keeps it in proportion. Auto follows the likely
+             package for the pitch, a package is that package at this pitch,
+             and Manual takes a typed percentage. -->
+        <uk-flex :gap="8">
+          <uk-select-input
+            v-model="emitterChoice"
+            style="width: 200px"
+            label="Fill factor"
+            :options="emitterOptions"
+          />
+          <uk-num-input
+            v-if="emitterManual"
+            v-model="emitterPercent"
+            class="field"
+            label="%"
+            :min="1"
+            :max="100"
+          />
+        </uk-flex>
 
-        <span class="create_section">Video</span>
+        <span class="create_section">Summary</span>
         <p class="create_headline">
           {{ videoSummary }}
         </p>
         <p class="create_summary">
           {{ panelSummary }}
+        </p>
+        <p class="create_summary">
+          {{ emitterSummary }}
+        </p>
+        <p class="create_warning">
+          {{ emitterWarning }}
         </p>
         <p class="create_summary">
           {{ pixelSummary }}
@@ -791,8 +801,13 @@ import {
 import {
   DEFAULT_DISPLAY_PARAMS,
   CONTROL_DEFS as DISPLAY_CONTROL_DEFS,
-  pixelPitch,
   pixelFill,
+  cellPitch,
+  pitchText,
+  EMITTER_PACKAGES,
+  likelyEmitter,
+  emitterSize,
+  unusualEmitter,
 } from '@/models/DMX/generic/display';
 import {
   DEFAULT_LASER_PARAMS,
@@ -817,6 +832,11 @@ import DeviceControlsForm from '../../modifiers/device/device.controls.form.vue'
 
 /** Millimetres per metre: the form talks mm, the model talks metres. */
 const MM = 1000;
+
+/** The fixed entries at the top of the fill factor list; packages follow. */
+const EMITTER_AUTO = 0;
+const EMITTER_MANUAL = 1;
+const EMITTER_FIRST_PACKAGE = 2;
 
 /**
  * Option lists.
@@ -922,7 +942,10 @@ export default {
       screenBezel: DEFAULT_DISPLAY_PARAMS.bezel * MM,
       screenPixelsWide: DEFAULT_DISPLAY_PARAMS.pixelsWide,
       screenPixelsHigh: DEFAULT_DISPLAY_PARAMS.pixelsHigh,
-      pixelSize: DEFAULT_DISPLAY_PARAMS.pixelSize * MM,
+      // An index into emitterOptions: Auto, Manual, then each package.
+      emitterChoice: EMITTER_AUTO,
+      // The typed percentage, used while the choice is Manual.
+      emitterPercent: 50,
       screenCurveAngle: DEFAULT_DISPLAY_PARAMS.curveAngle,
       nits: DEFAULT_DISPLAY_PARAMS.nits,
       displayControls: blankRecords(
@@ -987,6 +1010,10 @@ export default {
     };
   },
   computed: {
+    /** Whether the fill factor is typed rather than chosen. */
+    emitterManual() {
+      return this.emitterChoice === EMITTER_MANUAL;
+    },
     /**
      * Selected values, resolved from the indices the select components model.
      */
@@ -1170,10 +1197,74 @@ export default {
         bezel: this.screenBezel / MM,
         pixelsWide: this.screenPixelsWide,
         pixelsHigh: this.screenPixelsHigh,
-        pixelSize: this.pixelSize / MM,
+        emitterFill: this.fillForChoice(this.emitterChoice),
         curveAngle: this.screenCurveAngle,
         nits: this.nits,
       };
+    },
+    /**
+     * The panel's pitch on each axis. From the fields directly, because the
+     * envelope's fill factor is itself worked out from it.
+     *
+     * @type {Object}
+     */
+    displayCellPitch() {
+      return cellPitch({
+        width: this.screenWidth / MM,
+        height: this.screenHeight / MM,
+        pixelsWide: this.screenPixelsWide,
+        pixelsHigh: this.screenPixelsHigh,
+      });
+    },
+    /**
+     * The emitter a panel of this pitch is most likely built with -- judged on
+     * the finer pitch, the side it has to fit.
+     *
+     * @type {Object}
+     */
+    likelyDisplayEmitter() {
+      return likelyEmitter(this.displayCellPitch.finer);
+    },
+    /**
+     * The fill factor choices, each with what it comes to at this pitch.
+     *
+     * @type {Array}
+     */
+    emitterOptions() {
+      const likely = this.likelyDisplayEmitter;
+      const percent = (fill) => `${Math.round(fill * 100)}%`;
+      return [
+        `Auto — ${likely.name}, ${percent(likely.fill)}`,
+        'Manual',
+        ...EMITTER_PACKAGES.map((pkg, i) => `${pkg.name} — ${percent(this.fillForChoice(i + EMITTER_FIRST_PACKAGE))}`),
+      ];
+    },
+    /**
+     * Which emitter the field stands for, and whether Beam chose it.
+     *
+     * @type {String}
+     */
+    emitterSummary() {
+      const pitch = pitchText(this.displayParams);
+      const size = emitterSize(this.displayParams) * MM;
+      if (this.emitterChoice === EMITTER_MANUAL) {
+        return `Manual emitter: ${size.toFixed(1)} mm in a ${pitch} pitch.`;
+      }
+      const pkg = this.emitterChoice === EMITTER_AUTO
+        ? this.likelyDisplayEmitter
+        : EMITTER_PACKAGES[this.emitterChoice - EMITTER_FIRST_PACKAGE];
+      if (pkg.name === 'LCD') {
+        return `LCD or OLED at a ${pitch} pitch — pixels meet.`;
+      }
+      return `${pkg.name} (${pkg.size.toFixed(1)} mm) at a ${pitch} pitch.`;
+    },
+    /**
+     * Said when the emitter is smaller than panels are built with.
+     *
+     * @type {String|null}
+     */
+    emitterWarning() {
+      return unusualEmitter(this.displayParams);
     },
     /**
      * The display's parameters, as the model wants them.
@@ -1214,12 +1305,12 @@ export default {
     panelSummary() {
       const panel = this.screenWidth / Math.max(this.screenHeight, 1);
       const pixels = this.screenPixelsWide / Math.max(this.screenPixelsHigh, 1);
-      const pitch = pixelPitch(this.displayParams);
+      const pitch = pitchText(this.displayParams);
       const diagonal = Math.sqrt(this.screenWidth ** 2 + this.screenHeight ** 2) / 25.4;
       const shape = Math.abs(panel - pixels) < 0.01
         ? 'panel and pixels agree'
         : `panel ${panel.toFixed(2)}:1 but pixels ${pixels.toFixed(2)}:1 — the picture will stretch`;
-      return `${diagonal.toFixed(0)}" diagonal · ${pitch.toFixed(2)} mm pitch · ${shape}`;
+      return `${diagonal.toFixed(0)}" diagonal · ${pitch} pitch · ${shape}`;
     },
     /**
      * What the pixel size comes to as a proportion of the cell.
@@ -1533,6 +1624,14 @@ export default {
   },
   watch: {
     /**
+     * Switching to Manual starts from what was showing, so the field opens on
+     * the value the panel already had rather than on an unrelated number.
+     */
+    emitterChoice(choice, previous) {
+      if (choice !== EMITTER_MANUAL || previous === EMITTER_MANUAL) return;
+      this.emitterPercent = Math.round(this.fillForChoice(previous) * 100);
+    },
+    /**
      * A new lamp starts with the colour that lamp is usually sold with: a
      * tube white, an array RGB. The list has changed under the index, so the
      * index is looked up afresh rather than kept.
@@ -1585,6 +1684,19 @@ export default {
     },
   },
   methods: {
+    /**
+     * The fill factor a choice in the list comes to at this panel's pitch.
+     *
+     * @param {Number} choice index into emitterOptions
+     * @returns {Number} 0-1
+     */
+    fillForChoice(choice) {
+      if (choice === EMITTER_AUTO) return this.likelyDisplayEmitter.fill;
+      if (choice === EMITTER_MANUAL) return this.emitterPercent / 100;
+      const pkg = EMITTER_PACKAGES[choice - EMITTER_FIRST_PACKAGE];
+      const pitch = this.displayCellPitch.finer;
+      return pkg && pitch > 0 ? Math.min(pkg.size / pitch, 1) : this.likelyDisplayEmitter.fill;
+    },
     /**
      * What a set of controls comes to on a patch sheet, and a warning when two
      * of them claim the same byte.
@@ -1697,6 +1809,7 @@ export default {
   color: var(--secondary-lighter-alt);
   border-bottom: 1px solid var(--primary-dark);
   padding-bottom: 4px;
+  margin-top: 8px;
 }
 /* The one line someone building a rig reads off this form: what to feed it.
    Sized up from the summaries below it because it answers a different kind of
@@ -1706,26 +1819,55 @@ export default {
   font-size: 13px;
   color: var(--secondary-lighter);
   margin: 0;
+  contain: inline-size;
 }
+/* Worded from the numbers, so they grow and shrink as the fields are typed
+   in. Contained so that none of them sets the dialog's width, and given two
+   lines each so that one wrapping does not push the rest of the form down. */
 .create_summary {
   font-family: Roboto-Regular;
   font-size: 11px;
+  line-height: 14px;
+  min-height: 28px;
   color: var(--secondary-lighter-alt);
   margin: 0;
+  contain: inline-size;
 }
+/* A dialog is a form with everything in a fixed place, so a warning never
+   moves anything. Its slot is always there and always two lines tall, empty
+   until needed, and it wraps inside the width the fields give the dialog:
+   without the containment its unwrapped length would count towards the
+   dialog's own width. */
 .create_warning {
   font-family: Roboto-Medium;
   font-size: 11px;
+  line-height: 14px;
+  height: 28px;
+  overflow: hidden;
   color: var(--accent-maroon);
   margin: 0;
+  contain: inline-size;
+}
+/* The name warning quotes what was typed, so its length is not ours to know:
+   one line, cut short rather than wrapped. */
+.create_warning.one_line {
+  height: 14px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .field {
   width: 90px;
 }
+
 /* Lumens and a contrast ratio run to five and seven digits, which will not sit
    in the 90px a millimetre needs. */
 .wide_field {
   width: 120px;
+}
+/* A label longer than its field, on a row with nothing beside it: let it run
+   on rather than wrap over the field. */
+.one_line_label :deep(.label) {
+  white-space: nowrap;
 }
 .ticks {
   flex-wrap: wrap;

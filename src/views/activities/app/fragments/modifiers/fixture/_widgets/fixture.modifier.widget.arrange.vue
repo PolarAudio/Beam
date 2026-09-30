@@ -32,6 +32,14 @@
         <b>{{ items.length }} {{ items.length === 1 ? 'item' : 'items' }}</b>
       </uk-flex>
 
+      <!-- Align already works from where things stand, so it has no Replace. -->
+      <uk-select-input
+        v-if="kind !== 'align'"
+        v-model="placeIndex"
+        label="Positions"
+        :options="placeLabels"
+      />
+
       <!-- LINE -->
       <uk-flex
         v-if="kind === 'line'"
@@ -73,6 +81,13 @@
         <uk-num-input
           v-model="circle.radius"
           label="Radius"
+          :precision="2"
+          :min="0"
+          :max="1000"
+        />
+        <uk-num-input
+          v-model="circle.endRadius"
+          label="End radius"
           :precision="2"
           :min="0"
           :max="1000"
@@ -197,6 +212,10 @@
           v-model="reverse"
           label="Reverse"
         />
+        <span
+          v-if="orderHint"
+          class="arrange_derived"
+        >{{ orderHint }}</span>
       </uk-flex>
 
       <uk-spacer />
@@ -275,6 +294,23 @@ const ALIGN_TARGETS = [ALIGN_TO.AVERAGE, ALIGN_TO.MIN, ALIGN_TO.MAX, ALIGN_TO.FI
 const ORDERS = [ORDER.ADDRESS, ORDER.NAME, ORDER.SELECTION];
 
 /**
+ * How a layout lands: in place of where the items stand, or on top of it.
+ */
+const PLACE = {
+  REPLACE: 0,
+  ADD: 1,
+};
+
+/**
+ * The order the last Apply used, kept across panel mounts.
+ *
+ * Add hands offset n to item n, so a second pass in a different order puts
+ * each offset on the wrong item. Opening the panel on the order that built the
+ * shape is what keeps a stacked pass lined up with it.
+ */
+const lastApplied = { order: 0, reverse: false };
+
+/**
  * @component ArrangeToolWidget
  *
  * Shapes a whole selection at once.
@@ -328,15 +364,28 @@ export default {
       line: {
         x: 1, y: 0, z: 0,
       },
-      circle: { radius: 3, sweep: 360 },
+      /**
+       * An end radius equal to the radius is a ring; anything else a spiral.
+       */
+      circle: { radius: 3, endRadius: 3, sweep: 360 },
       grid: {
         columns: 4, gapAcross: 1, gapDown: 1, snake: false,
       },
       align: {
         x: 0, y: 0, z: 0, to: 0,
       },
-      order: 0,
-      reverse: false,
+      order: lastApplied.order,
+      reverse: lastApplied.reverse,
+      /**
+       * Replace or Add, as an index into `placeLabels`.
+       */
+      placeIndex: PLACE.REPLACE,
+      placeLabels: ['Replace', 'Add'],
+      /**
+       * What Keep heading was before Add switched it on, so Replace can put it
+       * back. Null while in Replace.
+       */
+      keepBeforeAdd: null,
       /**
        * Where every item stood before the tool touched anything. Null means
        * nothing is being previewed.
@@ -404,6 +453,25 @@ export default {
       return this.baseline !== null;
     },
     /**
+     * Whether the layout is added to where items stand rather than replacing it.
+     *
+     * @property {Boolean} adding
+     */
+    adding() {
+      return this.placeIndex === PLACE.ADD && this.kind !== ALIGN_KIND;
+    },
+    /**
+     * A warning when an Add pass runs in a different order from the last Apply.
+     *
+     * @property {String} orderHint
+     */
+    orderHint() {
+      if (!this.adding) return '';
+      if (this.order === lastApplied.order && this.reverse === lastApplied.reverse) return '';
+      const was = `${this.orderLabels[lastApplied.order]}${lastApplied.reverse ? ', reversed' : ''}`;
+      return `Last Apply used ${was} order`;
+    },
+    /**
      * Rows and columns the grid actually works out to.
      *
      * @property {String} gridShape
@@ -436,7 +504,10 @@ export default {
         const sweep = Number(this.circle.sweep);
         const closed = sweep !== 0 && Math.abs(sweep) % 360 === 0;
         const step = sweep / (closed ? n : n - 1);
-        return `${step.toFixed(1)}° apart`;
+        const from = Number(this.circle.radius);
+        const to = Number(this.circle.endRadius);
+        if (from === to) return `${step.toFixed(1)}° apart`;
+        return `${step.toFixed(1)}° apart, ${from.toFixed(2)} → ${to.toFixed(2)} m`;
       }
       if (this.kind === LAYOUT.LINE) {
         const step = Math.hypot(Number(this.line.x), Number(this.line.y), Number(this.line.z));
@@ -464,6 +535,11 @@ export default {
     kind() { this.preview(); },
     line: { handler() { this.preview(); }, deep: true },
     circle: { handler() { this.preview(); }, deep: true },
+    // End radius follows Radius while the two match, so resizing a ring keeps
+    // it a ring instead of quietly turning it into a spiral.
+    'circle.radius': function followRadius(now, was) {
+      if (Number(this.circle.endRadius) === Number(was)) this.circle.endRadius = now;
+    },
     grid: { handler() { this.preview(); }, deep: true },
     align: { handler() { this.preview(); }, deep: true },
     // Aim is not part of any one shape, so it needs its own line here. Every
@@ -472,6 +548,19 @@ export default {
     aim: { handler() { this.preview(); }, deep: true },
     order() { this.preview(); },
     reverse() { this.preview(); },
+    // Add leaves heading alone unless asked: a heading is absolute, and a
+    // second pass such as a vertical line has no direction of its own, so it
+    // would turn every item to face zero and undo the shape underneath.
+    placeIndex(index) {
+      if (index === PLACE.ADD) {
+        if (this.keepBeforeAdd === null) this.keepBeforeAdd = this.aim.keep;
+        this.aim.keep = true;
+      } else if (this.keepBeforeAdd !== null) {
+        this.aim.keep = this.keepBeforeAdd;
+        this.keepBeforeAdd = null;
+      }
+      this.preview();
+    },
   },
   mounted() {
     this.kind = LAYOUT.LINE;
@@ -648,7 +737,6 @@ export default {
         }));
       }
 
-      const centre = boundsCentre(baseline.map((entry) => entry.position));
       const transforms = arrangeTransforms(baseline.length, this.layoutOptions());
       const sequence = orderIndices(
         baseline.map((entry) => entry.item),
@@ -656,15 +744,36 @@ export default {
         this.reverse,
       );
 
+      // Replace builds the shape about the selection's centre. Add builds it
+      // about each item's own position, with the offsets re-centred on their
+      // mean: an open arc's offsets do not sum to zero, and left as they are
+      // every Add would slide the whole set a little further.
+      const centre = boundsCentre(baseline.map((entry) => entry.position));
+      const mean = { x: 0, y: 0, z: 0 };
+      if (this.adding) {
+        transforms.forEach(({ position }) => {
+          mean.x += position.x / transforms.length;
+          mean.y += position.y / transforms.length;
+          mean.z += position.z / transforms.length;
+        });
+      }
+
       return sequence.map((itemIndex, place) => {
         const entry = baseline[itemIndex];
         const step = transforms[place];
+        const from = this.adding
+          ? {
+            x: entry.position.x - mean.x,
+            y: entry.position.y - mean.y,
+            z: entry.position.z - mean.z,
+          }
+          : centre;
         return {
           item: entry.item,
           position: {
-            x: centre.x + step.position.x,
-            y: centre.y + step.position.y,
-            z: centre.z + step.position.z,
+            x: from.x + step.position.x,
+            y: from.y + step.position.y,
+            z: from.z + step.position.z,
           },
           // aimZ only spins an item about the room's vertical, so a head
           // hanging at rotX 180 keeps hanging and an object tipped about y
@@ -686,6 +795,7 @@ export default {
         return {
           kind: LAYOUT.CIRCLE,
           radius: Number(this.circle.radius),
+          endRadius: Number(this.circle.endRadius),
           sweep: Number(this.circle.sweep),
           aim: this.aimOption,
         };
@@ -732,6 +842,10 @@ export default {
         // was, so the next time the group moves the fixture snaps back.
         if (item.group && item.group.captureLocal) item.group.captureLocal(item);
       });
+      if (this.kind !== ALIGN_KIND) {
+        lastApplied.order = this.order;
+        lastApplied.reverse = this.reverse;
+      }
       // What was applied is the new truth, so the next edit starts from here
       // rather than from wherever the fixtures stood before.
       this.baseline = null;

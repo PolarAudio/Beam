@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import SceneManager from './scene_manager';
 import SceneEnv from './scene_env';
-import LightField from './light_field';
+import LightField, { CANDELA_PER_UNIT, REFERENCE_INTENSITY } from './light_field';
 import { castsContactShadow } from './contact_shadows';
 import BodyFinish from './body_finish';
 import Shutter, { SHUTTER_MODES } from './shutter';
@@ -113,22 +113,6 @@ const STROBE_RANGE = 60;
  * A flood has no hard edge; most of the fall-off is in its outer third.
  */
 const FLOOD_INNER_FRACTION = 0.6;
-
-/**
- * What one unit of light-field intensity is worth, in candela.
- *
- * The field has no physical unit of its own: a moving head writes its
- * `SpotLight` intensity, 100 at full, into it. So a strobe's candela is put
- * into the same units by what that head stands for -- a discharge mover of
- * about twenty thousand lumens in a fifteen degree cone -- and the two light a
- * floor in proportion.
- */
-const REFERENCE_INTENSITY = 100;
-const REFERENCE_LUMENS = 20000;
-const REFERENCE_CONE_DEGREES = 15;
-const REFERENCE_HALF_ANGLE = (REFERENCE_CONE_DEGREES / 2) * (Math.PI / 180);
-const REFERENCE_SOLID_ANGLE = 2 * Math.PI * (1 - Math.cos(REFERENCE_HALF_ANGLE));
-const CANDELA_PER_UNIT = (REFERENCE_LUMENS / REFERENCE_SOLID_ANGLE) / REFERENCE_INTENSITY;
 
 /**
  * How far a strobe's glow reaches into the air, as a multiple of its face's
@@ -433,7 +417,7 @@ class Strobe {
   update(t) {
     this.syncSettings();
     const level = this._shutter.sample(t);
-    this._lit = level * this._gain;
+    this._lit = this._hidden ? 0 : level * this._gain;
     this._frameIntensity = this.frameIntensity();
 
     const brightness = FACE_DARK + this._lit * FACE_HDR;
@@ -697,6 +681,23 @@ class Strobe {
 
   get highlighted() {
     return this._highlighted;
+  }
+
+  /**
+   * Whether the fixture is hidden from the scene: not drawn, and its lamp held
+   * dark in `update()`, which is what the field light and the camera wash
+   * read.
+   * Picking skips it by asking the fixture, not this.
+   *
+   * @type {Boolean}
+   */
+  set hidden(state) {
+    this._hidden = !!state;
+    this._dummy.visible = !this._hidden;
+  }
+
+  get hidden() {
+    return !!this._hidden;
   }
 
   /**

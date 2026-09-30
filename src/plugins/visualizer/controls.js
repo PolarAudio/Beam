@@ -81,6 +81,39 @@ function selectionKey(item) {
  * @param {Boolean} [drill] reach inside a structure rather than resolving up
  * @return {Object} the item that hit selects, or null
  */
+/**
+ * Whatever a raycast hit belongs to, or null for a hit on nothing selectable.
+ *
+ * @param {Object} hit a three.js intersection
+ * @return {Object} a fixture or an object, or null
+ */
+function ownerOfHit(hit) {
+  if (!hit || !hit.object) return null;
+  // `pickOwner` is the general form: any renderer whose pick target is a
+  // plain mesh can say who owns it without this method learning its name.
+  // The special cases below predate it and could migrate to it; the
+  // instanced renderers cannot, since one mesh stands for every instance.
+  const { userData } = hit.object;
+  if (userData.pickOwner) return userData.pickOwner.fixtureHandle || null;
+  if (userData.ledBar) return userData.ledBar.fixtureHandle || null;
+  if (userData.sceneObjectModel) return SceneObjects.ownerAt(hit.object, hit.instanceId);
+  if (hit.instanceId === undefined) return null;
+  const instance = MovingHead.getInstance(hit.instanceId);
+  return (instance && instance.fixtureHandle) || null;
+}
+
+/**
+ * Whether an item is in the scene to be pointed at. A hidden one is not drawn,
+ * and invisible meshes still raycast, so every way of reaching an item from
+ * the 3D view asks this.
+ *
+ * @param {Object} item
+ * @return {Boolean}
+ */
+function shown(item) {
+  return !!item && !item.isHidden;
+}
+
 function itemFor(fixture, drill = false) {
   if (!fixture) return null;
   if (drill) return fixture;
@@ -842,7 +875,7 @@ class Controls {
     // here -- so adding a renderer needs no change to selection code.
     SCENE_RENDERERS.forEach((renderer) => {
       renderer.eachSelectable((item, worldPosition, worldRadius) => {
-        if (inBand(worldPosition, worldRadius)) picked.push(item);
+        if (shown(item) && inBand(worldPosition, worldRadius)) picked.push(item);
       });
     });
 
@@ -950,7 +983,8 @@ class Controls {
     const targets = SCENE_RENDERERS
       .flatMap((renderer) => renderer.pickObjects())
       .filter(Boolean);
-    const hit = raycaster.intersectObjects(targets, false)[0];
+    const hit = raycaster.intersectObjects(targets, false)
+      .find((candidate) => shown(ownerOfHit(candidate)));
     if (hit) {
       pivotPoint.copy(hit.point);
     } else if (!raycaster.ray.intersectPlane(pivotGround, pivotPoint)) {
@@ -997,25 +1031,10 @@ class Controls {
     const targets = SCENE_RENDERERS
       .flatMap((renderer) => renderer.pickObjects())
       .filter(Boolean);
-    const hits = raycaster.intersectObjects(targets, false);
-    const hit = hits.find((h) => h.instanceId !== undefined
-      || (h.object && (h.object.userData.ledBar || h.object.userData.pickOwner)));
-    if (!hit) return null;
-    // `pickOwner` is the general form: any renderer whose pick target is a
-    // plain mesh can say who owns it without this method learning its name.
-    // The two special cases below predate it and could migrate to it; the
-    // instanced renderers cannot, since one mesh stands for every instance.
-    if (hit.object && hit.object.userData.pickOwner) {
-      return hit.object.userData.pickOwner.fixtureHandle || null;
-    }
-    if (hit.object && hit.object.userData.ledBar) {
-      return hit.object.userData.ledBar.fixtureHandle || null;
-    }
-    if (hit.object && hit.object.userData.sceneObjectModel) {
-      return SceneObjects.ownerAt(hit.object, hit.instanceId);
-    }
-    const instance = MovingHead.getInstance(hit.instanceId);
-    return (instance && instance.fixtureHandle) || null;
+    // The nearest hit on something shown: a hidden item is not drawn, but its
+    // meshes still raycast, and a click would otherwise land on it.
+    const owners = raycaster.intersectObjects(targets, false).map(ownerOfHit);
+    return owners.find(shown) || null;
   }
 
   /**
@@ -1045,12 +1064,16 @@ class Controls {
     dummy.getWorldPosition(position);
     dummy.getWorldQuaternion(quaternion);
     euler.setFromQuaternion(quaternion);
+    // The triple nearest the stored one, or the fields show Y 100 as X 180,
+    // Y 80, Z 180 -- and an edit to one of those is written onto the other two
+    // as stored, turning the item somewhere else.
+    const angles = closestEuler(euler, item.rotationRad);
     return {
       position: { x: position.x, y: position.y, z: position.z },
       rotation: {
-        x: THREE.MathUtils.radToDeg(euler.x),
-        y: THREE.MathUtils.radToDeg(euler.y),
-        z: THREE.MathUtils.radToDeg(euler.z),
+        x: THREE.MathUtils.radToDeg(angles.x),
+        y: THREE.MathUtils.radToDeg(angles.y),
+        z: THREE.MathUtils.radToDeg(angles.z),
       },
     };
   }
@@ -1321,6 +1344,7 @@ class Controls {
     // being one list of renderers rather than three hand-written loops.
     SCENE_RENDERERS.forEach((renderer) => {
       renderer.eachSelectable((item) => {
+        if (!shown(item)) return;
         const model = item._3DModel;
         if (model && model.expandBounds) model.expandBounds(box);
       });
@@ -1631,10 +1655,14 @@ class Controls {
         // orientation turns a 180 about Y into X 180, Z 180, which a mover
         // reads as hung and flips its body.
         const angles = closestEuler(euler, instanceHandle.rotationRad);
+        // Tenths, the rotation fields' precision. This runs before every field
+        // write, not only after a drag, so whole degrees took the decimals off
+        // anything typed.
+        const tenths = (rad) => Math.round(THREE.MathUtils.radToDeg(rad) * 10) / 10;
         instanceHandle.rotation = {
-          x: Math.round(THREE.MathUtils.radToDeg(angles.x)),
-          y: Math.round(THREE.MathUtils.radToDeg(angles.y)),
-          z: Math.round(THREE.MathUtils.radToDeg(angles.z)),
+          x: tenths(angles.x),
+          y: tenths(angles.y),
+          z: tenths(angles.z),
         };
       }
     }

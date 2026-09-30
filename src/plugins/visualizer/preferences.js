@@ -101,8 +101,23 @@ const DEFAULTS = {
   showAxes: true,
   /** Whether the frame timings and the shader tuning panel are on screen. */
   debug: false,
+  /**
+   * Whether a channel's ranges are shown beside its DMX value while the value
+   * is being changed, where they can also be picked from.
+   */
+  channelRangeGuide: true,
   /** Scene background, as a hex string. Matches SceneManager's own default. */
   backgroundColor: '#0C0D0A',
+  /**
+   * The studio recording settings: frame size, rate, quality and whether the
+   * desktop audio goes in. Kept here rather than in the show because they are
+   * about this machine's output; see `studio.js`.
+   */
+  studioFrameWidth: 1920,
+  studioFrameHeight: 1080,
+  studioFps: 30,
+  studioQuality: 'medium',
+  studioRecordAudio: true,
 };
 
 let values = { ...DEFAULTS };

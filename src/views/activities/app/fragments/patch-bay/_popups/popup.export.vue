@@ -11,6 +11,14 @@
       :gap="8"
       class="layout_export"
     >
+      <!-- Which program the selection is written for. One today; each added
+           application brings its own options below. -->
+      <uk-select-input
+        v-model="applicationIndex"
+        label="Application"
+        :options="applicationNames"
+      />
+
       <uk-select-input
         v-model="protocolIndex"
         label="MadMapper is driving"
@@ -90,7 +98,7 @@
         The fixture definitions are written alongside the layout. MadMapper
         resolves a layout's fixtures by name, so import the definitions first.
         {{ definitionCount }}
-        {{ definitionCount === 1 ? 'definition' : 'definitions' }} in this show.
+        {{ definitionCount === 1 ? 'definition' : 'definitions' }} in this export.
       </p>
     </uk-flex>
   </uk-popup>
@@ -109,6 +117,11 @@ import {
   universeOffset,
 } from '@/models/DMX/generic/madmapper_layout';
 import { buildMadMapperLibrary, showDefinitions } from '@/models/DMX/generic/madmapper';
+import { SCENE_ITEM_KINDS, kindOf } from '@/models/DMX/scene_item';
+import { labelOf } from '@/models/DMX/item_naming';
+
+/** The programs a selection can be exported for. */
+const APPLICATIONS = ['MadMapper'];
 
 /** What each choice does to the rig, in one line. */
 const HINTS = {
@@ -135,15 +148,28 @@ const PROTOCOL_HINTS = {
 };
 
 export default {
-  name: 'UkPopupMadmapper',
+  name: 'UkPopupExport',
   mixins: [PopupMixin],
+  props: {
+    /**
+     * The scene items to export: the selection when the popup was opened.
+     * Fixtures go as themselves, structures and groups with their members.
+     * Hidden ones are included -- what is exported is what was chosen.
+     */
+    items: {
+      type: Array,
+      default: () => [],
+    },
+  },
   compatConfig: {
     // or, for full vue 3 compat in this component:
     MODE: 3,
   },
   data() {
     return {
-      headerData: { title: 'Export layout for MadMapper', icon: 'export' },
+      headerData: { title: 'Export selection', icon: 'export' },
+      applicationIndex: 0,
+      applicationNames: APPLICATIONS,
       // Looked up rather than written as a number, so reordering the list
       // cannot quietly change which one a fresh export starts on.
       projectionIndex: Math.max(0, PROJECTION_LABELS.findIndex((p) => p.id === PROJECTIONS.TOP)),
@@ -199,12 +225,23 @@ export default {
       return this.exportable.length;
     },
     /**
-     * Patched fixtures, the only ones either file can describe.
+     * The patched fixtures in the selection -- the only ones either file can
+     * describe -- counting those inside a selected structure or group.
      *
      * @type {Array}
      */
     exportable() {
-      return this.$show.fixturePool.fixtures.filter((f) => f.channels && f.channels.length);
+      const fixtures = new Set();
+      this.items.forEach((item) => {
+        const kind = kindOf(item);
+        if (kind === SCENE_ITEM_KINDS.FIXTURE) fixtures.add(item);
+        if (kind === SCENE_ITEM_KINDS.STRUCTURE || kind === SCENE_ITEM_KINDS.GROUP) {
+          (item.members || [])
+            .filter((member) => kindOf(member) === SCENE_ITEM_KINDS.FIXTURE)
+            .forEach((member) => fixtures.add(member));
+        }
+      });
+      return [...fixtures].filter((f) => f.channels && f.channels.length);
     },
     /**
      * The definitions this show needs, and the names a layout must quote.
@@ -249,13 +286,14 @@ export default {
       return this.mappable.filter((g) => (g.members || []).length).length;
     },
     /**
-     * Everything that holds members and names its own mappings: groups and
-     * structures alike.
+     * The selected items that hold members and name their own mappings:
+     * groups and structures alike.
      *
      * @type {Array}
      */
     mappable() {
-      return [...(this.$show.groups || []), ...(this.$show.structures || [])];
+      return this.items.filter((item) => kindOf(item) === SCENE_ITEM_KINDS.STRUCTURE
+        || kindOf(item) === SCENE_ITEM_KINDS.GROUP);
     },
   },
   methods: {
@@ -283,10 +321,16 @@ export default {
         protocol: this.protocol,
       });
       if (!svg) return;
-      // `documentTitle`, not `name`. The project's name is its folder's, and
-      // nothing updates `name` when a project is named, so it keeps saying
-      // whatever the show was created as.
-      const show = (this.$show.documentTitle || 'layout').replace(/[<>:"/\\|?*]/g, ' ').trim();
+      // Named for the one item when one is exported -- a single truss or
+      // screen is a file of its own, and the show's name would not say which.
+      // Its full name, instance included, as every export uses it. Several
+      // items take the show's: `documentTitle`, not `name`, because the
+      // project's name is its folder's and nothing updates `name` when a
+      // project is named, so it keeps saying whatever the show was created as.
+      const named = this.items.length === 1
+        ? labelOf(this.items[0])
+        : this.$show.documentTitle;
+      const show = (named || 'layout').replace(/[<>:"/\\|?*]/g, ' ').trim() || 'layout';
       // One dialog, for the layout. The definitions go beside it under the
       // same name without being asked about: they are not a separate document
       // the user might want somewhere else, they are the half of this export
@@ -304,12 +348,9 @@ export default {
         title: 'Export layout for MadMapper',
         filters: [{ name: 'SVG fixture layout', extensions: ['svg'] }],
         companion: library ? { contents: library, extension: 'mmfl' } : null,
-        // Asked once per project a session. One project has one layout file
-        // and rewrites it constantly, so every later export goes straight back
-        // to it -- but opening or saving a different project is a different
-        // destination, and inheriting the last one would quietly write this
-        // project's rig over the previous project's file.
-        remember: `madmapper-layout:${this.$show.documentPath || 'untitled'}`,
+        // Asked every time, with no remembered path: each export is a
+        // selection, and writing one silently over the file the last one went
+        // to would replace one part of the rig with another.
       });
     },
   },

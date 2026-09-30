@@ -5,6 +5,7 @@ import ProjectorDepth, {
 } from './projector_depth';
 import { hazeShaderPrelude, hazeUniforms } from './haze_noise';
 import SceneEnv from './scene_env';
+import MovingHead from './moving_head';
 
 /**
  * @file Puts every projector's picture onto whatever the camera can see.
@@ -81,17 +82,18 @@ const LUX_SCALE = 0.022;
 const DEPTH_BIAS = 0.1;
 
 /**
- * Samples along the view ray for the shaft.
+ * Samples along each projector's lit stretch of a view ray, for the shaft.
  *
- * Twelve left a visible stipple -- the ordered dither spreads its error evenly
- * but there is still error, and on a long smooth cone the eye finds the pattern
- * at once. Twenty-four is clean, and the pass had the room: the whole thing
- * measured 1.68 ms with the shaft on, because a step costs nothing at all where
- * no projector reaches and the loop leaves early.
+ * The mover beam's method: the stretch is found exactly (see frustumSpan),
+ * and the samples sit at the middles of equal steps along it, the same
+ * places for every pixel, so there is no dither and no grain. Each sample
+ * reads the picture blurred by how much of it the step crosses, so eight
+ * cover the stretch without leaving gaps between them. More than the
+ * mover's four because a picture has more in it than a gobo's falloff.
  *
  * @constant {Number}
  */
-const SHAFT_STEPS = 32;
+const SHAFT_SAMPLES = 8;
 
 /**
  * How far down the ray to bother marching, metres.
@@ -109,34 +111,27 @@ const SHAFT_STEPS = 32;
 const SHAFT_MAX = 300;
 
 /**
- * How coarsely the picture is read in the air.
+ * The least blur the picture is read with in the air, as a share of the
+ * slice's width.
  *
- * A deliberately blurred mip, and the number that decides whether the beam
- * reads as haze or as lasers.
- *
- * A fine mip gives each view ray an almost pure sample of the picture, so the
- * image's colour bands come through the air as hard radial streaks, like
- * lasers. Air does not work that way. Light
- * scattered off haze has bounced before it reaches the eye, and every bounce
- * mixes directions, so structure inside a beam washes out even though the same
- * picture lands crisp on the wall behind it. Reading a broad average in the air
- * is the cheap stand-in for that, and it is why this is far coarser than
- * anything the surface uses.
- *
- * It also flattens the integrand, which is what keeps the dither quiet.
+ * Light scattered off haze has bounced before it reaches the eye, so the air
+ * never shows the picture as sharply as the wall does. The mover reads its
+ * gobo with at least 1.5 mip levels on a 128 texel pattern, about a fiftieth
+ * of the pattern's width; this is the same share of the picture, whatever
+ * its resolution. What the air shows of the picture past that is set by how
+ * much of it each sample's step crosses.
  *
  * @constant {Number}
  */
-const SHAFT_LOD = 8.0;
+const SHAFT_BLUR_SHARE = 0.02;
 
 /**
  * Nearest the lens the shaft's falloff is allowed to go, metres.
  *
- * What keeps the shaft from stippling. Inverse square off a *point* is
- * unbounded: clamped at 5 cm, a sample landing near the lens is four hundred
- * times one a metre away, so with the steps jittered per pixel the few that
- * land close dominate their pixel's whole sum and neighbours disagree wildly --
- * grain, worst at the projector end.
+ * Inverse square off a *point* is unbounded: clamped at 5 cm, a sample near
+ * the lens is four hundred times one a metre away, and the few samples that
+ * land close would carry a pixel's whole sum. The mover beam's BEAM_KNEE is
+ * the same number for the same reason.
  *
  * Three metres, which is further out than the physics alone would justify and
  * deliberately so. A lens has area rather than being a point, so the falloff
@@ -150,26 +145,29 @@ const SHAFT_LOD = 8.0;
  */
 const SHAFT_NEAR = 3.0;
 
-/** How much coarser the shaft reads the haze field than the room air does. */
-const SHAFT_FIELD_SCALE = 3.5;
+/**
+ * How much coarser the shaft reads the haze field than the room air does.
+ * 1 is the room's own scale, as the mover beam reads it: with the samples at
+ * fixed places along the stretch, the field's features pass through the
+ * shaft instead of turning into grain.
+ */
+const SHAFT_FIELD_SCALE = 1.0;
 
 /**
- * How much of the beam's width is edge rather than beam, in the air.
+ * How much of the frame is edge rather than picture, in the air.
  *
- * A projector's frustum is a hard-edged solid: the picture stops at the frame,
- * and on a wall it should. In haze it should not -- scattering carries light
- * sideways out of the cone, so the boundary is a gradient rather than a cut.
- * Left sharp it reads as a laser. At 0.22
- * nearly a quarter of the beam's half-width is gradient, which is far more than
- * physics alone would give -- a projector's frame really is fairly hard -- but
- * it is what makes a cone read as light in air rather than as a solid.
+ * A projector's frame is fairly hard, and on a wall it should be. In haze
+ * scattering carries light a little sideways out of the frustum, so the
+ * boundary is a short gradient, a twelfth of the frame's half-width from each
+ * side. The picture read blurred by the step does the rest where a ray
+ * crosses the edge at a slant.
  *
  * Applied to the shaft only. The blend ramps are the user's business and this
  * multiplies alongside them rather than replacing them.
  *
  * @constant {Number}
  */
-const SHAFT_EDGE = 0.22;
+const SHAFT_EDGE = 0.08;
 
 /**
  * Extra mip levels per metre travelled from the lens.
@@ -238,6 +236,7 @@ const FRAGMENT = /* glsl */`
   uniform float hazeDensity;
   uniform int liveCount;
   uniform float hasPicture;
+  uniform float scatterAmount;
 
   /**
    * How much of the picture survives this far in from an edge.
@@ -255,9 +254,10 @@ const FRAGMENT = /* glsl */`
   /**
    * The air's density at a point, on the field every other renderer uses.
    *
-   * One octave, not the two the ambient pass runs: this is called twelve times
-   * per pixel inside a loop, and the second octave's job is to make still room
-   * air churn -- a shaft is already moving because the picture in it is.
+   * One octave, not the two the ambient pass runs: this is called for every
+   * sample of every projector's stretch, and the second octave's job is to make
+   * still room air churn -- a shaft is already moving because the picture in
+   * it is.
    */
   float shaftField(vec3 world) {
     // Read coarser than the room air is. A step down a long shaft is over a
@@ -285,35 +285,25 @@ const FRAGMENT = /* glsl */`
       / (PROJ_FAR + PROJ_NEAR - ndc * (PROJ_FAR - PROJ_NEAR));
   }
 
-  /** 2x2 ordered dither, the building block of the 4x4 below. */
-  float shaftBayer2(vec2 a) {
-    a = floor(a);
-    return fract(a.x / 2.0 + a.y * a.y * 0.75);
-  }
-
   /**
-   * 4x4 ordered dither over screen pixels.
+   * What one projector puts into the air at a point of its lit stretch.
    *
-   * Offsets each pixel's first sample, so twelve steps do not draw twelve
-   * shells. Ordered rather than random for the reason the ambient pass gives:
-   * the same error spread evenly reads as texture, spread randomly as grain.
+   * The mover beam's sample: inside the frustum and seen by the lens, through
+   * the blend, the picture read at this point of the frame, the light falling
+   * off from the lens and eaten by the haze on the way. next is where the next
+   * sample sits; the picture is read blurred by how much of the frame the step
+   * between them crosses, so a ray running along the throw keeps the picture's
+   * structure and one cutting across it reads its average.
    */
-  float shaftBayer4(vec2 a) {
-    return shaftBayer2(0.5 * a) * 0.25 + shaftBayer2(a);
-  }
-
-  /**
-   * What one projector puts into the air at a point, or on a surface at it.
-   *
-   * The same test either way -- inside the frustum, seen by the lens, through
-   * the blend -- which is what keeps the shaft and the picture agreeing.
-   */
-  vec3 projectorAt(int i, vec3 world, float lod) {
+  vec3 shaftSample(int i, vec3 world, vec3 next) {
     vec4 lens = lensMatrix[i] * vec4(world, 1.0);
     if (lens.w <= 0.0001) return vec3(0.0);
 
+    // The sides of the frustum only, not its near plane: that sits half a
+    // metre out for the depth map's precision, and the light leaves the glass.
+    // Nothing nearer than it is in the depth map, so air there counts as seen.
     vec3 ndc = lens.xyz / lens.w;
-    if (any(greaterThan(abs(ndc), vec3(1.0)))) return vec3(0.0);
+    if (any(greaterThan(abs(ndc.xy), vec2(1.0))) || ndc.z > 1.0) return vec3(0.0);
 
     vec2 frame = ndc.xy * 0.5 + 0.5;
     vec4 tile = atlasTile[i];
@@ -329,23 +319,27 @@ const FRAGMENT = /* glsl */`
       * blendRamp(frame.y, edges.z)
       * blendRamp(1.0 - frame.y, edges.w);
 
-    // How far this piece of air is from the lens, along the throw. Both the
-    // blur and the fade below are functions of it, because both are the same
-    // thing: light being scattered out of the beam on its way through the room.
+    // How far this piece of air is from the lens, along the throw.
     float travelled = lens.w;
 
+    // How much of the picture the step to the next sample crosses, in the
+    // slice's texels. An explicit level, because this runs inside a loop with
+    // early exits, where derivatives are undefined.
     vec4 rect = sliceRect[i];
-    // An explicit level, because this is called from inside a loop where the
-    // branches above make the derivatives undefined -- and the air wants a soft
-    // read of the picture anyway, growing softer the further it has come.
-    float blurred = lod + travelled * SHAFT_BLUR_PER_METRE;
-    vec3 colour = mix(vec3(1.0), textureLod(picture, rect.xy + frame * rect.zw, blurred).rgb, hasPicture);
+    vec4 lensNext = lensMatrix[i] * vec4(next, 1.0);
+    vec2 frameNext = lensNext.xy / max(lensNext.w, 0.0001) * 0.5 + 0.5;
+    vec2 texels = vec2(textureSize(picture, 0)) * rect.zw;
+    float span = length((frameNext - frame) * texels);
+    float floorLod = log2(max(texels.x * SHAFT_BLUR_SHARE, 1.0)) + travelled * SHAFT_BLUR_PER_METRE;
+    float lod = max(floorLod, log2(max(span, 1.0)));
+    vec3 colour = mix(vec3(1.0), textureLod(picture, rect.xy + frame * rect.zw, lod).rgb, hasPicture);
 
-    // The cone's own edge, softened. Scattering carries light out of the beam,
-    // so the boundary is a gradient; a hard cut is what makes it look solid.
+    // The frame's own edge, a short gradient: scattering carries a little
+    // light sideways out of the frustum.
     vec2 toEdge = min(frame, 1.0 - frame);
     float soft = smoothstep(0.0, SHAFT_EDGE, toEdge.x) * smoothstep(0.0, SHAFT_EDGE, toEdge.y);
 
+    // Inverse square from the lens, flat within the knee, as the mover beam's.
     float lux = emission[i].x / max(travelled * travelled, SHAFT_NEAR * SHAFT_NEAR);
     // Absorbed by the room on the way out. Thicker haze eats it sooner.
     float survives = exp(-travelled * SHAFT_FADE_PER_METRE * hazeDensity);
@@ -357,7 +351,8 @@ const FRAGMENT = /* glsl */`
    *
    * Clipped in homogeneous clip space against the six planes of the unit cube,
    * which is exact for an asymmetric frustum and costs six dot products -- far
-   * cheaper than the samples it saves.
+   * cheaper than the samples it saves. The near plane is swapped for one a
+   * centimetre in front of the lens, so the stretch begins at the glass.
    *
    * This is what makes the march worth anything. Spreading the steps over the
    * whole ray spends nearly all of them on empty air: a pixel with no geometry
@@ -382,6 +377,12 @@ const FRAGMENT = /* glsl */`
     for (int p = 0; p < 6; p++) {
       float da = dot(planes[p], a);
       float db = dot(planes[p], b);
+      // In place of the near plane, the lens itself: a centimetre in front of
+      // the glass, so the shaft starts where the light does.
+      if (p == 4) {
+        da = a.w - 0.01;
+        db = b.w - 0.01;
+      }
       if (da < 0.0 && db < 0.0) return false;
       if (da < 0.0) lo = max(lo, da / (da - db));
       else if (db < 0.0) hi = min(hi, da / (da - db));
@@ -483,44 +484,35 @@ const FRAGMENT = /* glsl */`
     }
     }
 
-    // The shaft: the same question asked of the air between the eye and that
-    // surface, rather than only of the surface itself.
+    // The shaft, the mover beam's way: for each projector, the stretch of the
+    // view ray inside its frustum, found exactly and ended by the surface, and
+    // a few samples at the middles of equal steps along it. The sum is the
+    // light along the stretch, so a ray that only grazes the frustum carries
+    // little and one down its length carries a lot. The haze throws more of
+    // it at the eye the more the projector faces the camera, by the same
+    // phase function and amount as the movers.
     if (hazeDensity > 0.0) {
       vec3 ray = world - camPos;
       float reach = min(length(ray), SHAFT_MAX);
       vec3 direction = normalize(ray);
 
-      // The stretch of this ray any projector could light, so no step is spent
-      // outside it. Bounded by the surface, so a wall still stops the shaft.
-      float spanNear = reach;
-      float spanFar = 0.0;
+      vec3 scattered = vec3(0.0);
       for (int i = 0; i < SLOTS; i++) {
         if (i >= liveCount) break;
         float near;
         float far;
-        if (frustumSpan(i, camPos, direction, reach, near, far)) {
-          spanNear = min(spanNear, near);
-          spanFar = max(spanFar, far);
-        }
-      }
-
-      float stride = max(spanFar - spanNear, 0.0) / float(SHAFT_STEPS);
-      float jitter = shaftBayer4(gl_FragCoord.xy);
-
-      vec3 scattered = vec3(0.0);
-      for (int step = 0; step < SHAFT_STEPS; step++) {
-        vec3 at = camPos + direction * (spanNear + (float(step) + jitter) * stride);
-
+        if (!frustumSpan(i, camPos, direction, reach, near, far)) continue;
+        float stride = (far - near) / float(SHAFT_SAMPLES);
         vec3 lit = vec3(0.0);
-        for (int i = 0; i < SLOTS; i++) {
-          if (i >= liveCount) break;
-          lit += projectorAt(i, at, SHAFT_LOD);
+        for (int k = 0; k < SHAFT_SAMPLES; k++) {
+          float t = near + (float(k) + 0.5) * stride;
+          vec3 at = camPos + direction * t;
+          vec3 light = shaftSample(i, at, at + direction * stride);
+          if (light.r + light.g + light.b > 0.0) lit += light * shaftField(at);
         }
-
-        // The field is only worth fetching where something is lighting the air.
-        if (lit.r + lit.g + lit.b > 0.0) {
-          scattered += lit * shaftField(at) * stride;
-        }
+        vec3 throwDir = normalize(camPos + direction * (near + far) * 0.5 - lensPos[i]);
+        float phase = hazePhase(dot(throwDir, -direction), scatterAmount);
+        scattered += lit * stride * phase;
       }
       total += scattered * hazeDensity * SHAFT_GAIN;
     }
@@ -560,10 +552,10 @@ class ProjectorEffect extends Effect {
         ['DEPTH_BIAS', DEPTH_BIAS.toFixed(4)],
         ['PROJ_NEAR', PROJECTOR_NEAR.toFixed(4)],
         ['PROJ_FAR', PROJECTOR_FAR.toFixed(1)],
-        ['SHAFT_STEPS', `${SHAFT_STEPS}`],
+        ['SHAFT_SAMPLES', `${SHAFT_SAMPLES}`],
         ['SHAFT_MAX', SHAFT_MAX.toFixed(1)],
         ['SHAFT_GAIN', SHAFT_GAIN.toFixed(3)],
-        ['SHAFT_LOD', SHAFT_LOD.toFixed(2)],
+        ['SHAFT_BLUR_SHARE', SHAFT_BLUR_SHARE.toFixed(4)],
         ['SHAFT_NEAR', SHAFT_NEAR.toFixed(3)],
         ['SHAFT_FIELD_SCALE', SHAFT_FIELD_SCALE.toFixed(3)],
         ['SHAFT_EDGE', SHAFT_EDGE.toFixed(3)],
@@ -583,6 +575,7 @@ class ProjectorEffect extends Effect {
         ['blendEdges', new THREE.Uniform(blendEdges)],
         ['liveCount', new THREE.Uniform(0)],
         ['hasPicture', new THREE.Uniform(0)],
+        ['scatterAmount', new THREE.Uniform(MovingHead.scatterAmount())],
         ['camPos', new THREE.Uniform(new THREE.Vector3())],
         ['hazeMetres', new THREE.Uniform(SceneEnv.hazeScale)],
         ['drift', new THREE.Uniform(0)],
@@ -635,6 +628,9 @@ class ProjectorEffect extends Effect {
     uniforms.get('hazeMetres').value = SceneEnv.hazeScale;
     // The same drift convention the beams and the ambient air use.
     uniforms.get('drift').value = this.elapsed * SceneEnv.hazeDriftRate;
+    // The movers' facing brightness, so a projector and a beam in the same air
+    // brighten alike as they turn towards the camera.
+    uniforms.get('scatterAmount').value = MovingHead.scatterAmount();
 
     const live = this.projections.slice(0, MAX_PROJECTIONS);
     uniforms.get('liveCount').value = live.length;

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import Controls from '../../plugins/visualizer/controls';
 import { newUid } from './scene_item';
+import { displayNameOf } from './item_naming';
 
 /**
  * @file The transform every placeable scene item has.
@@ -160,7 +161,7 @@ const withTransform = (Base) => class SceneItemTransform extends Base {
    *
    * @type {Array}
    */
-  get lockedBy() { return this.structure ? [this.structure.name] : []; }
+  get lockedBy() { return this.structure ? [displayNameOf(this.structure)] : []; }
 };
 
 export default withTransform;

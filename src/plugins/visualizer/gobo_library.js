@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import GOBOS from './gobo_manifest';
+import { GOBO_URL, goboLayerFor } from './gobo_pick';
 
 /**
  * @file The gobo patterns every beam can project, in one atlas texture.
@@ -58,9 +59,6 @@ export const GOBO_BLUR_LEVELS = GOBO_BLUR_SIGMAS.length;
  * leaves no ring of light.
  */
 const GOBO_APERTURE = 0.96;
-
-/** Where the images are served from, as the fixture profiles are. */
-const GOBO_URL = `${import.meta.env.VITE_STATIC_URL || ''}gobos/`;
 
 let texture = null;
 let canvas = null;
@@ -255,17 +253,5 @@ export function goboTexture() {
   return texture;
 }
 
-/**
- * Which pattern a wheel slot shows.
- *
- * @param {Object} slot the OFL wheel slot, `{ type, resource }`
- * @param {Number} index the slot's position among the wheel's gobo slots
- * @returns {Number} a pattern index; 0 for an open or non-gobo slot
- */
-export function goboLayerFor(slot, index) {
-  if (!slot || slot.type !== 'Gobo') return 0;
-  const resource = String(slot.resource || '').replace(/^gobos\//, '');
-  const named = GOBOS.findIndex((g) => g.name === resource);
-  if (named >= 0) return named + 1;
-  return (index % GOBOS.length) + 1;
-}
+/** Which pattern a wheel slot shows; the rule lives in `gobo_pick.js`. */
+export { goboLayerFor };

@@ -7,7 +7,7 @@ import VOLUMETRIC_BEAM_FRAGMENT_SHADER from './shaders/beam.fragment.glsl?raw';
 import Shutter, { SHUTTER_MODES } from './shutter';
 import { kelvinToRgb } from '../../models/DMX/colour_temperature';
 import { hazeShaderPrelude, hazeUniforms } from './haze_noise';
-import LightField from './light_field';
+import LightField, { CANDELA_PER_UNIT, REFERENCE_INTENSITY } from './light_field';
 import { castsContactShadow } from './contact_shadows';
 import { DepthAtlas } from './projector_depth';
 import { goboTexture, goboLayerFor, GOBO_BLUR_LEVELS } from './gobo_library';
@@ -192,6 +192,13 @@ const PENUMBRA_FOCUSED = 0.05;
 const PENUMBRA_DEFOCUSED = 1.0;
 
 /**
+ * How much wider full frost makes the beam: the field's half angle times
+ * 1 plus this. Profiles do not say; frost turns a spot into a wash, and
+ * half as wide again is Beam's figure.
+ */
+const FROST_WIDEN = 0.5;
+
+/**
  * What each beam can see from its lens, packed into one texture.
  *
  * A tile per head, drawn from a camera at the beam's origin looking down
@@ -275,7 +282,25 @@ let beamScatterValue = 0.25;
 const BEAM_FRAGMENT_SHADER = hazeShaderPrelude() + VOLUMETRIC_BEAM_FRAGMENT_SHADER;
 
 const SPOTLIGHT_PHYSICALLY_CORRECT_DISTANCE = 0;
-const SPOTLIGHT_PHYSICALLY_CORRECT_INTENSITY = 100.0;
+const SPOTLIGHT_PHYSICALLY_CORRECT_INTENSITY = REFERENCE_INTENSITY;
+
+/**
+ * Lumens per watt of fixture power, for a profile that states power but not
+ * output: the median of the library's moving heads that state both.
+ *
+ * @constant {Number}
+ */
+const LUMENS_PER_WATT = 22;
+
+/**
+ * The efficacy a stated lumen figure has to fall inside to be believed.
+ * Profiles converted from other formats carry lux or candela under
+ * `lumens` -- 695400 lm from 620 W, 451 lm from 400 W -- and either would
+ * make a head blinding or black.
+ *
+ * @constant {Array<Number>}
+ */
+const PLAUSIBLE_LUMENS_PER_WATT = [5, 150];
 const SPOTLIGHT_PHYSICALLY_CORRECT_DECAY = 1.0;
 /**
  * The pool's penumbra for a fixture without a focus channel. A focus
@@ -411,6 +436,9 @@ const headGeo = new THREE.InstancedBufferGeometry();
 const beamGeo = new THREE.InstancedBufferGeometry();
 const targetGeo = new THREE.InstancedBufferGeometry();
 const boundingBoxGeo = new THREE.InstancedBufferGeometry();
+
+/** What a hidden head's slot is drawn with: nothing, at the origin. */
+const COLLAPSED = new THREE.Matrix4().makeScale(0, 0, 0);
 
 let baseMesh;
 let yokeMesh;
@@ -578,6 +606,13 @@ const TILT_SPEED_DEG_PER_SEC = 210;
  */
 const MAX_STEP_SECONDS = 0.1;
 
+/**
+ * The slowest a pan/tilt speed channel moves a head, as a share of its top
+ * speed: at 270 degrees a second, a full 540 degree pan takes 100 seconds.
+ * Profiles say only "slow"; this is Beam's figure.
+ */
+const PAN_TILT_SLOWEST = 0.02;
+
 /** Half-extent of a head's selection box, in metres, at the model's own size. */
 const SELECTION_HALF_EXTENT = 0.51;
 /** Scratch box for measuring one part of a head against the world. */
@@ -680,6 +715,8 @@ class MovingHead {
     this._depthDir = new THREE.Vector3();
     this._minAngle = data.minAngle + 1.0;
     this._maxAngle = data.maxAngle + 1.0;
+    /** The lamp's output at full, against the reference head; see `outputGain`. */
+    this._outputGain = MovingHead.outputGain(data.lumens, data.maxAngle);
     /** What the shutter let through this frame, 0..1. */
     this._shutter = 1.0;
     /**
@@ -718,6 +755,22 @@ class MovingHead {
      * pattern: 0 in focus. Carried in the prism data's spare slot.
      */
     this._goboDefocus = MovingHead.goboDefocusFor(SPOTLIGHT_PHYSICALLY_CORRECT_PENUMBRA);
+    /**
+     * The lens before frost: the field's half angle from the zoom, and the
+     * penumbra from the focus. Frost is applied over both; see `applyLensAngle` and `applyLensEdge`.
+     */
+    this._baseAngle = null;
+    this._basePenumbra = SPOTLIGHT_PHYSICALLY_CORRECT_PENUMBRA;
+    /** Brightness for the current field against the widest; see `fluxGain`. */
+    this._fluxGain = 1;
+    /**
+     * Frost, 0 none to 1 full, from a frost channel or a frost slot on a
+     * wheel; `_frostWheel` names the wheel that set it. `_frostEffect` is a
+     * ramp or pulse running it, or null.
+     */
+    this._frost = 0;
+    this._frostWheel = null;
+    this._frostEffect = null;
     /**
      * How far the iris is open, 1 fully to 0 closed, as a fraction of the
      * field's radius. It crops the beam to a smaller circle without
@@ -771,6 +824,12 @@ class MovingHead {
     this.maxPan = data.maxPan;
     this._panSpeed = data.panSpeed || PAN_SPEED_DEG_PER_SEC;
     this._tiltSpeed = data.tiltSpeed || TILT_SPEED_DEG_PER_SEC;
+    // What a pan/tilt speed channel asks for, or null for full speed; see
+    // `setPanTiltSpeed`.
+    this._panTiltSpeed = null;
+    // A timed move in progress: the target it was timed for and the rates
+    // that get there together. See `updateOrientation`.
+    this._move = null;
     this.pan = data.pan;
     this.tilt = data.tilt;
     // Built pointing where the desk already asks for, rather than slewing in
@@ -802,13 +861,8 @@ class MovingHead {
    * @type {Number}
    */
   set angle(angle) {
-    const clampedAngleValue = Math.min(angle / 2, BEAM_MAX_ANGLE);
-    if (clampedAngleValue !== this._angle) {
-      this._angle = clampedAngleValue;
-      this._spotLight.angle = MovingHead.degToRad(this.angle);
-      angle_buffer_attribute.setX(this._id, this.angle);
-      angle_buffer_attribute.needsUpdate = true;
-    }
+    this._baseAngle = Math.min(angle / 2, BEAM_MAX_ANGLE);
+    this.applyLensAngle();
   }
 
   get angle() {
@@ -918,12 +972,33 @@ class MovingHead {
     if (this._spotLight) {
       this._spotLight.castShadow = this._castsShadow;
       // See `prepareInstance`: a head is a real light only while it casts.
-      this._spotLight.visible = this._castsShadow;
+      this._spotLight.visible = this._castsShadow && !this._hidden;
     }
   }
 
   get castsShadow() {
     return !!this._castsShadow;
+  }
+
+  /**
+   * Whether the head is hidden from the scene: not drawn and giving no light.
+   *
+   * Its slot in every instanced mesh is collapsed to nothing rather than
+   * removed, so no other head is renumbered; its beam and lens are held dark
+   * in `updateStrobe()`, which is what the surface light and the depth pass
+   * read. Picking skips it by asking the fixture, not this.
+   *
+   * @type {Boolean}
+   */
+  set hidden(state) {
+    this._hidden = !!state;
+    if (this._spotLight) this._spotLight.visible = this._castsShadow && !this._hidden;
+    // Written on the next frame's updateMatrix, either way.
+    this._matrixNeedsUpdate = true;
+  }
+
+  get hidden() {
+    return !!this._hidden;
   }
 
   /**
@@ -935,8 +1010,9 @@ class MovingHead {
 
   set intensity(intensity) {
     this._intensity = Math.min(Math.abs(intensity), 1.0);
-    this._spotLight.intensity = SPOTLIGHT_PHYSICALLY_CORRECT_INTENSITY * this._intensity;
-    intensity_buffer_attribute.setX(this._id, this._intensity);
+    const lit = this._intensity * (this._fluxGain || 1) * this._outputGain;
+    this._spotLight.intensity = SPOTLIGHT_PHYSICALLY_CORRECT_INTENSITY * lit;
+    intensity_buffer_attribute.setX(this._id, lit);
     intensity_buffer_attribute.needsUpdate = true;
     this.updateLensColor();
   }
@@ -1093,12 +1169,205 @@ class MovingHead {
   }
 
   set zoom(zoomValue) {
-    const angle = this._maxAngle * (zoomValue / 100);
-    const clampedAngleValue = Math.min(angle / 2, BEAM_MAX_ANGLE);
-    this._angle = clampedAngleValue;
+    this.setZoom(zoomValue, false);
+  }
+
+  /**
+   * Sets the field from a zoom channel, within the lens the profile states.
+   *
+   * A profile gives zoom either in degrees or as a share of its range --
+   * `narrow` to `wide` reads 1 to 100 -- and the share runs from the lens's
+   * narrowest to its widest, not from nothing: a zoom at 0 is the narrowest
+   * the fixture goes, not a beam of no width.
+   *
+   * @public
+   * @param {Number} value degrees, or 0..100 of the range
+   * @param {Boolean} inDegrees whether `value` is in degrees
+   */
+  setZoom(value, inDegrees) {
+    const low = Math.min(this._minAngle, this._maxAngle);
+    const high = Math.max(this._minAngle, this._maxAngle);
+    const wanted = Number(value) || 0;
+    const angle = inDegrees
+      ? Math.min(Math.max(wanted, low), high)
+      : low + (high - low) * (Math.min(Math.max(wanted, 0), 100) / 100);
+    this._baseAngle = Math.min(angle / 2, BEAM_MAX_ANGLE);
+    this.applyLensAngle();
+  }
+
+  /**
+   * Writes the field's half angle, the zoom's widened by the frost, to the
+   * spot light and the beam, and the gain that keeps its light constant.
+   *
+   * @private
+   */
+  applyLensAngle() {
+    if (this._baseAngle === null) return;
+    const half = Math.min(this._baseAngle * (1 + FROST_WIDEN * this._frost), BEAM_MAX_ANGLE);
+    if (half === this._angle) return;
+    this._angle = half;
+    this._fluxGain = MovingHead.fluxGain(half, this._maxAngle / 2);
     this._spotLight.angle = MovingHead.degToRad(this._angle);
     angle_buffer_attribute.setX(this._id, this._angle);
     angle_buffer_attribute.needsUpdate = true;
+  }
+
+  /**
+   * How much brighter a field of this half angle is than the reference one,
+   * for the same light out of the lamp.
+   *
+   * Zoom and frost redistribute a fixed output rather than adding to it, so
+   * the light per unit of solid angle -- which is what lands on a surface and
+   * what the air scatters -- goes as one over the cone's solid angle,
+   * 2 pi (1 - cos half). The reference is the widest zoom, the field a head
+   * has when nothing sets its zoom, so a head there is as bright as before
+   * and zooming in only concentrates it: 50 to 4 degrees is about 150 times.
+   * Frost widens past the reference and dims it by the same rule.
+   *
+   * @public
+   * @param {Number} half the field's half angle, degrees
+   * @param {Number} referenceHalf the widest zoom's half angle, degrees
+   * @returns {Number}
+   */
+  static fluxGain(half, referenceHalf) {
+    const cone = (degrees) => {
+      const clamped = Math.min(Math.max(degrees, 0.01), BEAM_MAX_ANGLE);
+      return 1 - Math.cos(MovingHead.degToRad(clamped));
+    };
+    return cone(referenceHalf) / cone(half);
+  }
+
+  /**
+   * How bright this head is at full and its widest zoom, against the
+   * reference head the light field is pinned to.
+   *
+   * The lamp's lumens spread over the widest field give its candela, and the
+   * zoom then concentrates that through `fluxGain`. The field is the angle
+   * the profile states, not the one the beam is drawn at, so a head's
+   * candela agrees with its spec sheet. Without a lumen figure a head is the
+   * reference itself.
+   *
+   * @public
+   * @param {Number} lumens output at full, or nothing if unknown
+   * @param {Number} beamAngle the widest field, full angle in degrees
+   * @returns {Number} 1 for the reference head
+   */
+  static outputGain(lumens, beamAngle) {
+    const flux = Number(lumens);
+    if (!(flux > 0)) return 1;
+    const half = Math.min(Math.max(Number(beamAngle) / 2 || 0, 0.5), BEAM_MAX_ANGLE);
+    const solidAngle = 2 * Math.PI * (1 - Math.cos(MovingHead.degToRad(half)));
+    return flux / solidAngle / CANDELA_PER_UNIT / REFERENCE_INTENSITY;
+  }
+
+  /**
+   * A head's output in lumens, from what its profile's physical block says.
+   *
+   * A stated figure is used when it is a believable efficacy for the stated
+   * power; otherwise the power is turned into lumens at the library's median.
+   *
+   * @public
+   * @param {Object} physical the profile's `physical` block
+   * @returns {Number|null} lumens, or null when the profile gives neither
+   */
+  static lumensOf(physical = {}) {
+    const stated = Number((physical.bulb || {}).lumens);
+    const power = Number(physical.power);
+    const [low, high] = PLAUSIBLE_LUMENS_PER_WATT;
+    if (stated > 0 && !(power > 0)) return stated;
+    if (stated > 0 && stated / power >= low && stated / power <= high) return stated;
+    if (power > 0) return power * LUMENS_PER_WATT;
+    return null;
+  }
+
+  /**
+   * Writes the edge and the gobo blur, the focus's softened by the frost.
+   * Full frost is a fully soft edge, and a gobo blurred past the atlas's
+   * softest level and on into its mean, so the pattern is gone and only its
+   * share of the light is left. The blur carries that as defocus past
+   * `GOBO_DEFOCUS_MAX`, up to one more.
+   *
+   * @private
+   */
+  applyLensEdge() {
+    const f = this._frost;
+    const penumbra = this._basePenumbra + (PENUMBRA_DEFOCUSED - this._basePenumbra) * f;
+    const defocus = MovingHead.goboDefocusFor(this._basePenumbra);
+    this._spotLight.penumbra = penumbra;
+    this._goboDefocus = defocus + (GOBO_DEFOCUS_MAX + 1 - defocus) * f;
+    MovingHead.writeBeamProfile(this._id, penumbra);
+    this.writeOptics();
+  }
+
+  /**
+   * Puts frost in the beam: it widens the field, softens the edge and
+   * diffuses the gobo away. Stops a frost effect.
+   *
+   * @public
+   * @param {Number} amount 0 none to 1 full
+   */
+  setFrost(amount) {
+    this._frostEffect = null;
+    this.applyFrost(amount);
+  }
+
+  /**
+   * @private
+   * @param {Number} amount 0..1
+   */
+  applyFrost(amount) {
+    const f = Number.isFinite(amount) ? Math.min(Math.max(amount, 0), 1) : 0;
+    if (f === this._frost) return;
+    this._frost = f;
+    this.applyLensAngle();
+    this.applyLensEdge();
+  }
+
+  /**
+   * Runs the frost on its own, as a profile's frost effect names it: a ramp
+   * up or a closing pulse rises and drops back, a ramp down or an opening
+   * pulse falls, and a ramp both ways goes up and down. Random ones vary
+   * the length of each cycle.
+   *
+   * @public
+   * @param {String} name the effect's name and comment
+   * @param {Number} [rate] cycles a second
+   */
+  setFrostEffect(name, rate) {
+    const text = String(name || '').toLowerCase();
+    let shape = 'triangle';
+    if (/ramp up|closing/.test(text)) shape = 'up';
+    else if (/ramp down|opening/.test(text)) shape = 'down';
+    const hz = Number.isFinite(rate) && rate > 0 ? rate : 0.5;
+    const effect = this._frostEffect;
+    this._frostEffect = {
+      shape,
+      rate: hz,
+      random: /random/.test(text),
+      phase: effect ? effect.phase : 0,
+      stretch: effect ? effect.stretch : 1,
+    };
+  }
+
+  /**
+   * Advances a running frost effect.
+   *
+   * @private
+   * @param {Number} dt seconds
+   */
+  runFrost(dt) {
+    const effect = this._frostEffect;
+    if (!effect) return;
+    effect.phase += (effect.rate / effect.stretch) * dt;
+    if (effect.phase >= 1) {
+      effect.phase %= 1;
+      if (effect.random) effect.stretch = 0.5 + Math.random();
+    }
+    const p = effect.phase;
+    let f = 1 - Math.abs(2 * p - 1);
+    if (effect.shape === 'up') f = p;
+    else if (effect.shape === 'down') f = 1 - p;
+    this.applyFrost(f);
   }
 
   /**
@@ -1118,11 +1387,9 @@ class MovingHead {
     // to almost nothing.
     const dial = Math.min(Math.max(Number(focus) || 0, 0), 100) / 100;
     const penumbra = PENUMBRA_DEFOCUSED + (PENUMBRA_FOCUSED - PENUMBRA_DEFOCUSED) * dial;
-    this._spotLight.penumbra = penumbra;
-    this._goboDefocus = MovingHead.goboDefocusFor(penumbra);
-    this.writeOptics();
+    this._basePenumbra = penumbra;
     this._focus = focus;
-    MovingHead.writeBeamProfile(this._id, penumbra);
+    this.applyLensEdge();
   }
 
   get focus() {
@@ -1283,6 +1550,13 @@ class MovingHead {
     wheel.shake = null;
     if (wheel.kind === 'color') this._colorWheel = wheel.slots;
     const irisSlot = wheel.slots[Math.floor(slotIndex)];
+    if (irisSlot && irisSlot.type === 'Frost') {
+      this._frostWheel = wheelName;
+      this.setFrost(1);
+    } else if (this._frostWheel === wheelName) {
+      this._frostWheel = null;
+      this.setFrost(0);
+    }
     if (irisSlot && irisSlot.type === 'Iris') {
       const open = parseFloat(irisSlot.openPercent);
       this._iris = Number.isFinite(open) ? Math.min(Math.max(open / 100, 0), 1) : 1;
@@ -1479,6 +1753,7 @@ class MovingHead {
    * @param {Number} dt seconds
    */
   spinOptics(dt) {
+    this.runFrost(dt);
     let moving = false;
     Object.keys(this._wheels).forEach((name) => {
       const wheel = this._wheels[name];
@@ -1923,6 +2198,18 @@ class MovingHead {
    * @private
    */
   updateMatrix() {
+    if (this._hidden) {
+      if (this._collapsed) return;
+      [baseMesh, yokeMesh, headMesh, beamMesh, capMesh, boundingBoxMesh].forEach((mesh) => {
+        mesh.setMatrixAt(this._id, COLLAPSED);
+        mesh.instanceMatrix.needsUpdate = true;
+      });
+      // So showing it again finds every matrix changed and uploads them all.
+      this._writtenMatrices.forEach((written) => written.copy(COLLAPSED));
+      this._collapsed = true;
+      return;
+    }
+    this._collapsed = false;
     if (this._matrixNeedsUpdate) {
       this._dummy.updateMatrixWorld();
       this._yokeDummy.updateMatrixWorld();
@@ -2049,7 +2336,7 @@ class MovingHead {
     const projections = [];
     instances.forEach((instance) => {
       const id = instance._id;
-      if (id >= MOVER_DEPTH.maxProjections || instance.intensity <= 0) return;
+      if (id >= MOVER_DEPTH.maxProjections || instance.intensity <= 0 || instance._hidden) return;
       instance.updateDepthCamera();
       instance._beamDummy.getWorldDirection(vector_beam);
       const turned = 1 - Math.max(vector_beam.dot(instance._depthDir), 0);
@@ -2134,9 +2421,15 @@ class MovingHead {
   updateStrobe(t) {
     this._shutter = this._flashes.sample(t);
 
-    // eslint-disable-next-line max-len
-    this._spotLight.intensity = SPOTLIGHT_PHYSICALLY_CORRECT_INTENSITY * this.intensity * this._shutter;
-    intensity_buffer_attribute.setX(this._id, this.intensity * this._shutter);
+    // Concentrated by the zoom: the pool, the shadow-casting light and the
+    // beam in the air all carry the same gain, so they agree. See `fluxGain`.
+    // The dimmer alone, not the `intensity` getter, which has the shutter in
+    // it already: counted twice, a flash covering half a frame came out a
+    // quarter as bright rather than half.
+    const lit = this._hidden ? 0
+      : this._intensity * this._shutter * this._fluxGain * this._outputGain;
+    this._spotLight.intensity = SPOTLIGHT_PHYSICALLY_CORRECT_INTENSITY * lit;
+    intensity_buffer_attribute.setX(this._id, lit);
     intensity_buffer_attribute.needsUpdate = true;
     this.updateLensColor();
   }
@@ -2161,6 +2454,34 @@ class MovingHead {
 
   get tiltSpeed() {
     return this._tiltSpeed;
+  }
+
+  /**
+   * Sets how fast pan and tilt move, from a pan/tilt speed channel.
+   *
+   * A speed is a percent, slow to fast, of the fixture's top speeds. A
+   * duration is the time every move takes whatever its size, pan and tilt
+   * arriving together; zero is as fast as the head goes.
+   *
+   * @public
+   * @param {Object|null} value `{ speed, duration }`, one of them stated, or
+   *   null for full speed
+   */
+  setPanTiltSpeed(value) {
+    const speed = value && Number.isFinite(value.speed) ? value.speed : null;
+    const duration = value && Number.isFinite(value.duration) ? value.duration : null;
+    if (speed === null && duration === null) {
+      this._panTiltSpeed = null;
+    } else if (duration !== null) {
+      this._panTiltSpeed = { share: 1, duration: Math.max(duration, 0) };
+    } else {
+      const share = Math.min(Math.max(speed, 0), 100) / 100;
+      this._panTiltSpeed = {
+        share: PAN_TILT_SLOWEST + share * (1 - PAN_TILT_SLOWEST),
+        duration: 0,
+      };
+    }
+    this._move = null;
   }
 
   /**
@@ -2279,11 +2600,38 @@ class MovingHead {
     const step = Math.min(t - previous, MAX_STEP_SECONDS);
     if (step <= 0) return;
 
-    const panLimit = this._panSpeed * step;
-    const tiltLimit = this._tiltSpeed * step;
     const panError = this.targetPan - this._panCurrent;
     const tiltError = this.targetTilt - this._tiltCurrent;
-    if (panError === 0 && tiltError === 0) return;
+    if (panError === 0 && tiltError === 0) {
+      this._move = null;
+      return;
+    }
+
+    // Top speeds, scaled by a speed channel. A timed move works out its rates
+    // once, when the target changes, so each axis covers its distance in the
+    // stated time; a head cannot go faster than its top speed however short
+    // the time.
+    let panRate = this._panSpeed;
+    let tiltRate = this._tiltSpeed;
+    const setting = this._panTiltSpeed;
+    if (setting && setting.duration > 0) {
+      const move = this._move;
+      if (!move || move.pan !== this.targetPan || move.tilt !== this.targetTilt) {
+        this._move = {
+          pan: this.targetPan,
+          tilt: this.targetTilt,
+          panRate: Math.min(Math.abs(panError) / setting.duration, this._panSpeed),
+          tiltRate: Math.min(Math.abs(tiltError) / setting.duration, this._tiltSpeed),
+        };
+      }
+      panRate = this._move.panRate;
+      tiltRate = this._move.tiltRate;
+    } else if (setting) {
+      panRate *= setting.share;
+      tiltRate *= setting.share;
+    }
+    const panLimit = panRate * step;
+    const tiltLimit = tiltRate * step;
 
     // Clamped to the remaining error so the head settles exactly on target
     // instead of oscillating around it.

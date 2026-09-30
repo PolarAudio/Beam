@@ -49,6 +49,7 @@ function bounds(primitive) {
 const CUSTOM = {
   cube: { x: 1.8, y: 0.8, z: 0.75 },
   cylinder: { radius: 0.3, height: 2.4 },
+  tube: { radius: 0.6, thickness: 0.1, height: 1.5 },
   sphere: { radius: 0.7 },
   plane: { x: 4, y: 3 },
 };
@@ -57,6 +58,7 @@ const CUSTOM = {
 const HEIGHT = {
   cube: (size) => size.z || 1,
   cylinder: (size) => size.height || 1,
+  tube: (size) => size.height || 1,
   sphere: (size) => (size.radius || 0.5) * 2,
   plane: () => 0,
 };
@@ -96,6 +98,84 @@ console.log('\n-- a cylinder stands upright, not on its side --');
   const box = bounds({ type: 'cylinder', size: { radius: 0.3, height: 2.4 } });
   check('its height is along z', um(box.max.z - box.min.z), 2.4);
   check('its width across x is the diameter', um(box.max.x - box.min.x), 0.6);
+}
+
+/**
+ * Signed volume of a mesh: positive and equal to the solid's volume only when
+ * every face is present and faces outward, which a single-sided material needs.
+ */
+function signedVolume(geometry) {
+  const pos = geometry.attributes.position;
+  const index = geometry.index.array;
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
+  let volume = 0;
+  for (let i = 0; i < index.length; i += 3) {
+    a.fromBufferAttribute(pos, index[i]);
+    b.fromBufferAttribute(pos, index[i + 1]);
+    c.fromBufferAttribute(pos, index[i + 2]);
+    volume += a.dot(b.clone().cross(c)) / 6;
+  }
+  return volume;
+}
+
+/** Volumes sum Float32 positions, so they agree to five places, not six. */
+const near = (value) => Math.round(value * 1e5) / 1e5;
+
+/** The volume a 32-per-turn polygonal ring section should enclose. */
+function polygonVolume(outer, inner, height, degrees) {
+  const segments = Math.max(1, Math.ceil((32 * degrees) / 360));
+  const step = ((degrees * Math.PI) / 180) / segments;
+  return (segments * Math.sin(step) * (outer * outer - inner * inner) * height) / 2;
+}
+
+console.log('\n-- arcs are closed, face outward, and are centred on +Y --');
+[
+  ['full cylinder', { type: 'cylinder', size: { radius: 0.5, height: 1 } }, 0.5, 0, 1, 360],
+  ['half cylinder', { type: 'cylinder', size: { radius: 0.5, height: 1, angle: 180 } }, 0.5, 0, 1, 180],
+  ['full tube', { type: 'tube', size: { radius: 0.6, thickness: 0.1, height: 1.5 } }, 0.6, 0.5, 1.5, 360],
+  ['half tube', {
+    type: 'tube',
+    size: {
+      radius: 0.6, thickness: 0.1, height: 1.5, angle: 180,
+    },
+  }, 0.6, 0.5, 1.5, 180],
+  ['quarter tube', {
+    type: 'tube',
+    size: {
+      radius: 1, thickness: 0.2, height: 2, angle: 90,
+    },
+  }, 1, 0.8, 2, 90],
+  ['270 cylinder', { type: 'cylinder', size: { radius: 1, height: 1, angle: 270 } }, 1, 0, 1, 270],
+  ['wall past the axis', { type: 'tube', size: { radius: 0.5, thickness: 2, angle: 120 } }, 0.5, 0, 1, 120],
+].forEach(([label, primitive, outer, inner, height, degrees]) => {
+  const geometry = primitiveGeometry(primitive);
+  check(`${label}: volume`, near(signedVolume(geometry)), near(polygonVolume(outer, inner, height, degrees)));
+  const { uv } = geometry.attributes;
+  let inRange = !!uv && uv.count === geometry.attributes.position.count;
+  for (let i = 0; inRange && i < uv.count; i += 1) {
+    const u = uv.getX(i);
+    const v = uv.getY(i);
+    if (u < -1e-6 || u > 1 + 1e-6 || v < -1e-6 || v > 1 + 1e-6) inRange = false;
+  }
+  check(`${label}: every vertex has a uv in 0..1`, inRange, true);
+});
+{
+  const box = bounds({
+    type: 'tube',
+    size: {
+      radius: 0.6, thickness: 0.1, height: 1.5, angle: 180,
+    },
+  });
+  check('half tube spans the diameter across x', um(box.max.x - box.min.x), 1.2);
+  check('and lies on the +Y side of its axis', um(box.min.y), 0);
+  check('out to the radius', um(box.max.y), 0.6);
+  check('on the floor', um(box.min.z), 0);
+}
+{
+  const box = bounds({ type: 'cylinder', size: { radius: 0.5, angle: 0 } });
+  check('an angle of 0 reads as a full turn', um(box.min.y), -0.5);
 }
 
 // Guard against the one way this test could pass for the wrong reason.

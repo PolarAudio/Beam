@@ -67,6 +67,7 @@ import {
 import AmbientHazeEffect from './ambient_haze';
 import Perf from './perf_overlay';
 import Preferences from './preferences';
+import { refreshAddressFormat } from '../../models/DMX/address_format';
 import Tuning from './tuning';
 import createLEDDebugPanel from './led_debug_panel';
 import VideoFeed from './video_feed';
@@ -354,6 +355,8 @@ class Visualizer {
     // Loaded before anything is built, so the scene comes up already dressed
     // rather than flickering through defaults.
     await Preferences.load();
+    // Addresses on screen were drawn in the fallback spelling until now.
+    refreshAddressFormat();
     // Straight onto the room, before a renderer or a debug panel can read it.
     // A panel that reads `SceneEnv` before this shows zeros for the rest of
     // the session while the scene runs on the stored values.

@@ -2,6 +2,7 @@
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import Laser from './laser';
 import MovingHead from './moving_head';
+import LightField from './light_field';
 import LEDField from './led_field';
 import LEDPanel from './led_panel';
 import Perf from './perf_overlay';
@@ -99,6 +100,9 @@ export default function createLEDDebugPanel(visualizer, host) {
     beamScatter: Math.round(MovingHead.scatterAmount() * 100),
     beamOcclusion: MovingHead.occlusion(),
     beamDebug: 0,
+    poolGain: LightField.poolGain(),
+    beamGain: MovingHead.beamGain(),
+    poolFalloff: LightField.uniforms.lightFieldDecay.value,
     // Laser
     laserAir: Laser.scatterGain(),
     laserSurface: Laser.surfaceGain(),
@@ -354,6 +358,17 @@ export default function createLEDDebugPanel(visualizer, host) {
   })
     .name('draw term')
     .onChange((v) => MovingHead.setDebugTerm(v));
+  // Not stored: the defaults in light_field.js and moving_head.js are the
+  // calibration, and these are for checking it.
+  beam.add(state, 'poolGain', 0.001, 0.1, 0.001)
+    .name('pool gain')
+    .onChange((v) => LightField.setPoolGain(v));
+  beam.add(state, 'beamGain', 0, 0.5, 0.005)
+    .name('beam gain')
+    .onChange((v) => MovingHead.setBeamGain(v));
+  beam.add(state, 'poolFalloff', 1, 2, 0.05)
+    .name('pool falloff')
+    .onChange((v) => { LightField.uniforms.lightFieldDecay.value = v; });
 
   // Two separate hands, because a laser is drawn twice: the shaft through the
   // haze is geometry, the figure on the stone is a projected picture. Turning

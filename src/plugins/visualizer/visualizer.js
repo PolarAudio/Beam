@@ -265,12 +265,19 @@ const BLOOM_BY_FOG = {
   // threshold washes the whole image before any air is involved. Haze opens
   // it up from there.
   //
+  // The threshold barely moves with haze. Pools land at their real
+  // illuminance on the projector's lux scale, so a mover's pool is several
+  // times the gate, and a low gate fills the dark between a gobo's bars with
+  // glow. Haze adds strength and spread instead, the spread kept narrow: a
+  // pool a metre or two from its lamp runs to tens of thousands of lux, and
+  // a wide spread smears that over the whole frame as a grey veil.
+  //
   // Deliberately NOT a preference. Bloom already answers to haze density, which
   // is a scene control the user sets; a second control over the same quantity
   // would be one the haze slider cannot reach.
-  intensity: { min: 0.70, max: 5.0 },
-  radius: { min: 0.40, max: 1.0 },
-  threshold: { min: 0.45, max: 0.05 },
+  intensity: { min: 0.70, max: 2.1 },
+  radius: { min: 0.30, max: 0.50 },
+  threshold: { min: 0.6, max: 0.4 },
 };
 
 /**

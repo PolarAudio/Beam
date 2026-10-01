@@ -243,6 +243,9 @@ export function goboTexture() {
   texture.magFilter = THREE.LinearFilter;
   texture.minFilter = THREE.LinearMipmapLinearFilter;
   texture.generateMipmaps = true;
+  // The air reads the pattern averaged along a ray's stretch and sharp
+  // across it; three clamps this to what the GPU supports.
+  texture.anisotropy = 16;
   texture.colorSpace = THREE.NoColorSpace;
   texture.flipY = false;
   texture.needsUpdate = true;

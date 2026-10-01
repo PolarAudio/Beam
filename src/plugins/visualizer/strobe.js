@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import SceneManager from './scene_manager';
 import SceneEnv from './scene_env';
-import LightField, { CANDELA_PER_UNIT, REFERENCE_INTENSITY } from './light_field';
+import LightField, { CANDELA_PER_UNIT, REFERENCE_INTENSITY, SCENE_INTENSITY_PER_UNIT } from './light_field';
 import { castsContactShadow } from './contact_shadows';
 import BodyFinish from './body_finish';
 import Shutter, { SHUTTER_MODES } from './shutter';
@@ -484,7 +484,8 @@ class Strobe {
     forward.set(0, -1, 0).transformDirection(this._dummy.matrixWorld);
     record.direction.copy(forward).negate();
     record.color.copy(this._colour);
-    record.intensity = this._frameIntensity * this._lit;
+    // Candela on the lux scale, as every source in the field.
+    record.intensity = this._frameIntensity * this._lit * SCENE_INTENSITY_PER_UNIT;
     record.range = STROBE_RANGE;
     const { h, v } = floodHalfAngles(this._params || {});
     const half = Math.max(h, v);

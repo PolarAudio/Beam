@@ -16,6 +16,36 @@ const REFERENCE_SOLID_ANGLE = 2 * Math.PI * (1 - Math.cos(REFERENCE_HALF_ANGLE))
 const CANDELA_PER_UNIT = (REFERENCE_LUMENS / REFERENCE_SOLID_ANGLE) / REFERENCE_INTENSITY;
 
 /**
+ * Linear scene units per lux. The one calibration constant for light landing
+ * on a surface, and a real one, shared by the projector and every fixture in
+ * the field.
+ *
+ * Everything else about a light's brightness is computed rather than chosen.
+ * A projector's illuminance is lumens over the area the lens makes at that
+ * distance; a fixture's is its candela over the distance squared. Both are
+ * numbers a designer already thinks in -- a dark venue is one to five lux,
+ * street lighting ten to twenty, a mapping rig on a facade fifty to a hundred
+ * and fifty, a mover's pool hundreds.
+ *
+ * Only the last step needs a decision: lux to a value the tone curve can eat.
+ * This is it, and it is the only number here set by looking.
+ *
+ * Anchored on a reference rig, the one to check against if this ever drifts:
+ * a 10000-lumen machine, throw ratio 1.5, 1920x1200, twenty-seven
+ * metres off a church. That is a 17 x 10.5 m image at **about 60 lux**, which
+ * at this value reads as a projection that clearly owns the facade against a
+ * dark venue -- which is what sixty lux on a wall at night looks like.
+ */
+const LUX_SCALE = 0.022;
+
+/**
+ * A light-field unit as a three.js light intensity: candela into scene
+ * units, so that with an inverse-square falloff a surface receives its lux
+ * times `LUX_SCALE`, the same scale a projected picture lands at.
+ */
+const SCENE_INTENSITY_PER_UNIT = CANDELA_PER_UNIT * LUX_SCALE;
+
+/**
  * @file Every fixture's light, in a texture rather than a uniform array.
  *
  * three puts each light into a fixed-size uniform array that is compiled into
@@ -143,7 +173,8 @@ const record = {
 const uniforms = {
   lightField: { value: null },
   lightFieldCount: { value: 0 },
-  lightFieldDecay: { value: 1.0 },
+  // Inverse square: sources write candela on the lux scale.
+  lightFieldDecay: { value: 2.0 },
   // The mover depth atlas, set by `MovingHead.renderDepth` each frame.
   lightFieldDepth: { value: null },
   lightFieldDepthFar: { value: 1 },
@@ -412,7 +443,15 @@ vec2 fieldStencil( vec2 p, float inner, vec4 gobo, vec4 prism, float split, floa
 }
 `;
 
+/**
+ * Scales every pool in the field, set by eye against the beams with pools
+ * on the lux scale and falling off as the inverse square.
+ */
+let poolGain = 0.01;
+
 const LightField = {
+  setPoolGain(value) { poolGain = Number(value) || 0; },
+  poolGain() { return poolGain; },
   /** @type {Object} the uniforms every receiving material shares */
   uniforms,
 
@@ -487,9 +526,9 @@ const LightField = {
         data[at + 6] = record.direction.z;
         data[at + 7] = record.cosOuter;
 
-        data[at + 8] = record.color.r * record.intensity;
-        data[at + 9] = record.color.g * record.intensity;
-        data[at + 10] = record.color.b * record.intensity;
+        data[at + 8] = record.color.r * record.intensity * poolGain;
+        data[at + 9] = record.color.g * record.intensity * poolGain;
+        data[at + 10] = record.color.b * record.intensity * poolGain;
         data[at + 11] = record.cosInner;
 
         data[at + 12] = record.tile.x;
@@ -523,9 +562,9 @@ const LightField = {
         data[at + 35] = record.prism.w;
 
         const far = record.split > 0 ? record.colorB : record.color;
-        data[at + 36] = far.r * record.intensity;
-        data[at + 37] = far.g * record.intensity;
-        data[at + 38] = far.b * record.intensity;
+        data[at + 36] = far.r * record.intensity * poolGain;
+        data[at + 37] = far.g * record.intensity * poolGain;
+        data[at + 38] = far.b * record.intensity * poolGain;
         data[at + 39] = record.split;
 
         data[at + 40] = record.iris;
@@ -584,4 +623,9 @@ const LightField = {
 };
 
 export default LightField;
-export { CANDELA_PER_UNIT, REFERENCE_INTENSITY };
+export {
+  CANDELA_PER_UNIT,
+  REFERENCE_INTENSITY,
+  LUX_SCALE,
+  SCENE_INTENSITY_PER_UNIT,
+};

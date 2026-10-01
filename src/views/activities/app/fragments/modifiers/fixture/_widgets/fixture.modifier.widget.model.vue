@@ -115,6 +115,23 @@
            belong here beside the channel map rather than in Fixture Settings
            with the things you set per unit. It also fills the space a device
            with few channels, or none, otherwise leaves empty. -->
+      <!-- The four facts most asked about a model, always in view; the rest of
+           the spec sheet is collapsed below. See `keyFacts`. -->
+      <div
+        v-if="keyFacts.length"
+        class="device_facts"
+      >
+        <dl>
+          <template
+            v-for="fact in keyFacts"
+            :key="fact.label"
+          >
+            <dt>{{ fact.label }}</dt>
+            <dd>{{ fact.value }}</dd>
+          </template>
+        </dl>
+      </div>
+
       <div
         v-if="deviceFacts.length"
         class="device_facts"
@@ -133,6 +150,22 @@
           </template>
         </dl>
       </div>
+
+      <details
+        v-if="specFacts.length"
+        class="fixture_guide"
+      >
+        <summary>Specifications</summary>
+        <dl>
+          <template
+            v-for="fact in specFacts"
+            :key="fact.label"
+          >
+            <dt>{{ fact.label }}</dt>
+            <dd>{{ fact.value }}</dd>
+          </template>
+        </dl>
+      </details>
 
       <!-- A short manual for the mode in use, written from the profile: what
            to set before there is light, and what each channel's ranges do.
@@ -269,6 +302,10 @@ import { fixtureIcon } from '@/models/DMX/generic/fixture_kind';
 import { isShowKey } from '@/models/DMX/definition_store';
 import fixtureGuide from '@/models/DMX/fixture_guide';
 import { formatAddress } from '@/models/DMX/address_format';
+import MovingHead from '@/plugins/visualizer/moving_head';
+
+/** A whole number with thousands separators. */
+const grouped = (n) => Math.round(n).toLocaleString('en-GB');
 
 /** How long the copy button confirms for, in ms. */
 const COPY_FEEDBACK_MS = 1500;
@@ -345,6 +382,92 @@ export default {
       const maker = (this.saveManufacturer || '').trim();
       const model = (this.saveModel || '').trim();
       return !!maker && !!model && !maker.includes('/') && !model.includes('/') && !this.saveTaken;
+    },
+    /**
+     * Make, model, lumens and power: what is asked about a model first.
+     *
+     * @type {Array}
+     */
+    keyFacts() {
+      if (!this.fixture) return [];
+      const { physical } = this;
+      const facts = [
+        { label: 'Make', value: this.$show.manufacturerName(this.fixture.manufacturer) },
+        { label: 'Model', value: this.fixture.model },
+        { label: 'Lumens', value: this.lumensText() },
+      ];
+      if (Number(physical.power) > 0) facts.push({ label: 'Power', value: `${grouped(physical.power)} W` });
+      return facts.filter((fact) => fact.value);
+    },
+    /**
+     * The rest of the profile's spec sheet, and for a moving head the peak
+     * intensity Beam renders at each end of the zoom.
+     *
+     * @type {Array}
+     */
+    specFacts() {
+      const data = (this.fixture && this.fixture.OFLData) || {};
+      const { physical } = this;
+      const bulb = physical.bulb || {};
+      const facts = [];
+      if (bulb.type) facts.push({ label: 'Lamp', value: bulb.type });
+      if (bulb.colorTemperature) facts.push({ label: 'Colour temp', value: `${grouped(bulb.colorTemperature)} K` });
+      const lens = this.lensRange;
+      if (lens) {
+        const [narrow, wide] = lens;
+        facts.push({ label: 'Zoom', value: narrow === wide ? `${narrow}°` : `${narrow}° – ${wide}°` });
+        const lumens = this.isMover ? MovingHead.lumensOf(physical) : null;
+        if (lumens) {
+          // The same sums the head renders with: the lumens spread over the
+          // widest field, concentrated by `fluxGain` as the zoom closes.
+          const half = (wide / 2) * (Math.PI / 180);
+          const atWide = lumens / (2 * Math.PI * (1 - Math.cos(half)));
+          const gain = MovingHead.fluxGain(narrow / 2, wide / 2);
+          const ratio = gain > 1.01 ? ` · ${grouped(gain)}x` : '';
+          facts.push({
+            label: 'Peak',
+            value: `${grouped(atWide * gain)} cd at ${narrow}° · ${grouped(atWide)} cd at ${wide}°${ratio}`,
+          });
+        }
+      }
+      if (physical.weight) facts.push({ label: 'Weight', value: `${physical.weight} kg` });
+      const size = physical.dimensions;
+      if (Array.isArray(size) && size.length === 3) {
+        facts.push({ label: 'Size', value: `${size.join(' x ')} mm (W x H x D)` });
+      }
+      if (physical.DMXconnector) facts.push({ label: 'Connector', value: physical.DMXconnector });
+      if ((data.categories || []).length) facts.push({ label: 'Category', value: data.categories.join(', ') });
+      if ((data.modes || []).length) {
+        facts.push({
+          label: 'Modes',
+          value: data.modes.map((m) => `${m.name} (${(m.channels || []).length} ch)`).join(', '),
+        });
+      }
+      return facts;
+    },
+    /** The profile's physical block, or an empty one. */
+    physical() {
+      return ((this.fixture && this.fixture.OFLData) || {}).physical || {};
+    },
+    /**
+     * Drawn as a moving head: the same test the fixture uses to build one.
+     *
+     * @type {Boolean}
+     */
+    isMover() {
+      const data = (this.fixture && this.fixture.OFLData) || {};
+      return (data.categories || []).includes('Moving Head') && !!data.physical;
+    },
+    /**
+     * Narrowest and widest field in degrees, or null. A head with no lens
+     * block is drawn at 10 to 25 degrees, so it says so.
+     *
+     * @type {Array|null}
+     */
+    lensRange() {
+      const lens = this.physical.lens || {};
+      if (Array.isArray(lens.degreesMinMax)) return lens.degreesMinMax.map(Number);
+      return this.isMover ? [10, 25] : null;
     },
     /**
      * What this model is, for a projector or a display.
@@ -629,6 +752,30 @@ export default {
      * @param {Object} p the profile's `asls.projector`
      * @returns {Array}
      */
+    /**
+     * The lumens line. For a moving head it is the figure the head is lit
+     * from, and says so when that is not the profile's own: `lumensOf`
+     * replaces a missing or unbelievable figure with one made from the power.
+     *
+     * @public
+     * @returns {String}
+     */
+    lumensText() {
+      const { physical } = this;
+      const stated = Number((physical.bulb || {}).lumens);
+      if (!this.isMover) {
+        const projector = ((this.fixture.OFLData || {}).asls || {}).projector || {};
+        const lumens = stated > 0 ? stated : Number(projector.lumens);
+        return lumens > 0 ? `${grouped(lumens)} lm` : '';
+      }
+      const used = MovingHead.lumensOf(physical);
+      if (!used) return 'not stated · lit as the reference head';
+      if (used === stated) return `${grouped(used)} lm`;
+      const from = `estimated from ${grouped(physical.power)} W`;
+      return stated > 0
+        ? `${grouped(used)} lm, ${from} (profile says ${grouped(stated)})`
+        : `${grouped(used)} lm, ${from}`;
+    },
     projectorFacts(p) {
       const { min, max } = throwRange(p);
       const wide = throwAngles(min, p);

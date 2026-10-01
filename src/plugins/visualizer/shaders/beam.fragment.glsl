@@ -46,7 +46,7 @@ uniform sampler2D goboAtlas;     // Every gobo pattern, in a grid; pattern 0 ope
  * lands crisp on the wall. The surface reads the pattern sharp.
  */
 #define GOBO_LOD_BASE 1.5
-#define GOBO_BLUR_PER_METRE 0.12
+#define GOBO_BLUR_PER_METRE 0.03
 #define GOBO_LOD_MAX 4.0
 
 /**
@@ -111,20 +111,6 @@ vec2 prismOffset(int k, int facets, bool linear, float angle, float spread) {
 #define BEAM_FIELD_DEPTH 0.5
 
 /**
- * Brightness of a ray straight through the axis within the knee, before the
- * haze.
- *
- * One number for the lot: the profile, the irradiance and the fragment count
- * are all unity there, so this is the level the fixture's intensity is scaled
- * to. The cone this shader replaced peaked at 8 with a falloff of
- * 1 / (1 + z + angle z^2) along the shaft; the inverse-square falloff below
- * integrates to 2.4 times that along a 150 m shaft, and 8 / 2.4 is this, so
- * a shaft carries the light it did. `vGain` scales each beam's profile so
- * its cross-section carries the old cone's light whatever the focus.
- */
-#define BEAM_GAIN 3.3
-
-/**
  * Nearest the lens the irradiance falls off from, in metres.
  *
  * Light spreads as the inverse square of the distance from the virtual
@@ -172,6 +158,7 @@ float dbgIrradiance = 0.0;
 float dbgField = 0.0;
 
 uniform bool fogState;
+uniform float beamGain;      // Brightness of a ray straight through the axis within the knee, before the haze
 uniform float scatterAmount; // How much of the haze's forward scattering to show, 0..1
 uniform float fogFactor;     // How much haze there is, 0..1
 uniform float fogScale;      // How wide one haze feature is, in metres
@@ -331,7 +318,8 @@ float beamGoboMean(vec2 cell) {
  * @brief a gobo's stencil at a point of the aperture
  * @param vec2 p aperture position, (0,0) the axis, 1 the field's radius
  * @param vec2 patternAngle the gobo's pattern index and its angle
- * @param float lod how blurred to read it for the air, in mip levels
+ * @param vec2 along the stretch of aperture this read stands for
+ * @param float lod how blurred to read it across that stretch, in mip levels
  * @param float defocus the focus blur, 0 sharp to 2 fully out; past 2, frost,
  *   blending on to the pattern's mean by 3
  * @returns float 1 where light passes
@@ -341,8 +329,15 @@ float beamGoboMean(vec2 cell) {
  * aperture reads the same texel here and in the light field on surfaces.
  * One read returns all three baked blur levels, sharp in red, soft in blue,
  * and the focus blends between them.
+ *
+ * The read is the pattern's mean along `along` and only `lod` wide across
+ * it: an anisotropic footprint, which the atlas's anisotropic filtering
+ * takes as up to sixteen taps down the line. Light adds up along the ray,
+ * so the stretch it crosses averages, but a ray running down a gobo's
+ * sheet of light stays on the sheet. An isotropic blur the length of the
+ * stretch spread each sheet across its neighbours and drew none.
  */
-float beamGobo(vec2 p, vec2 patternAngle, float lod, float defocus) {
+float beamGobo(vec2 p, vec2 patternAngle, vec2 along, float lod, float defocus) {
   if (patternAngle.x < 0.5) return 1.0;
   // Negated: the pattern is read facing the wall, so a positive angle has to
   // turn it clockwise as seen there.
@@ -351,7 +346,18 @@ float beamGobo(vec2 p, vec2 patternAngle, float lod, float defocus) {
   vec2 q = clamp(vec2(c * p.x - s * p.y, s * p.x + c * p.y) * 0.5 + 0.5, 0.002, 0.998);
   float index = floor(patternAngle.x + 0.5);
   vec2 cell = vec2(mod(index, GOBO_GRID), floor(index / GOBO_GRID));
-  vec3 levels = textureLod(goboAtlas, (cell + q) / GOBO_GRID, min(lod, GOBO_LOD_MAX)).rgb;
+  // The footprint in atlas coordinates: the stretch, turned with the
+  // pattern and held to half a cell so it cannot reach a neighbour, and a
+  // width of one texel at the blur level.
+  vec2 major = vec2(c * along.x - s * along.y, s * along.x + c * along.y) * (0.5 / GOBO_GRID);
+  float majorLength = length(major);
+  float halfCell = 0.5 / GOBO_GRID;
+  if (majorLength > halfCell) major *= halfCell / majorLength;
+  float width = exp2(min(lod, GOBO_LOD_MAX)) / float(textureSize(goboAtlas, 0).x);
+  vec2 axis = majorLength > 1e-6 ? major / majorLength : vec2(1.0, 0.0);
+  if (majorLength < width) major = axis * width;
+  vec2 minor = vec2(-axis.y, axis.x) * width;
+  vec3 levels = textureGrad(goboAtlas, (cell + q) / GOBO_GRID, major, minor).rgb;
   float v = mix(mix(levels.r, levels.g, clamp(defocus, 0.0, 1.0)), levels.b, clamp(defocus - 1.0, 0.0, 1.0));
   float wash = clamp(defocus - 2.0, 0.0, 1.0);
   if (wash > 0.0) v = mix(v, beamGoboMean(cell), wash);
@@ -389,7 +395,8 @@ float beamIris(vec2 p) {
  * @function beamGobos
  * @brief every gobo in the beam at a point of the aperture
  * @param vec2 p aperture position
- * @param float lod how blurred to read them for the air
+ * @param vec2 along the stretch of aperture the read stands for
+ * @param float lod how blurred to read them across it
  * @returns float 1 where light passes
  *
  * At rest, the first wheel's gobo and a second wheel's. A wheel between two
@@ -397,7 +404,7 @@ float beamIris(vec2 p) {
  * number: the old gobo slides out along the wheel and the next slides in
  * behind it, each through its own round hole, with metal between them.
  */
-float beamGobos(vec2 p, float lod) {
+float beamGobos(vec2 p, vec2 along, float lod) {
   // Never sharper than the first baked blur in the air: light scattered by
   // haze has bounced and mixes directions, and a sharp read gave each pixel
   // a different slice of a fine pattern, a grain along every ray.
@@ -408,15 +415,15 @@ float beamGobos(vec2 p, float lod) {
   float frac = fract(vGobo.x + 0.0005) - 0.0005;
   if (frac < 0.001) frac = 0.0;
   if (frac <= 0.0) {
-    return beamGobo(p, vGobo.xy, lod, airDefocus) * beamGobo(p, vGobo.zw, lod, airDefocus);
+    return beamGobo(p, vGobo.xy, along, lod, airDefocus) * beamGobo(p, vGobo.zw, along, lod, airDefocus);
   }
   float soft = 0.02 + 0.08 * vPrism.w;
   vec2 pa = p + vec2(frac * GOBO_PITCH, 0.0);
   vec2 pb = p - vec2((1.0 - frac) * GOBO_PITCH, 0.0);
   float holeA = 1.0 - smoothstep(1.0 - soft, 1.0, length(pa));
   float holeB = 1.0 - smoothstep(1.0 - soft, 1.0, length(pb));
-  return holeA * beamGobo(pa, vec2(floor(vGobo.x + 0.0005), vGobo.y), lod, airDefocus)
-    + holeB * beamGobo(pb, vGobo.zw, lod, airDefocus);
+  return holeA * beamGobo(pa, vec2(floor(vGobo.x + 0.0005), vGobo.y), along, lod, airDefocus)
+    + holeB * beamGobo(pb, vGobo.zw, along, lod, airDefocus);
 }
 
 /**
@@ -441,7 +448,8 @@ float beamSplit(vec2 p) {
  * @function beamStencil
  * @brief the beam's cross-section at a point of the aperture, per colour
  * @param vec2 p aperture position, (0,0) the axis, 1 the field's radius
- * @param float lod how blurred the gobos read
+ * @param vec2 along the stretch of aperture the read stands for
+ * @param float lod how blurred the gobos read across it
  * @returns vec2 light on the near side of any colour split, and past it
  *
  * The falloff from the inner cone to the field, through every gobo in the
@@ -449,12 +457,12 @@ float beamSplit(vec2 p) {
  * cross-section displaced by the spread, split included, so a three-facet
  * prism is three overlapping beams a third as bright.
  */
-vec2 beamStencil(vec2 p, float lod) {
+vec2 beamStencil(vec2 p, vec2 along, float lod) {
   int facets = int(abs(vPrism.x));
   bool linear = vPrism.x < 0.0;
   if (facets < 2) {
     float v = (1.0 - smoothstep(vInner, 1.0, length(p)))
-      * beamGobos(p, lod)
+      * beamGobos(p, along, lod)
       * beamIris(p);
     float far = beamSplit(p);
     return vec2(v * (1.0 - far), v * far);
@@ -464,12 +472,37 @@ vec2 beamStencil(vec2 p, float lod) {
     if (k >= facets) break;
     vec2 q = p - prismOffset(k, facets, linear, vPrism.y, vPrism.z);
     float v = (1.0 - smoothstep(vInner, 1.0, length(q)))
-      * beamGobos(q, lod)
+      * beamGobos(q, along, lod)
       * beamIris(q);
     float far = beamSplit(q);
     sum += vec2(v * (1.0 - far), v * far);
   }
   return sum * (PRISM_TRANSMISSION / float(facets));
+}
+
+/**
+ * @function kneeIntegral
+ * @brief the irradiance integrated along the axis, from the apex to here
+ * @param float u distance from the cone's virtual apex
+ * @returns float metres of full irradiance: u within the knee, then
+ *   approaching twice the knee as the inverse square runs out
+ *
+ * The antiderivative of (KNEE / max(u, KNEE))^2, so the light along any
+ * stretch of a ray is a difference of two of these over the ray's rate of
+ * travel along the axis.
+ */
+float kneeIntegral(float u) {
+  return u <= BEAM_KNEE ? u : 2.0 * BEAM_KNEE - BEAM_KNEE * BEAM_KNEE / u;
+}
+
+/**
+ * @function kneeInverse
+ * @brief where along the axis `kneeIntegral` reaches a value
+ * @param float g a value of `kneeIntegral`
+ * @returns float distance from the cone's virtual apex
+ */
+float kneeInverse(float g) {
+  return g <= BEAM_KNEE ? g : BEAM_KNEE * BEAM_KNEE / max(2.0 * BEAM_KNEE - g, 1e-4);
 }
 
 /**
@@ -669,10 +702,31 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
   // which is what a real beam does. Four field reads per fragment, which
   // measured nearly free where arithmetic is not.
   // The tile covers the drawn cone, prism spread included, plus the margin.
+  //
+  // **The samples go where the light is.** The irradiance along the ray is
+  // known in closed form, so its integral over the lit stretch is exact
+  // (`kneeIntegral`), and the samples are spaced so that each stands for an
+  // equal share of it: dense near the lens, sparse far out. They then only
+  // have to estimate the profile, the haze and the extinction, which vary
+  // slowly. Evenly spaced samples on a ray running down a beam put one in
+  // every twenty-odd metres, and whichever landed near the lens was counted
+  // for its whole stretch: a bright, curved sheet that jumped as the ray moved.
+  // A ray crossing the beam side-on sees almost no change in irradiance, and
+  // keeps the even spacing with each sample weighted by its own irradiance.
   float tanHalf = tan(radians(vAngle)) * DEPTH_FOV_MARGIN * vSpread;
   float apexBehind = r0 / max(m, 1e-4);
   float haze = clamp(fogFactor, 0.0, 1.0);
-  float sampleStep = chord / float(BEAM_PROFILE_SAMPLES);
+  float samples = float(BEAM_PROFILE_SAMPLES);
+  // Distance from the cone's virtual apex at the ends of the lit stretch,
+  // which is what the irradiance falls off with.
+  float uLo = clamp(oz + vz * sLo, 0.0, vZFar) + apexBehind;
+  float uHi = clamp(oz + vz * sHi, 0.0, vZFar) + apexBehind;
+  float gLo = kneeIntegral(uLo);
+  float gHi = kneeIntegral(uHi);
+  bool alongIrradiance = abs(gHi - gLo) > 0.01 && abs(vz) > 1e-4;
+  // The irradiance integral each sample stands for, when spaced by it.
+  float shareWeight = abs(gHi - gLo) / abs(vz) / samples;
+  float sumWeight = 0.0;
   float sumLight = 0.0;
   float sumFar = 0.0;
   float sumProfile = 0.0;
@@ -680,7 +734,23 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
   float sumField = 0.0;
   float sumU = 0.0;
   for (int i = 0; i < BEAM_PROFILE_SAMPLES; i++) {
-    float s = sLo + chord * (float(i) + 0.5) / float(BEAM_PROFILE_SAMPLES);
+    float t = (float(i) + 0.5) / samples;
+    float s;
+    float weight;
+    float sampleStep;
+    if (alongIrradiance) {
+      float uHere = kneeInverse(mix(gLo, gHi, t));
+      s = (uHere - apexBehind - oz) / vz;
+      float knee = BEAM_KNEE / max(uHere, BEAM_KNEE);
+      weight = shareWeight;
+      // The stretch of ray this sample's share covers.
+      sampleStep = min(shareWeight / max(knee * knee, 1e-6), chord);
+    } else {
+      s = sLo + chord * t;
+      float knee = BEAM_KNEE / max(clamp(oz + vz * s, 0.0, vZFar) + apexBehind, BEAM_KNEE);
+      weight = chord / samples * knee * knee;
+      sampleStep = chord / samples;
+    }
     float z = clamp(oz + vz * s, 0.0, vZFar);
     // Where the sample sits in the aperture: its offset from the axis on
     // the beam's own axes, over the field's radius there, lens ring
@@ -701,48 +771,52 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
       }
     }
     // Each sample stands for a stretch of the ray a step long, and reads
-    // the gobo blurred by how much of the pattern that stretch crosses. A
-    // sharp read there drew one sharp slice per sample: near a surface seen
-    // at a slant, where the ray crosses the pattern fast, that was a row of
-    // faint shifted copies of the gobo beside the pool. Where the ray runs
-    // along the beam the stretch covers little of the pattern and the read
-    // stays sharp. The span is in aperture units, 2 across the field, which
-    // is the pattern's 128 texels; the distance blur is a floor under it.
+    // the gobo averaged along the stretch of pattern it crosses, sharp
+    // across it but for the distance blur. A sharp point read drew one slice
+    // per sample: near a surface seen at a slant, where the ray crosses the
+    // pattern fast, that was a row of faint shifted copies of the gobo
+    // beside the pool.
     float zNext = oz + vz * (s + sampleStep);
     vec3 radialNext = oR + vR * (s + sampleStep);
     float fieldNext = max(r0 + (m / vSpread) * clamp(zNext, 0.0, vZFar), 1e-4);
     vec2 apertureNext = vec2(dot(radialNext, vAxisX), dot(radialNext, vAxisY)) / fieldNext;
-    float spanTexels = length(apertureNext - aperture) * 64.0;
-    float lod = max(GOBO_LOD_BASE + GOBO_BLUR_PER_METRE * z, log2(max(spanTexels, 1.0)));
-    vec2 sides = beamStencil(aperture, lod) * lit;
+    float lod = GOBO_LOD_BASE + GOBO_BLUR_PER_METRE * z;
+    vec2 sides = beamStencil(aperture, apertureNext - aperture, lod) * lit;
     float profileHere = sides.x + sides.y;
     float spread = BEAM_KNEE / max(z + apexBehind, BEAM_KNEE);
-    float irradiance = spread * spread * exp(-BEAM_EXTINCTION * haze * z);
+    float extinction = exp(-BEAM_EXTINCTION * haze * z);
     float field = hazeField(cameraPos + viewDir * s);
-    sumLight += profileHere * irradiance * field;
-    sumFar += sides.y * irradiance * field;
+    sumWeight += weight;
+    sumLight += weight * profileHere * extinction * field;
+    sumFar += weight * sides.y * extinction * field;
     sumProfile += profileHere;
-    sumIrradiance += irradiance;
+    sumIrradiance += spread * spread * extinction;
     sumField += field;
     sumU += x;
   }
-  float samples = float(BEAM_PROFILE_SAMPLES);
   farShare = sumLight > 0.0 ? sumFar / sumLight : 0.0;
   float u = clamp(sumU / samples, 0.0, 1.0);
 
-  // How much cone the ray gets to cross, against the widest chord at that
-  // depth. 1 through the middle, falling to nothing where the floor, the far
-  // end or a surface leave the ray only a sliver -- which is what fades the
-  // beam out where it lands rather than cutting it.
+  // The light scattered along the ray is that integral, in units of the
+  // beam's diameter at the knee: 1 straight through the beam there. Past
+  // the knee a side-on ray crosses a wider beam, so its brightness falls as
+  // 1/z, not with the irradiance's 1/z^2 -- which is why a long throw stays
+  // visible to the floor. Within the knee the diameter is the local one, so
+  // the lens end reads 1 across. A ray running down the beam collects more,
+  // as it does in real air, but never more than the irradiance integral to
+  // infinity, twice the knee. A sliver where the floor, the far end or a
+  // surface cuts the ray short fades to nothing, which is what fades the
+  // beam out where it lands.
   float radiusMid = max(r0 + m * zMid, 1e-4);
-  float through = clamp(chord / (2.0 * radiusMid), 0.0, 1.0);
+  float radiusKnee = max(r0 + m * BEAM_KNEE, 1e-4);
+  float diameter = 2.0 * min(radiusMid, radiusKnee);
 
   dbgU = u;
   dbgProfile = sumProfile / samples;
-  dbgThrough = through;
+  dbgThrough = sumWeight / diameter;
   dbgIrradiance = sumIrradiance / samples;
   dbgField = sumField / samples;
-  return (sumLight / samples) * through;
+  return sumLight / diameter;
 }
 
 void main() {
@@ -764,7 +838,7 @@ void main() {
   float zAlong;
   float sAlong;
   float farShare;
-  float light = BEAM_GAIN * vGain * beamProfile(viewDir, zAlong, sAlong, farShare);
+  float light = beamGain * vGain * beamProfile(viewDir, zAlong, sAlong, farShare);
 
   if (debugTerm == 1) { gl_FragColor = vec4(vec3(dbgU * 0.2), 1.0); return; }
   if (debugTerm == 2) { gl_FragColor = vec4(vec3(dbgProfile * 0.2), 1.0); return; }

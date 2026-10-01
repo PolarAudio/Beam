@@ -7,7 +7,7 @@ import VOLUMETRIC_BEAM_FRAGMENT_SHADER from './shaders/beam.fragment.glsl?raw';
 import Shutter, { SHUTTER_MODES } from './shutter';
 import { kelvinToRgb } from '../../models/DMX/colour_temperature';
 import { hazeShaderPrelude, hazeUniforms } from './haze_noise';
-import LightField, { CANDELA_PER_UNIT, REFERENCE_INTENSITY } from './light_field';
+import LightField, { CANDELA_PER_UNIT, REFERENCE_INTENSITY, SCENE_INTENSITY_PER_UNIT } from './light_field';
 import { castsContactShadow } from './contact_shadows';
 import { DepthAtlas } from './projector_depth';
 import { goboTexture, goboLayerFor, GOBO_BLUR_LEVELS } from './gobo_library';
@@ -268,7 +268,10 @@ let occlusionEnabled = true;
  * a beam crossing the view never changes. Set by eye, and the debug panel's
  * to move.
  */
-let beamScatterValue = 0.25;
+let beamScatterValue = 0.11;
+
+/** Brightness of the beams in the air, set by eye against the pools. */
+let beamGain = 0.085;
 
 /**
  * The beam fragment shader, with the scene's haze configuration prepended.
@@ -282,7 +285,13 @@ let beamScatterValue = 0.25;
 const BEAM_FRAGMENT_SHADER = hazeShaderPrelude() + VOLUMETRIC_BEAM_FRAGMENT_SHADER;
 
 const SPOTLIGHT_PHYSICALLY_CORRECT_DISTANCE = 0;
-const SPOTLIGHT_PHYSICALLY_CORRECT_INTENSITY = REFERENCE_INTENSITY;
+/**
+ * The pool's light at full for the reference head, in scene units: its
+ * candela on the lux scale the projector uses, so with the inverse-square
+ * falloff below a pool lands at its real illuminance. The beam in the air
+ * reads `lit` and is unaffected.
+ */
+const SPOTLIGHT_PHYSICALLY_CORRECT_INTENSITY = REFERENCE_INTENSITY * SCENE_INTENSITY_PER_UNIT;
 
 /**
  * Lumens per watt of fixture power, for a profile that states power but not
@@ -301,7 +310,9 @@ const LUMENS_PER_WATT = 22;
  * @constant {Array<Number>}
  */
 const PLAUSIBLE_LUMENS_PER_WATT = [5, 150];
-const SPOTLIGHT_PHYSICALLY_CORRECT_DECAY = 1.0;
+
+/** Light spreads as the inverse square of the distance. */
+const SPOTLIGHT_PHYSICALLY_CORRECT_DECAY = 2.0;
 /**
  * The pool's penumbra for a fixture without a focus channel. A focus
  * channel sweeps its own range, `PENUMBRA_DEFOCUSED` to `PENUMBRA_FOCUSED`.
@@ -2382,6 +2393,17 @@ class MovingHead {
     beamMesh.material.uniforms.debugTerm.value = Math.max(0, Math.floor(Number(term) || 0));
   }
 
+  static setBeamGain(value) {
+    beamGain = Math.max(Number(value) || 0, 0);
+    if (beamMesh && beamMesh.material && beamMesh.material.uniforms) {
+      beamMesh.material.uniforms.beamGain.value = beamGain;
+    }
+  }
+
+  static beamGain() {
+    return beamGain;
+  }
+
   /** @public @param {Boolean} on whether beams stop at surfaces */
   static setOcclusion(on) {
     occlusionEnabled = !!on;
@@ -2839,6 +2861,7 @@ class MovingHead {
           type: 'f',
           value: SceneEnv.hazeDriftRate,
         },
+        beamGain: { value: beamGain },
         scatterAmount: {
           type: 'f',
           value: beamScatterValue,

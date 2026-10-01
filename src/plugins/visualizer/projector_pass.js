@@ -5,6 +5,7 @@ import ProjectorDepth, {
 } from './projector_depth';
 import { hazeShaderPrelude, hazeUniforms } from './haze_noise';
 import SceneEnv from './scene_env';
+import { LUX_SCALE } from './light_field';
 import MovingHead from './moving_head';
 
 /**
@@ -37,32 +38,6 @@ import MovingHead from './moving_head';
  * projector lighting its own cone is a fixture, and a fixture's beam survives
  * the house coming up.
  */
-
-/**
- * Linear scene units per lux. The one calibration constant, and a real one.
- *
- * Everything else about a projector's brightness is computed rather than
- * chosen. Illuminance is lumens over the area the lens makes at that distance,
- * which is a number a designer already thinks in -- a dark venue is one to five
- * lux, street lighting ten to twenty, a mapping rig on a facade fifty to a
- * hundred and fifty. Taking the area from the frustum means a zoom or a shift
- * is accounted for without being asked about: narrow the lens and the same
- * lumens land on less wall and it gets brighter, exactly as they do.
- *
- * Only the last step needs a decision: lux to a value the tone curve can eat.
- * This is it, and it is the only number here set by looking.
- *
- * Anchored on a reference rig, the one to check against if this ever drifts:
- * a 10000-lumen machine, throw ratio 1.5, 1920x1200, twenty-seven
- * metres off a church. That is a 17 x 10.5 m image at **about 60 lux**, which
- * at this value reads as a projection that clearly owns the facade against a
- * dark venue -- which is what sixty lux on a wall at night looks like.
- * Sixty lux is on the dim side for mapping -- which is true of one 10k machine
- * on a facade that size, and is why real rigs stack them.
- *
- * @constant {Number}
- */
-const LUX_SCALE = 0.022;
 
 /**
  * How far a surface may sit behind what the projector saw and still count.

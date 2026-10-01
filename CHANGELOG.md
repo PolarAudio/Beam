@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.1.0-alpha.16
+
+### Brightness
+
+- Pools from moving heads and strobes are on the projector's lux scale and fall off with the square of the distance. They fell off linearly before, which made long throws too bright.
+- Calibration set by eye: pool gain 0.01, beam gain 0.085, facing brightness 11%. The values are under **Debug → Mover beam** for checking and are not stored.
+- Bloom: lower strength (0.7–2.1 with haze), narrower spread (0.3–0.5) and a higher threshold (0.6–0.4). Bright pools no longer fill the dark between a gobo's bars or veil the frame.
+
+### Beams
+
+- Samples along a beam are spaced by the light, close together near the lens and further apart far out. A ray running down a beam no longer shows a bright curved sheet that jumps as the view moves.
+- A side-on beam past the knee fades as 1/distance, so long throws stay visible to the floor.
+- Gobos in the air are averaged along the ray and stay sharp across it, using anisotropic filtering. Gobo sheets in haze show as sheets instead of being blurred into their neighbours. Distance blur is a quarter of what it was.
+
+### Fixture panel
+
+- **Model** shows make, model, lumens and power for every fixture. For a moving head the lumens are the figure it is lit from, and an estimate from the power says so.
+- **Specifications** (collapsed) lists lamp, colour temperature, zoom range, weight, size, connector, categories and modes, and for a moving head the peak candela at the narrowest and widest zoom.
+
+### Manual
+
+- Moving head beams: pools and specifications.
+
 ## 0.1.0-alpha.15
 
 ### Patch bay

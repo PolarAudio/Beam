@@ -561,12 +561,14 @@ A beam is light scattered by the haze, so with haze off there is no beam, only t
 
 - **Width and edge.** The fixture's stated angle is the edge of the light. The focus channel sets how soft that edge is, from nearly hard at full focus to soft halfway in. A fixture without a focus channel gets a middling edge.
 - **Where it stops.** Each lit head keeps a small depth view from its lens. The beam stops at the first thing it hits, and the pool is shadowed by it, so a wall ends both and a cube in the beam casts a shadow on the floor. With hundreds of heads moving, only a few of those views are redrawn each frame, the most visible first; a beam can briefly lag where it cuts a truss.
+- **Pools.** Light on a surface falls off with the square of the distance, on the same lux scale as projectors.
 - **Along the beam.** Light thins with distance and is eaten by thick haze, so dense haze makes short beams. The haze texture runs through the beam rather than sitting on its surface.
 - **Facing the camera.** Haze throws light mostly forwards, so a beam pointing at you is brighter than one crossing your view. **Debug → Mover beam → facing brightness %** sets how much.
 - **Gobos.** Every gobo wheel a profile has works, with slot, rotation, wheel scroll and shake. Beam carries the Open Fixture Library's 46 gobo images. A slot that names one gets it; slots that name nothing get images in order, so each slot still looks different. The wheel slides from slot to slot rather than jumping. Focus blurs the gobo as well as the edge.
 - **Colour wheels.** A colour slot's colour comes from its name. Set the wheel between two slots and the beam shows half of each.
 - **Prisms.** The prism channel splits the beam into copies of the whole cross-section, so where copies overlap they add up. The facet count and a linear layout come from the profile; if it says nothing you get three facets in a circle. The glass costs some light. Prism rotation spins it.
 - **Iris.** The iris channel closes the beam down.
+- **Specifications.** **Model** shows make, model, lumens and power. **Specifications** below it has the rest of the profile: lamp, colour temperature, zoom range, weight, size, connector and modes. For a moving head it also gives the peak intensity at the narrowest and widest zoom. When the lumens are an estimate from the power, the line says so.
 - **Quick guide.** Select a fixture and open **Model → Quick guide** for what to set before it gives light, and what every channel does across its DMX range.
 
 ## Art-Net input

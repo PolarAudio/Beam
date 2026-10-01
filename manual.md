@@ -561,7 +561,7 @@ A beam is light scattered by the haze, so with haze off there is no beam, only t
 
 - **Width and edge.** The fixture's stated angle is the edge of the light. The focus channel sets how soft that edge is, from nearly hard at full focus to soft halfway in. A fixture without a focus channel gets a middling edge.
 - **Where it stops.** Each lit head keeps a small depth view from its lens. The beam stops at the first thing it hits, and the pool is shadowed by it, so a wall ends both and a cube in the beam casts a shadow on the floor. With hundreds of heads moving, only a few of those views are redrawn each frame, the most visible first; a beam can briefly lag where it cuts a truss.
-- **Pools.** Light on a surface falls off with the square of the distance, on the same lux scale as projectors.
+- **Pools.** Light on a surface is on the same lux scale as projectors and falls off with distance.
 - **Along the beam.** Light thins with distance and is eaten by thick haze, so dense haze makes short beams. The haze texture runs through the beam rather than sitting on its surface.
 - **Facing the camera.** Haze throws light mostly forwards, so a beam pointing at you is brighter than one crossing your view. **Debug → Mover beam → facing brightness %** sets how much.
 - **Gobos.** Every gobo wheel a profile has works, with slot, rotation, wheel scroll and shake. Beam carries the Open Fixture Library's 46 gobo images. A slot that names one gets it; slots that name nothing get images in order, so each slot still looks different. The wheel slides from slot to slot rather than jumping. Focus blurs the gobo as well as the edge.

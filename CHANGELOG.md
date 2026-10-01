@@ -6,6 +6,7 @@
 
 - Recalibrated by eye at 50% haze: beam gain 0.5 (was 0.085), facing brightness 37% (was 11%), pool falloff 1.55 (was 2). Pool gain stays 0.01. At alpha.16's values, beams from low-output heads such as the Tomshine 80W were nearly invisible.
 - The beam gain slider under **Debug → Mover beam** goes up to 2.
+- Haze defaults: turbulence 33% (was 70%), scale 10 m (was 4 m). Density stays 50%.
 
 ### Preferences
 

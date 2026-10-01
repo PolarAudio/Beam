@@ -43,7 +43,7 @@ const DEFAULTS = {
    */
   globalFoggingDensity: 50,
   /** Width of one haze feature, in metres. Size, not amount. */
-  globalFoggingScale: 4,
+  globalFoggingScale: 10,
   /**
    * How fast the haze field churns, as a percentage.
    *
@@ -53,7 +53,7 @@ const DEFAULTS = {
    *
    * Only affects a fresh install; a stored setting wins.
    */
-  globalFoggingTurbulences: 70,
+  globalFoggingTurbulences: 33,
   /**
    * Global brightness with the house lights up. The scene keeps two, because
    * looking at a rig and looking at a show want different rooms, and the one

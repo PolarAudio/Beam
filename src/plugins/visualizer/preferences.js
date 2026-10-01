@@ -205,6 +205,23 @@ async function flush() {
  * @param {String} key
  * @returns {*} the stored value, or its default
  */
+/**
+ * Puts every preference, debug tuning included, back to its default and
+ * writes the empty file at once. Nothing reapplies the defaults here: the
+ * caller reloads, so every module starts from its own constants.
+ *
+ * @returns {Promise}
+ */
+async function reset() {
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  values = { ...DEFAULTS };
+  if (!available()) return;
+  await window.jsonStore.write(STORE_NAME, JSON.stringify({}, null, 2));
+}
+
 function get(key) {
   return key in values ? values[key] : DEFAULTS[key];
 }
@@ -225,5 +242,5 @@ function all() {
 }
 
 export default {
-  load, get, set, all, flush, DEFAULTS,
+  load, get, set, all, flush, reset, DEFAULTS,
 };

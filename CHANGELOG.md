@@ -7,6 +7,10 @@
 - Recalibrated by eye at 50% haze: beam gain 0.5 (was 0.085), facing brightness 37% (was 11%), pool falloff 1.55 (was 2). Pool gain stays 0.01. At alpha.16's values, beams from low-output heads such as the Tomshine 80W were nearly invisible.
 - The beam gain slider under **Debug → Mover beam** goes up to 2.
 
+### Preferences
+
+- **Preferences → Reset to defaults** clears every stored preference and debug tuning value and reloads Beam. It asks first, and warns when the show has unsaved changes. The debug panel has the same button at the top.
+
 ## 0.1.0-alpha.16
 
 ### Brightness

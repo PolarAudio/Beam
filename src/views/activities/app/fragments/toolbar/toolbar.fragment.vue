@@ -21,6 +21,7 @@
 <script>
 import EventBus from '@/plugins/eventbus';
 import confirm from '@/plugins/confirm';
+import Preferences from '@/plugins/visualizer/preferences';
 import VisualizerPopup from './_popups/popup.visualizer.vue';
 import LicensePopup from './_popups/popup.license.vue';
 import CreditsPopup from './_popups/popup.credits.vue';
@@ -183,6 +184,13 @@ export default {
                 this.videoPopupState = true;
               },
             },
+            {
+              name: 'Reset to defaults',
+              icon: 'undo',
+              callback: () => {
+                this.resetToDefaults();
+              },
+            },
           ],
         },
         {
@@ -261,8 +269,31 @@ export default {
     EventBus.on('app_ready', () => {
       this.project = this.$show.documentTitle;
     });
+    // The debug panel's button, so both ask the same question.
+    EventBus.on('reset_defaults', () => this.resetToDefaults());
   },
   methods: {
+    /**
+     * Resets every preference and debug value to its default, after asking,
+     * and reloads so each module starts from its own constants.
+     *
+     * @public
+     * @async
+     */
+    async resetToDefaults() {
+      const go = await confirm({
+        title: 'Reset to defaults',
+        message: 'Reset all preferences and debug values to their defaults?',
+        detail: this.$show.isSaved
+          ? 'Beam reloads.'
+          : 'Beam reloads. This show has unsaved changes: save it first or they may be lost.',
+        yes: 'Reset',
+        no: 'Cancel',
+      });
+      if (!go) return;
+      await Preferences.reset();
+      window.location.reload();
+    },
     /**
      * Load showfile from native file loader
      *

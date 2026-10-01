@@ -9,6 +9,7 @@ import Perf from './perf_overlay';
 import SceneEnv from './scene_env';
 import { ambientCeiling } from './ambient';
 import Tuning from './tuning';
+import EventBus from '../eventbus';
 import ContactShadows from './contact_shadows';
 import { hazeWarp, hazeTurn } from './haze_noise';
 import PatchSingleton from '../../models/DMX/patch.model';
@@ -115,6 +116,9 @@ export default function createLEDDebugPanel(visualizer, host) {
     // Measurement
     passes: Perf.getPasses(),
   };
+
+  gui.add({ reset: () => EventBus.emit('reset_defaults') }, 'reset')
+    .name('Reset all to defaults');
 
   const die = gui.addFolder('Emitter die');
   die.add(state, 'gain', 0, 8, 0.05)

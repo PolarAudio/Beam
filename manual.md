@@ -734,7 +734,7 @@ Files are MP4, H.264 video and AAC audio, constant frame rate. They play on phon
 
 **Edit** — Undo, Redo
 
-**Preferences** — Visualizer, Art-Net
+**Preferences** — Visualizer, Art-Net, Video, Reset to defaults. Reset puts every preference and debug value back to its default and reloads Beam; save the show first.
 
 **About** — Manual, License, Credits, Contact
 

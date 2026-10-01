@@ -268,10 +268,10 @@ let occlusionEnabled = true;
  * a beam crossing the view never changes. Set by eye, and the debug panel's
  * to move.
  */
-let beamScatterValue = 0.11;
+let beamScatterValue = 0.37;
 
 /** Brightness of the beams in the air, set by eye against the pools. */
-let beamGain = 0.085;
+let beamGain = 0.5;
 
 /**
  * The beam fragment shader, with the scene's haze configuration prepended.

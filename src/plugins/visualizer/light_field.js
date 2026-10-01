@@ -173,8 +173,9 @@ const record = {
 const uniforms = {
   lightField: { value: null },
   lightFieldCount: { value: 0 },
-  // Inverse square: sources write candela on the lux scale.
-  lightFieldDecay: { value: 2.0 },
+  // Sources write candela on the lux scale. Set by eye; the inverse square
+  // would be 2.
+  lightFieldDecay: { value: 1.55 },
   // The mover depth atlas, set by `MovingHead.renderDepth` each frame.
   lightFieldDepth: { value: null },
   lightFieldDepthFar: { value: 1 },

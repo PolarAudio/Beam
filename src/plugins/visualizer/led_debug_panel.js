@@ -363,7 +363,7 @@ export default function createLEDDebugPanel(visualizer, host) {
   beam.add(state, 'poolGain', 0.001, 0.1, 0.001)
     .name('pool gain')
     .onChange((v) => LightField.setPoolGain(v));
-  beam.add(state, 'beamGain', 0, 0.5, 0.005)
+  beam.add(state, 'beamGain', 0, 2, 0.005)
     .name('beam gain')
     .onChange((v) => MovingHead.setBeamGain(v));
   beam.add(state, 'poolFalloff', 1, 2, 0.05)

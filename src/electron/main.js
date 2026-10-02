@@ -30,6 +30,7 @@ import documentstore from './documentstore';
 import projectexport from './projectexport';
 import videorecorder from './videorecorder';
 import environmentstore from './environmentstore';
+import gdtfstore from './gdtfstore';
 import fileexport from './fileexport';
 
 // GPU timer queries are disabled by default because precise timing is a
@@ -515,6 +516,21 @@ function setupLibrary() {
   // The dialog is attached to the window so it is modal to Beam rather than
   // floating loose, which is how every other file prompt here behaves.
   ipcMain.handle('library:addEnvironment', () => environmentstore.add(mainWindow));
+
+  // GDTF fixtures, kept as downloaded. The list is metadata only; the bytes
+  // are served as `library://profiles/<file>`.
+  ipcMain.handle('library:gdtfList', () => gdtfstore.list());
+  ipcMain.handle('library:pickGdtf', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Import GDTF fixtures',
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'GDTF fixtures', extensions: ['gdtf'] }],
+    });
+    return result.canceled ? [] : result.filePaths;
+  });
+  // Takes a path, so a file dropped on the window imports the same way as a
+  // picked one.
+  ipcMain.handle('library:importGdtf', (event, source, options) => gdtfstore.importFile(source, options));
 }
 
 /**

@@ -8,6 +8,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import library from './library';
+import gdtfstore from './gdtfstore';
 import paths from './paths';
 
 /**
@@ -32,8 +33,8 @@ import paths from './paths';
  *
  * An export is read by *mounting* it: its `Library/` entries are unpacked into
  * a cache folder laid out exactly like the user's library, and for as long as
- * the document is open that folder is consulted first -- profiles and
- * overrides handed to the renderer, models served over `library://project`.
+ * the document is open that folder is consulted first -- profiles handed to
+ * the renderer, models served over `library://project`.
  * Unpacking rather than serving out of the zip lets every reader that already
  * walks a library folder walk this one unchanged. The cache is application
  * data: it is cleared when the document is closed and when the app starts.
@@ -230,16 +231,18 @@ function unpack(root, names, entries, source) {
 }
 
 /**
- * The profiles and overrides under a mount root, as `mount` returns them.
+ * The profiles and GDTF fixtures under a mount root, as `mount` returns them.
+ * GDTF fixtures are listed, not read: the renderer fetches their bytes as
+ * `library://projectprofiles/<file>`.
  *
  * @param {String|null} root
- * @returns {Object} `{ profiles, overrides }`
+ * @returns {Object} `{ profiles, gdtf }`
  */
 function carriedAt(root) {
-  if (!root) return { profiles: {}, overrides: {} };
+  if (!root) return { profiles: {}, gdtf: [] };
   return {
     profiles: library.readAll('profiles', root),
-    overrides: library.readAll('overrides', root),
+    gdtf: gdtfstore.list(root),
   };
 }
 
@@ -254,18 +257,18 @@ function carriedAt(root) {
  *
  * @public
  * @param {String} target absolute path of the document
- * @returns {Object} `{ profiles, overrides }`, each keyed as the library keys
- *   them and empty when the document carries none
+ * @returns {Object} `{ profiles, gdtf }`, keyed as the library keys them and
+ *   empty when the document carries none
  */
 function mount(target) {
   unmount();
-  if (!isDocumentPath(target)) return { profiles: {}, overrides: {} };
+  if (!isDocumentPath(target)) return carriedAt(null);
   mounted = { target, root: null };
 
   const entries = entriesOf(target) || {};
   const names = Object.keys(entries).filter((name) => name.startsWith(LIBRARY_PREFIX)
     && !name.endsWith('/') && entries[name].length > 0);
-  if (!names.length) return { profiles: {}, overrides: {} };
+  if (!names.length) return carriedAt(null);
 
   const digest = crypto.createHash('sha1').update(target).digest('hex').slice(0, 12);
   const root = path.join(cacheRoot(), digest, 'Library');
@@ -283,7 +286,7 @@ function mount(target) {
  *
  * @public
  * @param {Object} entries entry name to bytes, each under `Library/`
- * @returns {Object|null} `{ profiles, overrides }` as now carried, or null when
+ * @returns {Object|null} `{ profiles, gdtf }` as now carried, or null when
  *   the open document carries nothing to replace
  */
 function replaceMounted(entries) {

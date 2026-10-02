@@ -81,6 +81,16 @@ const SERVED_DIRS = {
     },
     extensions: null,
   },
+  // GDTF fixtures, and nothing else from the Profiles folder: the JSON
+  // profiles beside them reach the renderer through the library's own calls.
+  profiles: { dir: 'Profiles', extensions: ['.gdtf'] },
+  projectprofiles: {
+    base: () => {
+      const mounted = documentstore.mountRoot();
+      return mounted ? path.join(mounted, 'Profiles') : null;
+    },
+    extensions: ['.gdtf'],
+  },
 };
 
 /**

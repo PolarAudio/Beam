@@ -46,6 +46,13 @@ function ranged(cap, field) {
 
 /** A slot's name, from the wheel the capability belongs to. */
 function slotName(cap, wheels, wheelName) {
+  // A range that scrolls the wheel from one slot to the next is both of them,
+  // the colour turning into the next as the value rises.
+  if (cap.slotNumber === undefined && cap.slotNumberStart !== undefined) {
+    const from = slotName({ ...cap, slotNumber: cap.slotNumberStart }, wheels, wheelName);
+    const to = slotName({ ...cap, slotNumber: cap.slotNumberEnd }, wheels, wheelName);
+    return from === to ? from : `${from} → ${to}`;
+  }
   const wheel = wheels[cap.wheel || wheelName];
   const n = Number(cap.slotNumber);
   if (!wheel || !Number.isFinite(n)) return `slot ${cap.slotNumber}`;
@@ -82,14 +89,22 @@ function colourOf(cap, wheels, wheelName) {
 function splitOf(cap, wheels, wheelName) {
   if (cap.type !== 'WheelSlot') return null;
   const wheel = wheels[cap.wheel || wheelName];
-  const n = Number(cap.slotNumber);
-  if (!wheel || !Number.isFinite(n) || Number.isInteger(n)) return null;
+  if (!wheel) return null;
   const side = (slot) => {
     if (!slot) return null;
     if (slot.type === 'Open') return '#ffffff';
     return slot.type === 'Color' ? (slot.colors || [])[0] || null : null;
   };
   const slots = wheel.slots || [];
+  // A scroll from one slot to another shows the two it runs between.
+  if (cap.slotNumber === undefined && cap.slotNumberStart !== undefined) {
+    const at = (s) => slots[Math.round(Number(s)) - 1] || slots[0];
+    const lower = side(at(cap.slotNumberStart));
+    const upper = side(at(cap.slotNumberEnd));
+    return lower && upper ? [lower, upper] : null;
+  }
+  const n = Number(cap.slotNumber);
+  if (!Number.isFinite(n) || Number.isInteger(n)) return null;
   const lower = side(slots[Math.floor(n) - 1]);
   // Past the last slot a wheel comes round to its first.
   const upper = side(slots[Math.floor(n)] || slots[0]);

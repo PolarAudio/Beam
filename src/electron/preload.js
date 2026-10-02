@@ -1,5 +1,5 @@
 /* eslint-disable import/no-extraneous-dependencies */
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import NDI from './ndi';
 
 /**
@@ -159,12 +159,12 @@ contextBridge.exposeInMainWorld('jsonStore', {
  *
  * One file per item, so saving one profile touches one file rather than
  * re-serialising the library. Items are named by key -- `manufacturer/model`
- * for profiles and overrides, a name for structures -- and never by path: the
+ * for profiles, a name for structures -- and never by path: the
  * file name is a convenience the main process derives, not an identity.
  */
 contextBridge.exposeInMainWorld('library', {
   /**
-   * @param {String} kind 'profiles', 'structures' or 'overrides'
+   * @param {String} kind 'profiles' or 'structures'
    * @returns {Promise<Object>} key to contents
    */
   readAll: (kind) => ipcRenderer.invoke('library:readAll', kind),
@@ -251,6 +251,33 @@ contextBridge.exposeInMainWorld('library', {
    * @returns {Promise<Object>} `{ ok, entry }` or `{ ok: false, reason }`
    */
   addEnvironment: () => ipcRenderer.invoke('library:addEnvironment'),
+  /**
+   * GDTF fixtures in `Library/Profiles`, metadata only. The bytes are served
+   * as `library://profiles/<file>`.
+   *
+   * @returns {Promise<Array>} `{ key, file, name, manufacturer, fixtureTypeId, dataVersion }`
+   */
+  gdtfList: () => ipcRenderer.invoke('library:gdtfList'),
+  /** Asks for .gdtf files. @returns {Promise<Array<String>>} absolute paths */
+  pickGdtf: () => ipcRenderer.invoke('library:pickGdtf'),
+  /**
+   * Copies one .gdtf into the library. A file of the same fixture type is
+   * reported as a conflict unless `replace` is set.
+   *
+   * @param {String} source absolute path
+   * @param {Object} [options] `{ replace }`
+   * @returns {Promise<Object>} `{ ok, entry }`, `{ ok: false, conflict }`
+   *   or `{ ok: false, reason }`
+   */
+  importGdtf: (source, options) => ipcRenderer.invoke('library:importGdtf', source, options),
+  /**
+   * The path of a file dropped on the window. The page cannot see paths; the
+   * preload can, and hands over only this one.
+   *
+   * @param {File} file
+   * @returns {String}
+   */
+  pathForFile: (file) => webUtils.getPathForFile(file),
 });
 
 /**
@@ -306,11 +333,11 @@ contextBridge.exposeInMainWorld('documentStore', {
   read: (target) => ipcRenderer.invoke('document:read', target),
   /**
    * Makes a document the open one. What it carries -- an export's collected
-   * profiles, overrides and models -- is unpacked and consulted ahead of the
+   * profiles and models -- is unpacked and consulted ahead of the
    * library until the next mount or unmount.
    *
    * @param {String} target
-   * @returns {Promise<Object>} `{ profiles, overrides }`, keyed as the library
+   * @returns {Promise<Object>} `{ profiles, gdtf }`, keyed as the library
    *   keys them; models are found through `library.objects()`
    */
   mount: (target) => ipcRenderer.invoke('document:mount', target),
@@ -323,7 +350,7 @@ contextBridge.exposeInMainWorld('documentStore', {
    * @param {String} target
    * @param {String} json serialised show
    * @param {Object} wanted `{ profiles, objects }`, each an array of keys
-   * @returns {Promise<Object>} `{ ok, carried, profiles, overrides }`
+   * @returns {Promise<Object>} `{ ok, carried, profiles, gdtf }`
    */
   write: (target, json, wanted) => ipcRenderer.invoke('document:write', target, json, wanted),
   /**
@@ -342,7 +369,7 @@ contextBridge.exposeInMainWorld('documentStore', {
    * changes; the file takes it on the next save.
    *
    * @param {Object} wanted `{ profiles, objects }`, each an array of keys
-   * @returns {Promise<Object>} `{ carried, refreshed, kept, objects, profiles, overrides }`
+   * @returns {Promise<Object>} `{ carried, refreshed, kept, objects, profiles, gdtf }`
    */
   refresh: (wanted) => ipcRenderer.invoke('document:refresh', wanted),
   /** @returns {Promise<String|null>} chosen path, or null when cancelled */

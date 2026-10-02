@@ -22,6 +22,7 @@
 import EventBus from '@/plugins/eventbus';
 import confirm from '@/plugins/confirm';
 import Preferences from '@/plugins/visualizer/preferences';
+import importGdtfFiles from '@/plugins/gdtf_import';
 import VisualizerPopup from './_popups/popup.visualizer.vue';
 import LicensePopup from './_popups/popup.license.vue';
 import CreditsPopup from './_popups/popup.credits.vue';
@@ -107,6 +108,13 @@ export default {
               icon: 'folder',
               callback: () => {
                 this.loadFile();
+              },
+            },
+            {
+              name: 'Import GDTF...',
+              icon: 'folder',
+              callback: () => {
+                this.importGdtf();
               },
             },
             {
@@ -271,6 +279,15 @@ export default {
     });
     // The debug panel's button, so both ask the same question.
     EventBus.on('reset_defaults', () => this.resetToDefaults());
+    // Files dropped anywhere on the window. A .gdtf is imported; anything
+    // else is refused here, because the default for a dropped file is to
+    // navigate to it, which would replace the app and lose the show.
+    window.addEventListener('dragover', this.onFileDragOver);
+    window.addEventListener('drop', this.onFileDrop);
+  },
+  beforeUnmount() {
+    window.removeEventListener('dragover', this.onFileDragOver);
+    window.removeEventListener('drop', this.onFileDrop);
   },
   methods: {
     /**
@@ -280,6 +297,41 @@ export default {
      * @public
      * @async
      */
+    async importGdtf() {
+      if (!window.library || !window.library.pickGdtf) return;
+      await importGdtfFiles(await window.library.pickGdtf(), this.$show);
+    },
+    /**
+     * Allows a file drop. Lists reorder by dragging too, but those drags
+     * carry no files and are left alone.
+     *
+     * @public
+     * @param {DragEvent} event
+     */
+    onFileDragOver(event) {
+      if (![...(event.dataTransfer?.types || [])].includes('Files')) return;
+      event.preventDefault();
+      // eslint-disable-next-line no-param-reassign
+      event.dataTransfer.dropEffect = 'copy';
+    },
+    /**
+     * Imports dropped .gdtf files and ignores the rest.
+     *
+     * @public
+     * @async
+     * @param {DragEvent} event
+     */
+    async onFileDrop(event) {
+      const files = [...(event.dataTransfer?.files || [])];
+      if (!files.length) return;
+      event.preventDefault();
+      const gdtf = files.filter((file) => file.name.toLowerCase().endsWith('.gdtf'));
+      if (gdtf.length < files.length) {
+        EventBus.emit('app_error', new Error('Only .gdtf fixture files can be dropped on Beam.'));
+      }
+      if (!gdtf.length || !window.library || !window.library.pathForFile) return;
+      await importGdtfFiles(gdtf.map((file) => window.library.pathForFile(file)), this.$show);
+    },
     async resetToDefaults() {
       const go = await confirm({
         title: 'Reset to defaults',

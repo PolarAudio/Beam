@@ -2,6 +2,7 @@
 import fs from 'fs';
 import path from 'path';
 import documentstore from './documentstore';
+import gdtfstore from './gdtfstore';
 import library from './library';
 import objectstore from './objectstore';
 import paths from './paths';
@@ -27,7 +28,6 @@ import paths from './paths';
  * way it walks the real one:
  *
  *   Library/Profiles/<manufacturer>/<model>.json
- *   Library/Overrides/<manufacturer>/<model>.json
  *   Library/Objects/[<folder>/]<file>
  *
  * A shipped profile or model is collected too. It is part of *this* version
@@ -85,7 +85,7 @@ function bytesOf(file) {
  * Windows, digest-suffixed on a collision -- so a shipped profile that was
  * never in the library still lands where the library would put it.
  *
- * @param {String} kind `profiles` or `overrides`
+ * @param {String} kind `profiles`
  * @param {String} key `manufacturer/model`
  * @returns {String|null} path relative to the library root, or null for a key
  *   that does not fit
@@ -102,7 +102,7 @@ function libraryRelative(kind, key) {
  * load resolves in, so that exporting an opened export freezes what it
  * actually shows rather than what this machine's library happens to hold.
  *
- * @param {String} kind `profiles` or `overrides`
+ * @param {String} kind `profiles`
  * @param {String} key `manufacturer/model`
  * @param {Boolean} [fromMount] whether the open document's copy counts
  * @returns {String|null} absolute path, or null when neither has it
@@ -119,7 +119,7 @@ function libraryFile(kind, key, fromMount = true) {
 }
 
 /**
- * Collects one fixture profile and its override, if any.
+ * Collects one fixture profile.
  *
  * The open document, then the user's library, then the shipped set, the
  * order a load resolves in. A shipped profile is wrapped in the library's own
@@ -132,12 +132,18 @@ function libraryFile(kind, key, fromMount = true) {
  * @returns {Boolean} whether the profile was found
  */
 function collectProfile(key, entries, fromMount = true) {
+  // A GDTF fixture travels as the file it is, untouched, from the open
+  // document or else the user's library.
+  const mounted = fromMount ? documentstore.mountRoot() : null;
+  const gdtf = (mounted && gdtfstore.pathFor(key, mounted)) || gdtfstore.pathFor(key);
+  const gdtfBytes = gdtf ? bytesOf(gdtf) : null;
+  if (gdtfBytes) {
+    entries[`${PREFIX}Profiles/${key}${gdtfstore.EXTENSION}`] = gdtfBytes;
+    return true;
+  }
+
   const relative = libraryRelative('profiles', key);
   if (!relative) return false;
-
-  const override = libraryFile('overrides', key, fromMount);
-  const overrideBytes = override ? bytesOf(override) : null;
-  if (overrideBytes) entries[entryFor(libraryRelative('overrides', key))] = overrideBytes;
 
   const own = libraryFile('profiles', key, fromMount);
   const ownBytes = own ? bytesOf(own) : null;
@@ -270,9 +276,8 @@ function exportTo(target, json, wanted) {
  * @param {String} target absolute path of the document
  * @param {String} json serialised show
  * @param {Object} wanted `{ profiles, objects }`, each an array of keys
- * @returns {Object} `{ ok, carried, profiles, overrides }` -- whether the file
- *   was written, whether it carries files, and the profiles and overrides it
- *   now carries
+ * @returns {Object} `{ ok, carried, profiles, gdtf }` -- whether the file
+ *   was written, whether it carries files, and the profiles it now carries
  */
 function saveTo(target, json, wanted) {
   if (!documentstore.mountRoot()) {
@@ -302,7 +307,7 @@ function entriesDiffer(a, b) {
  * The carried entries of one kind, by the key each file declares.
  *
  * @param {Object} carried entry name to bytes
- * @param {String} dir `Profiles` or `Overrides`
+ * @param {String} dir `Profiles`
  * @returns {Map<String, String>} key to entry name
  */
 function carriedByKey(carried, dir) {
@@ -345,17 +350,16 @@ function catalogueIndex(entries) {
  * reaches it. This is the deliberate way to let it: every item the show
  * references is collected again as a fresh export would collect it -- the
  * user's library, then the shipped set -- ignoring the carried copy. An item
- * this machine cannot supply keeps its carried copy. A profile's override
- * follows the profile, so one the library no longer has is dropped with it.
+ * this machine cannot supply keeps its carried copy.
  *
  * Only the mount changes. The `.beam` takes the new copies on the next save.
  *
  * @public
  * @param {Object} wanted `{ profiles, objects }`, each an array of keys
- * @returns {Object} `{ carried, refreshed, kept, objects, profiles, overrides }`
+ * @returns {Object} `{ carried, refreshed, kept, objects, profiles, gdtf }`
  *   -- whether the document carries anything, the items whose copy changed,
  *   the items only the document has, the object keys that changed, and the
- *   profiles and overrides now carried
+ *   profiles now carried
  */
 function refresh(wanted) {
   if (!documentstore.mountRoot()) {
@@ -381,7 +385,6 @@ function refresh(wanted) {
     .map((name) => [name, carried[name]]));
 
   const carriedProfiles = carriedByKey(carried, 'Profiles');
-  const carriedOverrides = carriedByKey(carried, 'Overrides');
   const profiles = Array.isArray(wanted && wanted.profiles) ? wanted.profiles : [];
   [...new Set(profiles)].forEach((key) => {
     if (typeof key !== 'string') return;
@@ -390,7 +393,7 @@ function refresh(wanted) {
       if (carriedProfiles.has(key)) kept.push(`profile ${key}`);
       return;
     }
-    replace(`profile ${key}`, pick([carriedProfiles.get(key), carriedOverrides.get(key)]), fresh);
+    replace(`profile ${key}`, pick([carriedProfiles.get(key)]), fresh);
   });
 
   const wantedObjects = Array.isArray(wanted && wanted.objects) ? wanted.objects : [];

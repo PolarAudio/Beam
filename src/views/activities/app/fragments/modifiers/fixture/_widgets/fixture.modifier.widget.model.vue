@@ -77,38 +77,6 @@
         </uk-flex>
       </uk-popup>
 
-      <template v-if="hasHead">
-        <uk-flex :gap="8">
-          <uk-num-input
-            v-model.lazy="panSpeed"
-            style="width: 90px"
-            label="Pan °/s"
-            :min="1"
-            :max="2000"
-            :disabled="!panOverridden"
-          />
-          <uk-checkbox
-            v-model="panOverridden"
-            label="Override"
-          />
-        </uk-flex>
-
-        <uk-flex :gap="8">
-          <uk-num-input
-            v-model.lazy="tiltSpeed"
-            style="width: 90px"
-            label="Tilt °/s"
-            :min="1"
-            :max="2000"
-            :disabled="!tiltOverridden"
-          />
-          <uk-checkbox
-            v-model="tiltOverridden"
-            label="Override"
-          />
-        </uk-flex>
-      </template>
-
       <!-- What the model *is*, above the map of what it answers to. This is
            the profile-scoped widget, and a resolution, a pitch and a throw are
            properties of the model rather than of this placement -- so they
@@ -297,10 +265,12 @@ import {
 import {
   throwRange, throwAngles, imageSizeAt, illuminanceAt,
 } from '@/models/DMX/generic/projector';
-import { DEFAULT_PAN_SPEED, DEFAULT_TILT_SPEED } from '@/models/DMX/fixture.model';
 import { fixtureIcon } from '@/models/DMX/generic/fixture_kind';
 import { isShowKey } from '@/models/DMX/definition_store';
 import fixtureGuide from '@/models/DMX/fixture_guide';
+import gdtfGuide from '@/models/DMX/gdtf/gdtf_guide';
+import DmxEngine from '@/models/DMX/gdtf/dmx_engine';
+import { headInputs } from '@/models/DMX/gdtf/fixture_parts';
 import { formatAddress } from '@/models/DMX/address_format';
 import MovingHead from '@/plugins/visualizer/moving_head';
 
@@ -329,8 +299,8 @@ export default {
     return {
       copied: false,
       /**
-       * Bumped whenever an override is written. The show is a plain class, not
-       * a reactive object, so a computed reading its overrides would cache
+       * Bumped whenever the library is written. The show is a plain class, not
+       * a reactive object, so a computed reading its store would cache
        * forever; this gives those computeds something reactive to depend on.
        */
       revision: 0,
@@ -390,6 +360,7 @@ export default {
      */
     keyFacts() {
       if (!this.fixture) return [];
+      if (this.gdtf) return this.gdtfFacts.key;
       const { physical } = this;
       const facts = [
         { label: 'Make', value: this.$show.manufacturerName(this.fixture.manufacturer) },
@@ -406,6 +377,7 @@ export default {
      * @type {Array}
      */
     specFacts() {
+      if (this.gdtf) return this.gdtfFacts.spec;
       const data = (this.fixture && this.fixture.OFLData) || {};
       const { physical } = this;
       const bulb = physical.bulb || {};
@@ -444,6 +416,71 @@ export default {
         });
       }
       return facts;
+    },
+    /** The fixture's GDTF fixture type, or null for an OFL profile. */
+    gdtf() {
+      return (this.fixture && this.fixture.fixtureType) || null;
+    },
+    /**
+     * A GDTF fixture's facts, from the file as it stands. Output a file left
+     * at GDTF's placeholder values is said to be unmeasured rather than
+     * shown as if it were a measurement.
+     *
+     * @type {Object} `{ key, spec }`
+     */
+    gdtfFacts() {
+      const type = this.gdtf;
+      const mode = this.fixture.mode || type.modes[0];
+      const inputs = headInputs(type, mode);
+      const { beam } = inputs;
+      const unmeasured = inputs.unmeasured ? ' · not measured, file defaults' : '';
+      const key = [
+        { label: 'Make', value: type.manufacturer },
+        { label: 'Model', value: type.name },
+      ];
+      if (inputs.lumens) {
+        const per = inputs.beamCount > 1 ? ` (${inputs.beamCount} beams)` : '';
+        key.push({ label: 'Lumens', value: `${grouped(inputs.lumens)} lm${per}${unmeasured}` });
+      }
+      if (inputs.power) key.push({ label: 'Power', value: `${grouped(inputs.power)} W light source` });
+
+      const spec = [];
+      if (beam) {
+        spec.push({ label: 'Lamp', value: beam.lampType });
+        spec.push({ label: 'Colour temp', value: `${grouped(beam.colorTemperature)} K · CRI ${beam.colorRenderingIndex}` });
+        spec.push({ label: 'Beam', value: `${beam.beamAngle}° beam · ${beam.fieldAngle}° field · ${beam.beamType}` });
+      }
+      const narrow = inputs.minAngle;
+      const wide = inputs.maxAngle;
+      if (narrow && wide && narrow !== wide) spec.push({ label: 'Zoom', value: `${narrow}° – ${wide}°` });
+      if (inputs.lumens && narrow && wide && inputs.category === 'Moving Head') {
+        // The sums the head renders with, as for any profile.
+        const half = (wide / 2) * (Math.PI / 180);
+        const atWide = inputs.lumens / (2 * Math.PI * (1 - Math.cos(half)));
+        const gain = MovingHead.fluxGain(narrow / 2, wide / 2);
+        const ratio = gain > 1.01 ? ` · ${grouped(gain)}x` : '';
+        spec.push({
+          label: 'Peak',
+          value: `${grouped(atWide * gain)} cd at ${narrow}° · ${grouped(atWide)} cd at ${wide}°${ratio}`,
+        });
+      }
+      if (inputs.panSpan) spec.push({ label: 'Pan / tilt', value: `${inputs.panSpan}° / ${inputs.tiltSpan || 0}°` });
+      if (inputs.panSpeed || inputs.tiltSpeed) {
+        const rate = (speed) => (speed ? `${Math.round(speed)}°/s` : '-');
+        spec.push({ label: 'Pan / tilt speed', value: `${rate(inputs.panSpeed)} / ${rate(inputs.tiltSpeed)}` });
+      }
+      const { weight } = type.physical.properties;
+      if (weight) spec.push({ label: 'Weight', value: `${weight} kg` });
+      spec.push({
+        label: 'Modes',
+        value: type.modes.map((m) => `${m.name} (${new DmxEngine(type, m).footprint} ch)`).join(', '),
+      });
+      const last = type.revisions[type.revisions.length - 1];
+      spec.push({
+        label: 'GDTF',
+        value: `${type.dataVersion || '?'}${last && last.text ? ` · ${last.text}` : ''}`,
+      });
+      return { key, spec: spec.filter((fact) => fact.value) };
     },
     /** The profile's physical block, or an empty one. */
     physical() {
@@ -505,7 +542,7 @@ export default {
       };
     },
     /**
-     * Key the overrides file is indexed by.
+     * Key the fixture's profile is stored under.
      *
      * @type {String}
      */
@@ -528,60 +565,10 @@ export default {
     guide() {
       const fixture = this.fixture || {};
       if (!fixture.OFLData || !fixture.mode || this.barSummary) return null;
-      const guide = fixtureGuide(fixture.OFLData, fixture.mode);
+      const guide = fixture.fixtureType && fixture._engine
+        ? gdtfGuide(fixture.fixtureType, fixture._engine)
+        : fixtureGuide(fixture.OFLData, fixture.mode);
       return guide.channels.length ? guide : null;
-    },
-    hasHead() {
-      const accessors = (this.fixture || {}).quickChannelsAccessors || {};
-      return !!(accessors.Pan || accessors.Tilt);
-    },
-    /**
-     * Overrides currently stored for this model.
-     *
-     * @type {Object}
-     */
-    overrides() {
-      // eslint-disable-next-line no-unused-expressions
-      this.revision;
-      return this.$show.fixtureOverrides[this.profileKey] || {};
-    },
-    panOverridden: {
-      get() {
-        return this.overrides.panSpeed !== undefined;
-      },
-      set(state) {
-        this.setOverrideState('panSpeed', state, DEFAULT_PAN_SPEED);
-      },
-    },
-    tiltOverridden: {
-      get() {
-        return this.overrides.tiltSpeed !== undefined;
-      },
-      set(state) {
-        this.setOverrideState('tiltSpeed', state, DEFAULT_TILT_SPEED);
-      },
-    },
-    panSpeed: {
-      get() {
-        // eslint-disable-next-line no-unused-expressions
-        this.revision;
-        return this.fixture ? this.fixture.panSpeed : DEFAULT_PAN_SPEED;
-      },
-      set(value) {
-        this.$show.setFixtureOverride(this.profileKey, 'panSpeed', Number(value));
-        this.revision += 1;
-      },
-    },
-    tiltSpeed: {
-      get() {
-        // eslint-disable-next-line no-unused-expressions
-        this.revision;
-        return this.fixture ? this.fixture.tiltSpeed : DEFAULT_TILT_SPEED;
-      },
-      set(value) {
-        this.$show.setFixtureOverride(this.profileKey, 'tiltSpeed', Number(value));
-        this.revision += 1;
-      },
     },
     copyLabel() {
       return this.copied ? 'copied' : 'copy';
@@ -797,23 +784,6 @@ export default {
           value: `${p.lumens} lm · ${p.contrast}:1 · ${illuminanceAt(20, min, p).toFixed(0)} lux at 20 m`,
         },
       ];
-    },
-    /**
-     * Ticks or clears one override. Ticking freezes whatever is in effect now,
-     * so checking the box never moves the fixture on its own.
-     *
-     * @public
-     * @param {String} key override name
-     * @param {Boolean} state whether the override should exist
-     * @param {Number} fallback system default to restore when cleared
-     */
-    setOverrideState(key, state, fallback) {
-      if (state) {
-        this.$show.setFixtureOverride(this.profileKey, key, this.fixture[key]);
-      } else {
-        this.$show.clearFixtureOverride(this.profileKey, key, fallback);
-      }
-      this.revision += 1;
     },
     /**
      * Puts the channel map on the clipboard as tab-separated text, for pasting

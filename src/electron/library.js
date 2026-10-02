@@ -9,8 +9,8 @@ import jsonstore from './jsonstore';
  * The user's fixture library on disk, one file per item (main process).
  *
  * Everything here is the user's own work, shared across projects rather than
- * belonging to any one of them: generated fixture profiles, saved structures,
- * and local corrections to shipped profiles. A show only ever *names* these, so
+ * belonging to any one of them: generated fixture profiles and saved
+ * structures. A show only ever *names* these, so
  * they are edited in one place -- freezing a project against later edits is what
  * Export is for, not this.
  *
@@ -29,7 +29,6 @@ import jsonstore from './jsonstore';
  *
  *   Profiles/<manufacturer>/<model>.json
  *   Structures/<name>.json
- *   Overrides/<manufacturer>/<model>.json
  *
  * Nothing is created until there is something to put in it, so a user who has
  * saved nothing never finds empty folders in their Documents.
@@ -43,7 +42,6 @@ import jsonstore from './jsonstore';
 const KINDS = {
   profiles: { depth: 2, dir: 'Profiles' },
   structures: { depth: 1, dir: 'Structures' },
-  overrides: { depth: 2, dir: 'Overrides' },
 };
 
 /** Marks a file as ours and carries the key the filename cannot. */
@@ -354,5 +352,5 @@ function seedDefaults() {
 }
 
 export default {
-  readAll, writeItem, removeItem, libraryRoot, pathFor, seedDefaults,
+  readAll, writeItem, removeItem, libraryRoot, pathFor, seedDefaults, safeSegment,
 };

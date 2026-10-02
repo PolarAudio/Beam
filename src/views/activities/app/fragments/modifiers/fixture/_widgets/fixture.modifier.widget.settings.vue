@@ -566,6 +566,7 @@ import { SELECTABLE_PROTOCOLS, PROTOCOL_LABELS } from '@/models/DMX/laser_settin
 import { SHUTTER_MODE_ORDER, SHUTTER_MODE_LABELS } from '@/plugins/visualizer/shutter';
 import { formatAddress } from '@/models/DMX/address_format';
 import fixtureGuide from '@/models/DMX/fixture_guide';
+import gdtfGuide from '@/models/DMX/gdtf/gdtf_guide';
 import { channelRanges } from '@/models/DMX/channel_ranges';
 import ChannelValueField from './channel.value.field.vue';
 
@@ -900,6 +901,9 @@ export default {
     channelMaps() {
       const { fixture } = this;
       if (!fixture || !fixture.OFLData || !fixture.mode) return [];
+      if (fixture.fixtureType && fixture._engine) {
+        return gdtfGuide(fixture.fixtureType, fixture._engine).channels.map(channelRanges);
+      }
       return fixtureGuide(fixture.OFLData, fixture.mode).channels.map(channelRanges);
     },
     handChannels() {

@@ -68,12 +68,11 @@ const resolver = {
       'x/lib': { from: 'collected' },
       'martin/mac-aura': { from: 'collected' },
     },
-    overrides: {},
   },
   generatedProfiles: { 'x/lib': { from: 'library' }, 'x/only-lib': { from: 'library' } },
-  rawOFLFixtures: [
+  // The shipped index as fetched; the list the popup shows is built from it.
+  shippedFixtureList: [
     { name: 'martin', fixtures: [{ file: 'mac-aura.json' }] },
-    { name: 'x', generated: true, fixtures: [{ file: 'lib' }] },
   ],
 };
 
@@ -95,7 +94,6 @@ window.documentStore = {
     return {
       // As the library stores a bar: parameters only, channels stripped.
       profiles: { 'Beatline/Bar': withoutLedBarChannels(buildLedBarProfile()) },
-      overrides: { 'a/b': { physical: { power: 1 } } },
     };
   },
   unmount: async () => { calls.push('unmount'); },
@@ -104,14 +102,13 @@ const host = { collected: null };
 Show.prototype.mountDocument.call(host, 'C:/x.beam')
   .then(() => {
     check('mount called', calls, ['mount C:/x.beam']);
-    check('override carried', host.collected.overrides['a/b'].physical.power, 1);
     check('profile carried', typeof host.collected.profiles['Beatline/Bar'].name, 'string');
     check('bar channels rebuilt', Object.keys(host.collected.profiles['Beatline/Bar'].availableChannels).length > 0, true);
     return Show.prototype.mountDocument.call(host, null);
   })
   .then(() => {
     check('unmount called', calls, ['mount C:/x.beam', 'unmount']);
-    check('nothing carried', host.collected, { profiles: {}, overrides: {} });
+    check('nothing carried', host.collected, { profiles: {}, gdtf: [] });
     console.log(failures ? `\n${failures} FAILED` : '\nall passed');
     process.exit(failures ? 1 : 0);
   });

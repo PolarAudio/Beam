@@ -598,8 +598,8 @@ const WHITE_EMITTERS = ['white', 'warmwhite', 'coldwhite', 'coolwhite'];
  *
  * A real head accelerates and decelerates, and how long a move takes depends on
  * the fixture. None of that is simulated: this is a flat rate, chosen to look
- * plausible rather than to match any particular mover. A fixture may override it
- * with `panSpeed` and `tiltSpeed` keys in its profile.
+ * plausible rather than to match any particular mover. A GDTF fixture replaces it
+ * with the rate its file gives, its full travel over its RealFade.
  *
  * @constant {Number}
  */
@@ -1613,7 +1613,10 @@ class MovingHead {
     wheel.wheelSpeedRpm = 0;
     const percent = Number.isFinite(values.shakeSpeed) ? values.shakeSpeed : 50;
     const range = this._shakeSpeed;
-    const rate = range.min + (Math.min(Math.max(percent, 0), 100) / 100) * (range.max - range.min);
+    // GDTF states the rate in Hz; OFL as a share of the head's range.
+    const rate = Number.isFinite(values.rate)
+      ? Math.max(values.rate, 0)
+      : range.min + (Math.min(Math.max(percent, 0), 100) / 100) * (range.max - range.min);
     const onSlot = values.isShaking === 'slot';
     const degrees = Number.isFinite(values.shakeAngle) && values.shakeAngle > 0
       ? values.shakeAngle : null;
@@ -1642,6 +1645,8 @@ class MovingHead {
     if (Number.isFinite(values.angle)) {
       wheel.speedRpm = 0;
       wheel.angle = MovingHead.degToRad(values.angle);
+    } else if (Number.isFinite(values.rpm)) {
+      wheel.speedRpm = values.rpm;
     } else if (Number.isFinite(values.speed)) {
       wheel.speedRpm = MovingHead.percentToRpm(values.speed, this._goboSpeed);
     }
@@ -1662,6 +1667,8 @@ class MovingHead {
     if (Number.isFinite(values.angle)) {
       wheel.wheelSpeedRpm = 0;
       wheel.slot = ((values.angle / 360) * wheel.slots.length) % wheel.slots.length;
+    } else if (Number.isFinite(values.rpm)) {
+      wheel.wheelSpeedRpm = values.rpm;
     } else if (Number.isFinite(values.speed)) {
       wheel.wheelSpeedRpm = MovingHead.percentToRpm(values.speed, this._goboSpeed);
     }
@@ -1751,6 +1758,8 @@ class MovingHead {
     if (Number.isFinite(values.angle)) {
       this._prism.speedRpm = 0;
       this._prism.angle = MovingHead.degToRad(values.angle);
+    } else if (Number.isFinite(values.rpm)) {
+      this._prism.speedRpm = values.rpm;
     } else if (Number.isFinite(values.speed)) {
       this._prism.speedRpm = MovingHead.percentToRpm(values.speed, this._prismSpeed);
     }
@@ -2457,21 +2466,13 @@ class MovingHead {
   }
 
   /**
-   * Slew rate in degrees per second. Settable so a change in the model panel
-   * reaches a head that is already in the scene.
+   * Slew rate in degrees per second.
    *
+   * @readonly
    * @type {Number}
    */
-  set panSpeed(value) {
-    this._panSpeed = Number(value) || PAN_SPEED_DEG_PER_SEC;
-  }
-
   get panSpeed() {
     return this._panSpeed;
-  }
-
-  set tiltSpeed(value) {
-    this._tiltSpeed = Number(value) || TILT_SPEED_DEG_PER_SEC;
   }
 
   get tiltSpeed() {

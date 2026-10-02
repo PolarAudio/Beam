@@ -777,11 +777,12 @@ export default {
               };
               this.fixture.name = name;
               this.fixture.instance = null;
-              const fixture = this.$show.fixturePool.addRaw(
-                JSON.parse(
-                  JSON.stringify(this.fixture),
-                ),
-              );
+              // A copy for each, but the GDTF fixture type is shared as it
+              // is: read-only, and its lookups do not survive JSON.
+              const { fixtureType } = this.fixture;
+              const copy = JSON.parse(JSON.stringify({ ...this.fixture, fixtureType: null }));
+              copy.fixtureType = fixtureType || null;
+              const fixture = this.$show.fixturePool.addRaw(copy);
               this.$show.patchFixture(fixture);
               // Collected rather than left empty: this list is returned, and
               // something has to name what was added.
@@ -822,6 +823,7 @@ export default {
      * @returns {String} icon name
      */
     entryIcon(entry) {
+      if (entry.gdtf) return 'movinghead';
       if (entry.generated) return 'ledbar';
       return entry.supported ? 'movinghead' : 'undef';
     },
@@ -1142,11 +1144,47 @@ export default {
         setTimeout(() => { this.exported = false; }, EXPORT_FEEDBACK_MS);
       }
     },
+    /**
+     * Loads a GDTF fixture for placing: its fixture type, read once by the
+     * show, and the mode listing the form counts channels from.
+     *
+     * @public
+     * @async
+     * @param {Object} item a list entry, `fixture` holding the GDTF key
+     */
+    async loadGdtfFixture(item) {
+      const type = await this.$show.loadGdtfType(item.fixture);
+      if (!type) {
+        Object.assign(this.fixture, { name: item.name, loaded: false });
+        return;
+      }
+      const [manufacturer, model] = item.fixture.split('/');
+      const listing = Fixture.gdtfListing(type);
+      Object.assign(this.fixture, {
+        OFLData: listing,
+        fixtureType: type,
+        modes: listing.modes,
+        modeNames: listing.modes.map((mode) => mode.name),
+        mode: 0,
+        name: type.name,
+        model,
+        manufacturer,
+        category: listing.categories[0],
+        universeAligned: false,
+        loaded: true,
+      });
+      this.patchError = false;
+      this.autoPatch();
+    },
     async loadFixture(item) {
       // Folders are selectable, since a row's click selects rather than
       // folds, so a manufacturer arrives here as well as a profile. It carries
       // no fixture to load.
       if (!item || !item.manufacturer || !item.fixture) return;
+      if (item.gdtf) {
+        await this.loadGdtfFixture(item);
+        return;
+      }
       const { manufacturer } = item;
       const { fixture } = item;
       // Profiles the app made -- this show's own, or the library's -- are not
@@ -1161,6 +1199,7 @@ export default {
         : normaliseMatrixProfile((await this.$http.get(`${import.meta.env.VITE_STATIC_URL}fixtures/${manufacturer.name}/${fixture}`)).data);
       Object.assign(this.fixture, {
         OFLData: data,
+        fixtureType: null,
         modes: data.modes,
         modeNames: data.modes.map((mode) => mode.name),
         // Back to the first, because a mode index means nothing across
@@ -1284,6 +1323,7 @@ export default {
           // and carries its own; everything else takes the folder's.
           manufacturer: entry.manufacturer ? { name: entry.manufacturer } : manufacturer,
           fixture: entry.file,
+          gdtf: !!entry.gdtf,
         })),
       }));
     },

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import axios from 'axios';
-import { merge } from 'lodash';
+import { markRaw } from 'vue';
 import {
   EventEmitter,
 } from 'events';
@@ -27,6 +27,8 @@ import VideoRouter from '../../plugins/visualizer/video_router';
 import SceneObjects from '../../plugins/visualizer/scene_objects';
 import Studio from './studio';
 import { normaliseMatrixProfile } from './ofl_matrix';
+import readGdtf from './gdtf/gdtf_reader';
+import { headInputs } from './gdtf/fixture_parts';
 import { MAX_SHADOW_CASTERS } from '../../plugins/visualizer/moving_head';
 
 const SHOWFILE_EXTENSIONS = {
@@ -165,8 +167,6 @@ class Show extends EventEmitter {
     this.projectName = '';
     this.isSaved = true;
     this.rawOFLFixtures = [];
-    /** Local corrections to library profiles, keyed `manufacturer/model`. */
-    this.fixtureOverrides = {};
     /**
      * Profiles built here rather than fetched, keyed the same way. OFL cannot
      * describe an emitter array, so these are generated from parameters the
@@ -174,8 +174,20 @@ class Show extends EventEmitter {
      */
     this.generatedProfiles = {};
     /**
-     * What the open document carries with it: the profiles and overrides an
-     * export collected, keyed like the library. Resolved after the show's own
+     * GDTF fixtures in the user's library, as listed by the main process:
+     * `{ key, file, name, manufacturer, fixtureTypeId, dataVersion }`. The
+     * files themselves are fetched from `library://profiles/<file>` when
+     * they are needed.
+     */
+    this.gdtfFixtures = [];
+    /**
+     * GDTF fixture types read so far, by key. Read-only once read, so every
+     * fixture of a type shares one.
+     */
+    this.gdtfTypes = new Map();
+    /**
+     * What the open document carries with it: the profiles an export
+     * collected, keyed like the library. Resolved after the show's own
      * definitions and ahead of the library, so an export opened on another
      * machine shows the fixtures it was made with. Models an export carries
      * arrive through the object library instead, served by the main process.
@@ -557,10 +569,10 @@ class Show extends EventEmitter {
   /**
    * The shape of `collected` when the open document carries nothing.
    *
-   * @returns {Object} `{ profiles, overrides }`, both empty
+   * @returns {Object} `{ profiles, gdtf }`, both empty
    */
   static nothingCollected() {
-    return { profiles: {}, overrides: {} };
+    return { profiles: {}, gdtf: [] };
   }
 
   /**
@@ -595,7 +607,7 @@ class Show extends EventEmitter {
    *
    * A save names what the show uses and leaves it in the library, so that
    * editing a profile reaches every show placing it. An export is the one
-   * deliberate freeze: every profile, override and model the show references
+   * deliberate freeze: every profile and model the show references
    * goes into the file, so it opens the same way anywhere. It is a copy -- the
    * show stays on the document it was on, and stays as saved or unsaved as
    * it was.
@@ -756,6 +768,9 @@ class Show extends EventEmitter {
    */
   async loadShowData(rawShowData, options = {}) {
     const showData = migrateShowData(rawShowData);
+    // A document may carry its own copy of a GDTF fixture, so what was read
+    // for the last one does not stand for this one.
+    this.gdtfTypes = new Map();
     this.loading.state = true;
     this.loading.message = 'Clearing Show Data';
     this.loading.percentage = 20;
@@ -772,10 +787,10 @@ class Show extends EventEmitter {
     this.loading.message = 'Preloading fixture library';
     this.loading.percentage = 40;
     await this.preloadGeneratedProfiles();
+    await this.preloadGdtfFixtures();
     await this.preloadStructures();
     await this.preloadManufacturers();
     await this.preloadFixtureList();
-    await this.preloadFixtureOverrides();
 
     // Before the fixtures, which resolve their profiles through it.
     this.definitions = DefinitionStore.fromJSON(showData.definitions);
@@ -854,6 +869,20 @@ class Show extends EventEmitter {
     for (let i = 0; i < showData.fixtures.length; i++) {
       const fixtureData = showData.fixtures[i];
       const profileKey = `${fixtureData.manufacturer}/${fixtureData.model}`;
+      if (this.gdtfEntry(profileKey)) {
+        // eslint-disable-next-line no-await-in-loop
+        fixtureData.fixtureType = await this.loadGdtfType(profileKey);
+        fixtureData.OFLData = null;
+        if (fixtureData.fixtureType) {
+          const created = this.fixturePool.addRaw(fixtureData);
+          restoreListOrder(created, fixtureData);
+          if (fixtureData.id !== undefined) this.loadedFixturesById.set(fixtureData.id, created);
+        } else {
+          this.missingProfiles.push(profileKey);
+        }
+        // eslint-disable-next-line no-continue
+        continue;
+      }
       const local = this.localProfile(profileKey);
       fixtureData.OFLData = local
         ? JSON.parse(JSON.stringify(local))
@@ -873,11 +902,6 @@ class Show extends EventEmitter {
         }
       }
       if (fixtureData.OFLData) {
-        // Applied after caching, so the cache keeps the library profile
-        // untouched and an edited overrides file takes effect on the next load.
-        if (this.fixtureOverrides[profileKey]) {
-          merge(fixtureData.OFLData, this.fixtureOverrides[profileKey]);
-        }
         const created = this.fixturePool.addRaw(fixtureData);
         restoreListOrder(created, fixtureData);
         if (fixtureData.id !== undefined) this.loadedFixturesById.set(fixtureData.id, created);
@@ -893,35 +917,9 @@ class Show extends EventEmitter {
   }
 
   /**
-   * Loads local corrections to library profiles, keyed `manufacturer/model`.
-   *
-   * The shipped library is Open Fixture Library data and stays untouched so it
-   * can be replaced wholesale; anything measured or guessed locally -- head slew
-   * rates, which OFL has no field for -- lives here instead. It sits beside the
-   * show rather than in the bundle because the app writes it.
-   *
-   * @public
-   * @async
-   */
-  async preloadFixtureOverrides() {
-    if (typeof window === 'undefined' || !window.library) {
-      this.fixtureOverrides = {};
-      return;
-    }
-    // Nothing overridden is a perfectly ordinary state; every fixture then
-    // falls back to its library profile and the renderer's own defaults.
-    // What the open document carries wins over the library's, for the same
-    // profile: an export freezes the corrections it was made with.
-    this.fixtureOverrides = {
-      ...((await window.library.readAll('overrides')) || {}),
-      ...this.collected.overrides,
-    };
-  }
-
-  /**
    * Makes a document the open one, taking on what it carries.
    *
-   * An export carries its profiles, overrides and models; a plain save
+   * An export carries its profiles and models; a plain save
    * carries nothing, and then this is only bookkeeping. No document at all --
    * a template, an imported showfile -- unmounts, so that nothing of the last
    * document lingers to resolve a name in this one.
@@ -943,16 +941,16 @@ class Show extends EventEmitter {
   /**
    * What a document carries, in the shape `collected` holds it.
    *
-   * @param {Object} [carried] `{ profiles, overrides }` from the document store
-   * @returns {Object} `{ profiles, overrides }`
+   * @param {Object} [carried] `{ profiles, gdtf }` from the document store
+   * @returns {Object} `{ profiles, gdtf }`
    */
   static collectedFrom(carried) {
-    const { profiles, overrides } = carried || {};
+    const { profiles, gdtf } = carried || {};
     // Bars are stored without their channels, as the library stores them.
     return {
       profiles: Object.fromEntries(Object.entries(profiles || {})
         .map(([key, profile]) => [key, expandLedBarProfile(profile)])),
-      overrides: overrides || {},
+      gdtf: gdtf || [],
     };
   }
 
@@ -986,84 +984,6 @@ class Show extends EventEmitter {
     }
     this.emit('refreshed', result);
     return result;
-  }
-
-  /**
-   * Writes the overrides file.
-   *
-   * @public
-   */
-  persistFixtureOverrides(profileKey) {
-    if (typeof window === 'undefined' || !window.library) return;
-    // One item, one file. Writing only the profile that changed is the point of
-    // the library being files: nothing else is put at risk by this save.
-    const keys = profileKey ? [profileKey] : Object.keys(this.fixtureOverrides);
-    keys.forEach((key) => {
-      const entry = this.fixtureOverrides[key];
-      // A model whose last override has just been cleared has no entry left,
-      // and its file has to go with it. Written back instead it would return as
-      // an empty object on the next launch, and the default would stay
-      // overridden by nothing at all.
-      if (!entry || !Object.keys(entry).length) {
-        window.library.remove('overrides', key);
-        return;
-      }
-      window.library.write('overrides', key, JSON.stringify(entry, null, 2));
-    });
-  }
-
-  /**
-   * Sets one override for a model and applies it to everything already patched.
-   *
-   * @public
-   * @param {String} profileKey `manufacturer/model`
-   * @param {String} key property being overridden
-   * @param {Number|String} value value to store
-   */
-  setFixtureOverride(profileKey, key, value) {
-    const entry = this.fixtureOverrides[profileKey] || {};
-    entry[key] = value;
-    this.fixtureOverrides[profileKey] = entry;
-    this.persistFixtureOverrides(profileKey);
-    this.applyFixtureOverride(profileKey, key, value);
-  }
-
-  /**
-   * Drops one override and restores the system default.
-   *
-   * The model's entry is removed once its last override goes, so the file never
-   * accumulates empty objects for models that are no longer customised.
-   *
-   * @public
-   * @param {String} profileKey `manufacturer/model`
-   * @param {String} key property being cleared
-   * @param {Number} fallback value to restore
-   */
-  clearFixtureOverride(profileKey, key, fallback) {
-    const entry = this.fixtureOverrides[profileKey];
-    if (entry) {
-      delete entry[key];
-      if (!Object.keys(entry).length) delete this.fixtureOverrides[profileKey];
-      this.persistFixtureOverrides(profileKey);
-    }
-    this.applyFixtureOverride(profileKey, key, fallback);
-  }
-
-  /**
-   * Pushes an override onto every patched fixture of that model.
-   *
-   * @public
-   * @param {String} profileKey `manufacturer/model`
-   * @param {String} key property being set
-   * @param {Number|String} value value to apply
-   */
-  applyFixtureOverride(profileKey, key, value) {
-    this.fixturePool.fixtures.forEach((fixture) => {
-      if (fixture.profileKey !== profileKey) return;
-      // Kept on the raw profile too, so a fixture rebuilt from it agrees.
-      fixture.OFLData[key] = value;
-      fixture[key] = value;
-    });
   }
 
   /**
@@ -1294,7 +1214,7 @@ class Show extends EventEmitter {
       return true;
     });
     await Promise.all(
-      distinct.map((member) => this.resolveProfile(member.manufacturer, member.model)),
+      distinct.map((member) => this.resolveFixture(member.manufacturer, member.model)),
     );
 
     for (let i = 0; i < definition.members.length; i += 1) {
@@ -1323,18 +1243,19 @@ class Show extends EventEmitter {
         continue;
       }
       // eslint-disable-next-line no-await-in-loop
-      const OFLData = await this.resolveProfile(member.manufacturer, member.model);
-      if (OFLData) {
+      const resolved = await this.resolveFixture(member.manufacturer, member.model);
+      if (resolved) {
         world.multiplyMatrices(origin, new THREE.Matrix4().fromArray(member.transform));
         world.decompose(position, quaternion, scale);
         euler.setFromQuaternion(quaternion);
 
         const fixture = this.fixturePool.addRaw({
-          OFLData,
+          OFLData: resolved.OFLData,
+          fixtureType: resolved.fixtureType,
           manufacturer: member.manufacturer,
           model: member.model,
-          category: OFLData.categories[0],
-          name: OFLData.name,
+          category: resolved.category,
+          name: resolved.name,
           mode: member.mode,
           universeAligned: !!member.universeAligned,
           position: { x: position.x, y: position.y, z: position.z },
@@ -1407,6 +1328,85 @@ class Show extends EventEmitter {
   }
 
   /**
+   * A fixture's profile by key, from whichever kind of file holds it.
+   *
+   * @public
+   * @async
+   * @param {String} manufacturer
+   * @param {String} model
+   * @returns {Promise<Object|null>} `{ OFLData, fixtureType, category, name }`
+   *   with one of the two set, or null when neither is found
+   */
+  async resolveFixture(manufacturer, model) {
+    const key = `${manufacturer}/${model}`;
+    if (this.gdtfEntry(key)) {
+      const fixtureType = await this.loadGdtfType(key);
+      if (!fixtureType) return null;
+      return {
+        OFLData: null,
+        fixtureType,
+        category: headInputs(fixtureType, fixtureType.modes[0] || { channels: [] }).category,
+        name: fixtureType.name,
+      };
+    }
+    const OFLData = await this.resolveProfile(manufacturer, model);
+    if (!OFLData) return null;
+    return {
+      OFLData, fixtureType: null, category: OFLData.categories[0], name: OFLData.name,
+    };
+  }
+
+  /**
+   * A GDTF fixture by key: the open document's copy, else the library's.
+   *
+   * @public
+   * @param {String} key `<manufacturer folder>/<file stem>`
+   * @returns {Object|null} `{ entry, carried }`
+   */
+  gdtfEntry(key) {
+    const carried = (this.collected.gdtf || []).find((e) => e.key === key);
+    if (carried) return { entry: carried, carried: true };
+    const own = this.gdtfFixtures.find((e) => e.key === key);
+    return own ? { entry: own, carried: false } : null;
+  }
+
+  /**
+   * Reads a GDTF fixture type, once per key.
+   *
+   * Fetched as `library://`, which streams the file rather than carrying
+   * megabytes across IPC, and parsed with the page's own XML parser.
+   *
+   * @public
+   * @async
+   * @param {String} key
+   * @returns {Promise<Object|null>} the fixture type, or null when it cannot be read
+   */
+  async loadGdtfType(key) {
+    if (this.gdtfTypes.has(key)) return this.gdtfTypes.get(key);
+    const found = this.gdtfEntry(key);
+    if (!found || typeof fetch === 'undefined' || typeof DOMParser === 'undefined') return null;
+    const host = found.carried ? 'projectprofiles' : 'profiles';
+    const path = found.entry.file.split('/').map(encodeURIComponent).join('/');
+    try {
+      const response = await fetch(`library://${host}/${path}`);
+      if (!response.ok) throw new Error(`${response.status}`);
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      const parseXml = (text) => new DOMParser().parseFromString(text, 'text/xml');
+      const { fixtureType, problems } = readGdtf(bytes, { parseXml });
+      // eslint-disable-next-line no-console
+      if (problems.length) console.warn(`[gdtf] ${key}: ${problems.join('; ')}`);
+      markRaw(fixtureType);
+      this.gdtfTypes.set(key, fixtureType);
+      return fixtureType;
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(`[gdtf] cannot read ${key}: ${err.message}`);
+      this.gdtfTypes.set(key, null);
+      return null;
+    }
+  }
+
+  /**
    * The profile behind a manufacturer and model, generated or from the library.
    *
    * @public
@@ -1437,7 +1437,7 @@ class Show extends EventEmitter {
     // somewhere with no idea which profile it was looking at.
     const profile = await fetchProfile(key);
     // Parsed back out on every read, so each caller gets its own copy to
-    // mutate -- fixture overrides are merged into what this returns.
+    // mutate.
     if (profile) fixtureDataCache[key] = JSON.stringify(profile);
     return profile;
   }
@@ -1945,6 +1945,30 @@ class Show extends EventEmitter {
   }
 
   /**
+   * Lists the GDTF fixtures in the user's library.
+   *
+   * @public
+   * @async
+   */
+  async preloadGdtfFixtures() {
+    if (typeof window === 'undefined' || !window.library || !window.library.gdtfList) return;
+    this.gdtfFixtures = await window.library.gdtfList();
+  }
+
+  /**
+   * Lists the library's GDTF fixtures again, after an import.
+   *
+   * @public
+   * @async
+   */
+  async refreshGdtfFixtures() {
+    // An import may have replaced a file under a key already read.
+    this.gdtfTypes = new Map();
+    await this.preloadGdtfFixtures();
+    this.refreshFixtureList();
+  }
+
+  /**
    * Loads the user's own generic fixtures.
    *
    * A show that uses one and cannot find it will not load its fixtures, so
@@ -2128,8 +2152,7 @@ class Show extends EventEmitter {
    * @returns {Object}
    */
   collectedOnlyProfiles() {
-    const shipped = new Set(this.rawOFLFixtures
-      .filter((entry) => !entry.generated)
+    const shipped = new Set((this.shippedFixtureList || [])
       .flatMap((entry) => (entry.fixtures || [])
         .map((fixture) => `${entry.name}/${String(fixture.file).replace(/\.json$/i, '')}`)));
     return Object.fromEntries(Object.entries(this.collected.profiles)
@@ -2142,14 +2165,73 @@ class Show extends EventEmitter {
    * @public
    */
   refreshFixtureList() {
-    const library = this.rawOFLFixtures.filter((entry) => !entry.generated);
     // This show's own definitions first -- they are what the user just made --
-    // then the library's, then the shipped profiles.
+    // then the library's, then the shipped profiles with GDTF fixtures filed
+    // among them.
+    const { folders, unfiled } = this.withGdtfFixtures(this.shippedFixtureList || []);
     this.rawOFLFixtures = [
       ...this.definitions.list(),
       ...this.generatedFixtureList(),
-      ...library,
+      ...unfiled,
+      ...folders,
     ];
+  }
+
+  /**
+   * The shipped index with the GDTF fixtures filed in it.
+   *
+   * A GDTF fixture joins its manufacturer's folder -- the one whose name its
+   * own begins with, since GDTF says "Martin Professional" where the index
+   * says "Martin" -- and takes the place of a shipped profile of the same
+   * name, which GDTF supersedes. A manufacturer the index does not have gets
+   * a folder of its own. Rebuilt from the untouched index every time, so a
+   * GDTF file removed brings its OFL profile back.
+   *
+   * @public
+   * @param {Array} shipped the shipped index
+   * @returns {{folders: Array, unfiled: Array}} the index's folders, and
+   *   folders for manufacturers it lacks
+   */
+  withGdtfFixtures(shipped) {
+    const known = new Set(this.gdtfFixtures.map((entry) => entry.key));
+    const carried = (this.collected.gdtf || []).filter((entry) => !known.has(entry.key));
+    const all = [...this.gdtfFixtures, ...carried];
+    const fold = (text) => String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const folders = shipped.map((folder) => ({
+      ...folder, fixtures: [...(folder.fixtures || [])],
+    }));
+    const named = folders.map((folder) => ({
+      folder, name: fold(this.manufacturerName(folder.name)),
+    })).sort((a, b) => b.name.length - a.name.length);
+    const unfiled = new Map();
+    all.forEach((entry) => {
+      const maker = fold(entry.manufacturer);
+      const match = named.find(({ name }) => name && (maker === name || maker.startsWith(`${name} `)));
+      const row = {
+        file: entry.key,
+        name: entry.name,
+        manufacturer: entry.key.split('/')[0],
+        category: 'GDTF',
+        supported: true,
+        gdtf: true,
+      };
+      if (match) {
+        const model = fold(entry.name);
+        match.folder.fixtures = match.folder.fixtures
+          .filter((f) => f.gdtf || fold(f.name) !== model);
+        match.folder.fixtures.push(row);
+      } else {
+        if (!unfiled.has(entry.manufacturer)) {
+          unfiled.set(entry.manufacturer, {
+            name: entry.manufacturer, generated: true, gdtf: true, fixtures: [],
+          });
+        }
+        unfiled.get(entry.manufacturer).fixtures.push(row);
+      }
+    });
+    const byName = (a, b) => String(a.name).localeCompare(String(b.name));
+    folders.forEach((folder) => folder.fixtures.sort(byName));
+    return { folders, unfiled: [...unfiled.values()] };
   }
 
   /**
@@ -2181,10 +2263,11 @@ class Show extends EventEmitter {
   async preloadFixtureList() {
     try {
       const res = await axios.get(`${import.meta.env.VITE_STATIC_URL}fixtures/fixture_list.json`);
-      this.rawOFLFixtures = res.data;
+      /** The shipped index as fetched, which every refresh starts from. */
+      this.shippedFixtureList = res.data;
     } catch (err) {
       console.log('could not fetch fixture list.');
-      this.rawOFLFixtures = [];
+      this.shippedFixtureList = [];
     }
     this.refreshFixtureList();
   }

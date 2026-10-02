@@ -583,6 +583,36 @@ export default function readGdtf(bytes, { parseXml }) {
 }
 
 /**
+ * The image each wheel slot names, from the archive's `wheels` folder.
+ *
+ * A slot names its image without an extension; the file sits in `wheels/`
+ * as a PNG, or another image type, matched without regard to case.
+ *
+ * @param {Object} type a fixture type
+ * @param {Object} files the archive's other files, as `readGdtf` returns them
+ * @returns {Map<String, Object>} media file name to `{ bytes, mime }`
+ */
+export function wheelImages(type, files) {
+  const MIME = {
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', svg: 'image/svg+xml',
+  };
+  const byBase = new Map();
+  Object.keys(files).forEach((path) => {
+    const match = /^wheels\/(.+)\.([a-z0-9]+)$/i.exec(path);
+    const mime = match ? MIME[match[2].toLowerCase()] : null;
+    if (mime) byBase.set(match[1].toLowerCase(), { bytes: files[path], mime });
+  });
+  const images = new Map();
+  type.wheels.forEach((wheel) => wheel.slots.forEach((slot) => {
+    if (!slot.mediaFileName || images.has(slot.mediaFileName)) return;
+    const name = slot.mediaFileName.replace(/\.[a-z0-9]+$/i, '').toLowerCase();
+    const found = byBase.get(name);
+    if (found) images.set(slot.mediaFileName, found);
+  }));
+  return images;
+}
+
+/**
  * The geometry names under a geometry, itself included.
  *
  * @param {Object} geometry

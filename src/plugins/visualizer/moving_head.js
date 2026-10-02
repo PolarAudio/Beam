@@ -7,7 +7,9 @@ import VOLUMETRIC_BEAM_FRAGMENT_SHADER from './shaders/beam.fragment.glsl?raw';
 import Shutter, { SHUTTER_MODES } from './shutter';
 import { kelvinToRgb } from '../../models/DMX/colour_temperature';
 import { hazeShaderPrelude, hazeUniforms } from './haze_noise';
-import LightField, { CANDELA_PER_UNIT, REFERENCE_INTENSITY, SCENE_INTENSITY_PER_UNIT } from './light_field';
+import LightField, {
+  CANDELA_PER_UNIT, REFERENCE_INTENSITY, REFERENCE_LUMENS, SCENE_INTENSITY_PER_UNIT,
+} from './light_field';
 import { castsContactShadow } from './contact_shadows';
 import { DepthAtlas } from './projector_depth';
 import { goboTexture, goboLayerFor, GOBO_BLUR_LEVELS } from './gobo_library';
@@ -87,13 +89,6 @@ const LENS_DARK = 0.05;
 /** Scratch for the lens colour write. */
 const lensColor = new THREE.Color();
 const BEAM_MAX_ANGLE = 45;
-/**
- * The cross-section light of the cone the current beam profile replaced:
- * a disc 0.8 times the stated half-angle wide, at the chord shape times a
- * 0.65 penumbra. `profileNormaliser` scales every beam to carry this much,
- * so the room's brightness did not move when the profile did.
- */
-const PROFILE_REFERENCE_FLUX = 0.1734;
 
 /** Facets a prism has when its profile does not say. */
 const PRISM_DEFAULT_FACETS = 3;
@@ -166,7 +161,16 @@ const GEL_WORDS = [
  */
 function gelColour(slot) {
   if (!slot || slot.type !== 'Color') return null;
-  if (slot.colors && slot.colors.length) return new THREE.Color(slot.colors[0]);
+  if (slot.colors && slot.colors.length) {
+    const colour = new THREE.Color(slot.colors[0]);
+    // A measured filter lets through its share of the light: its colour is
+    // scaled so its luminance is that share of white's.
+    if (slot.transmission > 0) {
+      const luminance = 0.2126 * colour.r + 0.7152 * colour.g + 0.0722 * colour.b;
+      if (luminance > 0) colour.multiplyScalar(slot.transmission / luminance);
+    }
+    return colour;
+  }
   const kelvin = parseFloat(slot.colorTemperature)
     || parseFloat((/(\d{4,5})\s*-?\s*\d*\s*K\b/i.exec(slot.name || '') || [])[1])
     || parseFloat((/\bCT[OBC]\b\D*(\d{4,5})/i.exec(slot.name || '') || [])[1]);
@@ -261,17 +265,15 @@ const depthScale = new THREE.Vector3(1, 1, 1);
 let occlusionEnabled = true;
 
 /**
- * How much of the haze's forward scattering the beams show, 0..1.
+ * The haze's scattering coefficient at full haze, per metre.
  *
- * 0 is a beam equally bright from every angle. Up from there a beam turning
- * to face the viewer brightens, by up to the phase function's ceiling at 1;
- * a beam crossing the view never changes. Set by eye, and the debug panel's
- * to move.
+ * Full haze is a thick stage haze with 10 m visibility. Visibility is where
+ * contrast falls to 2 %, so the coefficient is ln(50) / 10 m; a lower haze
+ * setting scales it linearly. The same coefficient sets how much light the
+ * air scatters out of a beam towards the eye and how fast the beam is
+ * eaten on its way.
  */
-let beamScatterValue = 0.37;
-
-/** Brightness of the beams in the air, set by eye against the pools. */
-let beamGain = 0.5;
+const HAZE_SCATTER_AT_FULL = Math.log(50) / 10;
 
 /**
  * The beam fragment shader, with the scene's haze configuration prepended.
@@ -374,9 +376,8 @@ let emissive_buffer_attribute = new THREE.InstancedBufferAttribute(
   1,
 );
 /**
- * Per instance: x the half-angle of the field, y the brightness normaliser
- * for the profile (see `writeBeamProfile`), z the ratio of the 50% cone to
- * the field.
+ * Per instance: x the half-angle of the field, y unused, z the inner cone
+ * over the field (see `writeBeamProfile`).
  *
  * The shader declares this `vec3`, and the buffer must supply all three: a
  * missing component reads as the 0.0 WebGL fills it with.
@@ -724,10 +725,13 @@ class MovingHead {
     this._depthCam.matrixWorldAutoUpdate = false;
     /** Where the beam pointed when its tile was last drawn. */
     this._depthDir = new THREE.Vector3();
-    this._minAngle = data.minAngle + 1.0;
-    this._maxAngle = data.maxAngle + 1.0;
-    /** The lamp's output at full, against the reference head; see `outputGain`. */
-    this._outputGain = MovingHead.outputGain(data.lumens, data.maxAngle);
+    this._minAngle = data.minAngle;
+    this._maxAngle = data.maxAngle;
+    /**
+     * The light out of the lens at full, in lumens. A head that does not
+     * say is the light field's reference head.
+     */
+    this._lumens = Number(data.lumens) > 0 ? Number(data.lumens) : REFERENCE_LUMENS;
     /** What the shutter let through this frame, 0..1. */
     this._shutter = 1.0;
     /**
@@ -746,6 +750,9 @@ class MovingHead {
      * beam.
      */
     this._wheels = MovingHead.buildWheels(data.wheels || {});
+    /** What the wheels and the lamp start as, for `resetOptics`. */
+    this._wheelData = data.wheels || {};
+    this._lampColorTemp = data.colorTemp;
     /**
      * What "slow" and "fast" mean for this fixture, in turns a minute. A
      * profile only says how far along that range a value sits.
@@ -772,8 +779,6 @@ class MovingHead {
      */
     this._baseAngle = null;
     this._basePenumbra = SPOTLIGHT_PHYSICALLY_CORRECT_PENUMBRA;
-    /** Brightness for the current field against the widest; see `fluxGain`. */
-    this._fluxGain = 1;
     /**
      * Frost, 0 none to 1 full, from a frost channel or a frost slot on a
      * wheel; `_frostWheel` names the wheel that set it. `_frostEffect` is a
@@ -795,6 +800,7 @@ class MovingHead {
       on: false, facets: PRISM_DEFAULT_FACETS, linear: false, angle: 0, speedRpm: 0,
     };
     this._colorWheel = data.colorWheel;
+    this._colorWheelData = data.colorWheel;
     /**
      * A colour wheel parked between two slots: the colour on the far side of
      * the boundary, null for an open slot, and how far across the beam the
@@ -1013,19 +1019,14 @@ class MovingHead {
   }
 
   /**
-   * Beam intensity
-   * @todo path shutter bug
+   * The dimmer, 0..1. Written through the shutter as it stands, so a closed
+   * shutter stays dark however the dimmer moves.
    *
    * @type {Number}
    */
-
   set intensity(intensity) {
     this._intensity = Math.min(Math.abs(intensity), 1.0);
-    const lit = this._intensity * (this._fluxGain || 1) * this._outputGain;
-    this._spotLight.intensity = SPOTLIGHT_PHYSICALLY_CORRECT_INTENSITY * lit;
-    intensity_buffer_attribute.setX(this._id, lit);
-    intensity_buffer_attribute.needsUpdate = true;
-    this.updateLensColor();
+    this.writeLight();
   }
 
   get intensity() {
@@ -1184,6 +1185,65 @@ class MovingHead {
   }
 
   /**
+   * Takes on what another mode of the fixture states: its pan and tilt
+   * travel, and for a GDTF fixture its zoom range and output, which can
+   * differ by mode. The field goes back to the widest, as a new head starts,
+   * until the mode's zoom channel says otherwise.
+   *
+   * @public
+   * @param {Object} inputs `{ maxPan, maxTilt }`, and optionally
+   *   `{ minAngle, maxAngle, lumens }`
+   */
+  setModeInputs(inputs) {
+    this.resetOptics();
+    this.maxPan = inputs.maxPan || 0;
+    this.maxTilt = inputs.maxTilt || 0;
+    if (inputs.minAngle > 0 && inputs.maxAngle > 0) {
+      this._minAngle = inputs.minAngle;
+      this._maxAngle = inputs.maxAngle;
+    }
+    if (inputs.lumens > 0) this._lumens = inputs.lumens;
+    this.angle = this._maxAngle;
+    this.writeLight();
+  }
+
+  /**
+   * Puts everything in the light path back as a new head starts: wheels on
+   * their first slot and still, no shake, prism, frost or colour preset,
+   * iris open, the default edge, the shutter open, full pan/tilt speed and
+   * the lamp's own white. What a channel set in one mode must not outlive
+   * the mode.
+   *
+   * @public
+   */
+  resetOptics() {
+    this._wheels = MovingHead.buildWheels(this._wheelData);
+    this._colorWheel = this._colorWheelData;
+    this._wheelColor = null;
+    this._wheelColorB = null;
+    this._wheelSplit = 0;
+    this._activeColorPreset = false;
+    this._emitters = {};
+    this._prism = {
+      on: false, facets: PRISM_DEFAULT_FACETS, linear: false, angle: 0, speedRpm: 0,
+    };
+    this._iris = 1;
+    this._irisWheel = null;
+    this._frostWheel = null;
+    this._frostEffect = null;
+    this.applyFrost(0);
+    this._basePenumbra = SPOTLIGHT_PHYSICALLY_CORRECT_PENUMBRA;
+    this.applyLensEdge();
+    this.strobeEffect = 'Open';
+    this.strobeRandom = false;
+    this.strobeFrequency = 0;
+    this.strobeDuration = 0;
+    this.setPanTiltSpeed(null);
+    this.colorTemp = this._lampColorTemp;
+    this.writeOptics();
+  }
+
+  /**
    * Sets the field from a zoom channel, within the lens the profile states.
    *
    * A profile gives zoom either in degrees or as a share of its range --
@@ -1217,58 +1277,64 @@ class MovingHead {
     const half = Math.min(this._baseAngle * (1 + FROST_WIDEN * this._frost), BEAM_MAX_ANGLE);
     if (half === this._angle) return;
     this._angle = half;
-    this._fluxGain = MovingHead.fluxGain(half, this._maxAngle / 2);
     this._spotLight.angle = MovingHead.degToRad(this._angle);
     angle_buffer_attribute.setX(this._id, this._angle);
     angle_buffer_attribute.needsUpdate = true;
   }
 
   /**
-   * How much brighter a field of this half angle is than the reference one,
-   * for the same light out of the lamp.
+   * A beam's intensity on its axis, in candela: its lumens over the solid
+   * angle its falloff covers.
    *
-   * Zoom and frost redistribute a fixed output rather than adding to it, so
-   * the light per unit of solid angle -- which is what lands on a surface and
-   * what the air scatters -- goes as one over the cone's solid angle,
-   * 2 pi (1 - cos half). The reference is the widest zoom, the field a head
-   * has when nothing sets its zoom, so a head there is as bright as before
-   * and zooming in only concentrates it: 50 to 4 degrees is about 150 times.
-   * Frost widens past the reference and dims it by the same rule.
+   * The beam is full out to the inner cone and falls to nothing at the
+   * field as three draws it, `smoothstep(cos outer, cos inner, cos angle)`.
+   * Over solid angle, `2 pi d(cos)`, that is full across `1 - cos inner`
+   * and half on average across the smoothstep, so the light it carries is
+   * the peak times `2 pi (1 - (cos inner + cos outer) / 2)` exactly. The
+   * lens's lumens all go into it: zoom and frost change the field, focus
+   * the edge, and each moves the peak so the total stays the same.
    *
    * @public
-   * @param {Number} half the field's half angle, degrees
-   * @param {Number} referenceHalf the widest zoom's half angle, degrees
-   * @returns {Number}
+   * @param {Number} lumens light out of the lens
+   * @param {Number} half the field's half angle, radians
+   * @param {Number} penumbra the SpotLight's, folded past 1 as three does
+   * @returns {Number} candela
    */
-  static fluxGain(half, referenceHalf) {
-    const cone = (degrees) => {
-      const clamped = Math.min(Math.max(degrees, 0.01), BEAM_MAX_ANGLE);
-      return 1 - Math.cos(MovingHead.degToRad(clamped));
-    };
-    return cone(referenceHalf) / cone(half);
+  static peakCandela(lumens, half, penumbra) {
+    const outer = Math.min(Math.max(half, 1e-4), MovingHead.degToRad(BEAM_MAX_ANGLE));
+    const cosOuter = Math.cos(outer);
+    const cosInner = Math.cos(outer * (1 - penumbra));
+    const solidAngle = 2 * Math.PI * (1 - (cosInner + cosOuter) / 2);
+    return lumens / Math.max(solidAngle, 1e-9);
   }
 
   /**
-   * How bright this head is at full and its widest zoom, against the
-   * reference head the light field is pinned to.
-   *
-   * The lamp's lumens spread over the widest field give its candela, and the
-   * zoom then concentrates that through `fluxGain`. The field is the angle
-   * the profile states, not the one the beam is drawn at, so a head's
-   * candela agrees with its spec sheet. Without a lumen figure a head is the
-   * reference itself.
+   * A head's peak at full for a zoom, with the edge it has when no focus
+   * channel sets one.
    *
    * @public
-   * @param {Number} lumens output at full, or nothing if unknown
-   * @param {Number} beamAngle the widest field, full angle in degrees
-   * @returns {Number} 1 for the reference head
+   * @param {Number} lumens light out of the lens
+   * @param {Number} angle the field, full angle in degrees
+   * @returns {Number} candela
    */
-  static outputGain(lumens, beamAngle) {
-    const flux = Number(lumens);
-    if (!(flux > 0)) return 1;
-    const half = Math.min(Math.max(Number(beamAngle) / 2 || 0, 0.5), BEAM_MAX_ANGLE);
-    const solidAngle = 2 * Math.PI * (1 - Math.cos(MovingHead.degToRad(half)));
-    return flux / solidAngle / CANDELA_PER_UNIT / REFERENCE_INTENSITY;
+  static peakAtZoom(lumens, angle) {
+    const half = MovingHead.degToRad(Math.min(angle / 2, BEAM_MAX_ANGLE));
+    return MovingHead.peakCandela(lumens, half, SPOTLIGHT_PHYSICALLY_CORRECT_PENUMBRA);
+  }
+
+  /**
+   * This head's peak at full, in light-field units: what `lit` is at full.
+   *
+   * @public
+   * @returns {Number}
+   */
+  peakUnits() {
+    const candela = MovingHead.peakCandela(
+      this._lumens,
+      this._spotLight.angle,
+      this._spotLight.penumbra,
+    );
+    return candela / CANDELA_PER_UNIT / REFERENCE_INTENSITY;
   }
 
   /**
@@ -1423,53 +1489,7 @@ class MovingHead {
   static writeBeamProfile(id, penumbra) {
     const inner = Math.min(Math.abs(1 - penumbra), 0.99);
     angle_buffer_attribute.setZ(id, inner);
-    angle_buffer_attribute.setY(id, MovingHead.profileNormaliser(inner));
     angle_buffer_attribute.needsUpdate = true;
-  }
-
-  /**
-   * What the fragment shader multiplies a beam's profile by so that its
-   * cross-section carries the same total light whatever the focus.
-   *
-   * Focus reshapes the profile without changing how much light the fixture
-   * puts out: a focused beam is a bright wide-cored disc, a defocused one
-   * the same light in a soft cone. This integrates the very falloff the
-   * shader draws -- full to the inner cone, smoothstep to the field -- across
-   * a perpendicular cross-section, and returns the reference disc's light
-   * over it.
-   *
-   * @private
-   * @param {Number} inner the inner cone's radius over the field's, 0..1
-   * @returns {Number} multiplier, 1 being the reference cone's light
-   */
-  static profileNormaliser(inner) {
-    const steps = 200;
-    let sum = 0;
-    for (let i = 0; i < steps; i += 1) {
-      const u = (i + 0.5) / steps;
-      const t = Math.min(Math.max((u - inner) / Math.max(1 - inner, 1e-6), 0), 1);
-      const profile = 1 - t * t * (3 - 2 * t);
-      sum += (profile * Math.sqrt(1 - u * u) * u) / steps;
-    }
-    return PROFILE_REFERENCE_FLUX / Math.max(sum, 1e-6);
-  }
-
-  /**
-   * How much of the haze's forward scattering the beams show.
-   *
-   * @public
-   * @param {Number} amount 0 flat from every angle, 1 the full ceiling
-   */
-  static setScatterAmount(amount) {
-    beamScatterValue = Math.min(Math.max(Number(amount) || 0, 0), 1);
-    if (beamMesh && beamMesh.material && beamMesh.material.uniforms) {
-      beamMesh.material.uniforms.scatterAmount.value = beamScatterValue;
-    }
-  }
-
-  /** @public @returns {Number} how much of the forward scattering is shown */
-  static scatterAmount() {
-    return beamScatterValue;
   }
 
   /**
@@ -2081,8 +2101,10 @@ class MovingHead {
       mix[SUBTRACTIVE_EMITTERS[name]] *= 1.0 - level;
     });
 
+    // Summed emitters past full are scaled back. A measured filter is not: a
+    // deep blue passing its share of the light may need more than full blue.
     const peak = Math.max(mix[0], mix[1], mix[2]);
-    const scale = peak > 1 ? 1 / peak : 1;
+    const scale = additive && peak > 1 ? 1 / peak : 1;
     // Never fully black: a zero-length colour vector leaves the beam shader
     // with nothing to work with, which is why the original clamped too.
     return new THREE.Color(
@@ -2402,17 +2424,6 @@ class MovingHead {
     beamMesh.material.uniforms.debugTerm.value = Math.max(0, Math.floor(Number(term) || 0));
   }
 
-  static setBeamGain(value) {
-    beamGain = Math.max(Number(value) || 0, 0);
-    if (beamMesh && beamMesh.material && beamMesh.material.uniforms) {
-      beamMesh.material.uniforms.beamGain.value = beamGain;
-    }
-  }
-
-  static beamGain() {
-    return beamGain;
-  }
-
   /** @public @param {Boolean} on whether beams stop at surfaces */
   static setOcclusion(on) {
     occlusionEnabled = !!on;
@@ -2451,14 +2462,24 @@ class MovingHead {
    */
   updateStrobe(t) {
     this._shutter = this._flashes.sample(t);
+    this.writeLight();
+  }
 
-    // Concentrated by the zoom: the pool, the shadow-casting light and the
-    // beam in the air all carry the same gain, so they agree. See `fluxGain`.
+  /**
+   * Writes the light out: dimmer times shutter times the peak, nothing when
+   * hidden. The one place it is written, so the dimmer and the shutter
+   * cannot disagree about it.
+   *
+   * @private
+   */
+  writeLight() {
+    // The pool, the shadow-casting light and the beam in the air all carry
+    // the same peak, so they agree. See `peakCandela`.
     // The dimmer alone, not the `intensity` getter, which has the shutter in
     // it already: counted twice, a flash covering half a frame came out a
     // quarter as bright rather than half.
     const lit = this._hidden ? 0
-      : this._intensity * this._shutter * this._fluxGain * this._outputGain;
+      : this._intensity * this._shutter * this.peakUnits();
     this._spotLight.intensity = SPOTLIGHT_PHYSICALLY_CORRECT_INTENSITY * lit;
     intensity_buffer_attribute.setX(this._id, lit);
     intensity_buffer_attribute.needsUpdate = true;
@@ -2862,11 +2883,11 @@ class MovingHead {
           type: 'f',
           value: SceneEnv.hazeDriftRate,
         },
-        beamGain: { value: beamGain },
-        scatterAmount: {
-          type: 'f',
-          value: beamScatterValue,
-        },
+        // Candela in light-field units into scene luminance per unit of
+        // scattering coefficient: the light field's own scale, so the air
+        // and a surface it lights are on the same exposure.
+        beamUnits: { value: SPOTLIGHT_PHYSICALLY_CORRECT_INTENSITY },
+        hazeScatter: { value: HAZE_SCATTER_AT_FULL },
         // Which shader term the debug panel is drawing instead of the beam.
         debugTerm: { value: 0 },
         glowFactor: {

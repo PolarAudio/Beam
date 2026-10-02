@@ -350,6 +350,9 @@ class Fixture extends withTransform(Proxify) {
       }
       // After the zeroing, or a saved value would be wiped by it.
       this.applyParkedChannels();
+      // A channel left at its default is never reported by a write, so the
+      // head hears every channel once.
+      if (this._dispatch) this._dispatch.applyAll();
     }
     return this.proxify(['_3DModel']);
   }
@@ -532,10 +535,42 @@ class Fixture extends withTransform(Proxify) {
     this.channels = [];
     this.quickChannelsAccessors = {};
     this.modeName = this.modeNames[modeIndex];
-    // this.parseFromOFLData();
-    this.prepareChannels();
-    this.setupFineChannels();
-    this.setupQuickAccessors();
+    if (this.fixtureType) {
+      const inputs = this.applyGdtfMode();
+      if (this._dispatch) {
+        this._3DModel.setModeInputs({
+          maxPan: inputs.panSpan,
+          maxTilt: inputs.tiltSpan,
+          minAngle: inputs.minAngle,
+          maxAngle: inputs.maxAngle,
+          lumens: inputs.lumens,
+        });
+        this._dispatch = markRaw(new HeadDispatch(this._3DModel, this._engine));
+      }
+    } else {
+      this.prepareChannels();
+      this.setupFineChannels();
+      this.setupQuickAccessors();
+      // A moving head reads DMX through the new mode's translation; the
+      // lens is the profile's whatever the mode.
+      if (this._engine) {
+        const type = translated(this.profileKey, this.OFLData);
+        const mode = type.modes[this.modeIndex] || type.modes[0];
+        const inputs = headInputs(type, mode);
+        this._3DModel.setModeInputs({ maxPan: inputs.panSpan, maxTilt: inputs.tiltSpan });
+        this._engine = markRaw(new DmxEngine(type, mode));
+        this._dispatch = markRaw(new HeadDispatch(this._3DModel, this._engine));
+      }
+    }
+    // As a new fixture starts: every channel at nought, then what was set
+    // by hand, then every channel told to the head, which the mode change
+    // has put back to how a new head starts.
+    if (this.hasManualFocus && this._3DModel) this._3DModel.focus = this._focus;
+    this.channels.forEach((channel) => {
+      this.setChannel(channel.id - 1, 0);
+    });
+    this.applyParkedChannels();
+    if (this._dispatch) this._dispatch.applyAll();
   }
 
   get modeIndex() {
@@ -1103,15 +1138,8 @@ class Fixture extends withTransform(Proxify) {
   parseFromGdtf() {
     const type = this.fixtureType;
     this.modes = type.modes;
-    this.mode = type.modes[this.modeIndex] || type.modes[0];
-    // Kept by name from here on, which is what the show saves.
-    this.modeName = this.mode.name;
     this._name = type.name;
-    // Kept out of Vue's reactivity: it is written on every DMX packet.
-    this._engine = markRaw(new DmxEngine(type, this.mode));
-    this.channels = channelRows(this._engine);
-    this.setupQuickAccessors();
-    const inputs = headInputs(type, this.mode);
+    const inputs = this.applyGdtfMode();
     this.category = inputs.category;
     this.wheels = wheelsForHead(type);
     if (inputs.category === FIXTURE_TYPES.MOVING_HEAD) {
@@ -1136,6 +1164,25 @@ class Fixture extends withTransform(Proxify) {
       this._3DModel = markRaw(unsupportedModel());
     }
     this.applyHidden();
+  }
+
+  /**
+   * Sets up the current mode of a GDTF fixture: its channel rows and the
+   * engine that reads them.
+   *
+   * @private
+   * @returns {Object} the head's inputs in this mode; see `headInputs`
+   */
+  applyGdtfMode() {
+    const type = this.fixtureType;
+    this.mode = type.modes[this.modeIndex] || type.modes[0];
+    // Kept by name from here on, which is what the show saves.
+    this.modeName = this.mode.name;
+    // Kept out of Vue's reactivity: it is written on every DMX packet.
+    this._engine = markRaw(new DmxEngine(type, this.mode));
+    this.channels = channelRows(this._engine);
+    this.setupQuickAccessors();
+    return headInputs(type, this.mode);
   }
 
   /**

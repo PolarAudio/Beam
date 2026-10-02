@@ -2,7 +2,6 @@
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import Laser from './laser';
 import MovingHead from './moving_head';
-import LightField from './light_field';
 import LEDField from './led_field';
 import LEDPanel from './led_panel';
 import Perf from './perf_overlay';
@@ -98,12 +97,8 @@ export default function createLEDDebugPanel(visualizer, host) {
     contactEdge: ContactShadows.edge(),
     strictPatch: PatchSingleton.strict,
     // Mover beams
-    beamScatter: Math.round(MovingHead.scatterAmount() * 100),
     beamOcclusion: MovingHead.occlusion(),
     beamDebug: 0,
-    poolGain: LightField.poolGain(),
-    beamGain: MovingHead.beamGain(),
-    poolFalloff: LightField.uniforms.lightFieldDecay.value,
     // Laser
     laserAir: Laser.scatterGain(),
     laserSurface: Laser.surfaceGain(),
@@ -337,13 +332,7 @@ export default function createLEDDebugPanel(visualizer, host) {
       Tuning.write('airScale', v, visualizer);
     });
 
-  // A beam pointed at you is far brighter than one crossing your view, because
-  // haze scatters light forwards. Side-on is the reference here, so this only
-  // ever brightens beams that turn towards the camera.
   const beam = gui.addFolder('Mover beam');
-  beam.add(state, 'beamScatter', 0, 100, 1)
-    .name('facing brightness %')
-    .onChange((v) => Tuning.write('beamScatter', v, visualizer));
   // A diagnostic, not a preference: not stored, so a session cannot start
   // with beams passing through walls because a switch was left off.
   beam.add(state, 'beamOcclusion')
@@ -354,25 +343,14 @@ export default function createLEDDebugPanel(visualizer, host) {
     beam: 0,
     'field fraction': 1,
     profile: 2,
-    'chord fraction': 3,
-    attenuation: 4,
+    'path integral': 3,
+    irradiance: 4,
     phase: 5,
     haze: 6,
     intensity: 7,
   })
     .name('draw term')
     .onChange((v) => MovingHead.setDebugTerm(v));
-  // Not stored: the defaults in light_field.js and moving_head.js are the
-  // calibration, and these are for checking it.
-  beam.add(state, 'poolGain', 0.001, 0.1, 0.001)
-    .name('pool gain')
-    .onChange((v) => LightField.setPoolGain(v));
-  beam.add(state, 'beamGain', 0, 2, 0.005)
-    .name('beam gain')
-    .onChange((v) => MovingHead.setBeamGain(v));
-  beam.add(state, 'poolFalloff', 1, 2, 0.05)
-    .name('pool falloff')
-    .onChange((v) => { LightField.uniforms.lightFieldDecay.value = v; });
 
   // Two separate hands, because a laser is drawn twice: the shaft through the
   // haze is geometry, the figure on the stone is a projected picture. Turning

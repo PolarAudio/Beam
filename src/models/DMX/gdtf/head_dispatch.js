@@ -126,7 +126,14 @@ function gdtfAction(c, origins) {
     if (family === 'Prism' && suffix === 'Pos') return { kind: 'PrismRotation', values: { angle: physical } };
     if (suffix === 'PosRotate') return { kind: 'WheelSlotRotation', values: { wheel: fn.wheel || a, rpm } };
     if (suffix === 'Pos') return { kind: 'WheelSlotRotation', values: { wheel: fn.wheel || a, angle: physical } };
-    if (family === 'Prism' && suffix === '') return { kind: 'Prism', values: { comment: fn.name } };
+    if (family === 'Prism' && suffix === '') {
+      // No usable slot: the set's name says what is in, the way a shutter's
+      // says it is closed. Open is no prism; any other set names its prism,
+      // which is where the facets and the layout are read from.
+      const named = (set && set.name) || fn.name;
+      if (/\bopen\b/i.test(named)) return { kind: 'Prism', values: { off: true } };
+      return { kind: 'Prism', values: { comment: named } };
+    }
   }
 
   if (/^Shutter\d+$/.test(a)) {
@@ -177,6 +184,15 @@ export default class HeadDispatch {
    */
   apply(changed) {
     for (let i = 0; i < changed.length; i += 1) this.applyChannel(changed[i]);
+  }
+
+  /**
+   * Acts on every channel as it stands, changed or not. A write only reports
+   * the channels whose function it changed, so a channel sitting at its
+   * default would otherwise never reach a newly built or reset head.
+   */
+  applyAll() {
+    this.apply(this.engine.channels);
   }
 
   /**
@@ -243,7 +259,10 @@ export default class HeadDispatch {
         if (typeof head.setWheelRotation === 'function') head.setWheelRotation(values.wheel || channelName, values);
         break;
       case 'Prism':
-        if (typeof head.setPrism === 'function') {
+        if (values.off) {
+          if (typeof head.setPrism === 'function') head.setPrism(false);
+          this.prism = null;
+        } else if (typeof head.setPrism === 'function') {
           // The facet count and layout are only ever in the text.
           head.setPrism(true, `${values.comment || ''} ${channelName || ''}`);
           this.prism = c;

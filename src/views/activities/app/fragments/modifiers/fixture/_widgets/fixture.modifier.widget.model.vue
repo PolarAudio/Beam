@@ -277,6 +277,20 @@ import MovingHead from '@/plugins/visualizer/moving_head';
 /** A whole number with thousands separators. */
 const grouped = (n) => Math.round(n).toLocaleString('en-GB');
 
+/**
+ * The peak a head renders with at each end of its zoom, and the lux it
+ * puts on a surface 10 m away there.
+ */
+function peakFact(lumens, narrow, wide) {
+  const atNarrow = MovingHead.peakAtZoom(lumens, narrow);
+  const atWide = MovingHead.peakAtZoom(lumens, wide);
+  const lux = (cd) => `${grouped(cd / 100)} lux at 10 m`;
+  const value = narrow === wide
+    ? `${grouped(atWide)} cd · ${lux(atWide)}`
+    : `${grouped(atNarrow)} cd at ${narrow}° (${lux(atNarrow)}) · ${grouped(atWide)} cd at ${wide}°`;
+  return { label: 'Peak', value };
+}
+
 /** How long the copy button confirms for, in ms. */
 const COPY_FEEDBACK_MS = 1500;
 
@@ -389,18 +403,7 @@ export default {
         const [narrow, wide] = lens;
         facts.push({ label: 'Zoom', value: narrow === wide ? `${narrow}°` : `${narrow}° – ${wide}°` });
         const lumens = this.isMover ? MovingHead.lumensOf(physical) : null;
-        if (lumens) {
-          // The same sums the head renders with: the lumens spread over the
-          // widest field, concentrated by `fluxGain` as the zoom closes.
-          const half = (wide / 2) * (Math.PI / 180);
-          const atWide = lumens / (2 * Math.PI * (1 - Math.cos(half)));
-          const gain = MovingHead.fluxGain(narrow / 2, wide / 2);
-          const ratio = gain > 1.01 ? ` · ${grouped(gain)}x` : '';
-          facts.push({
-            label: 'Peak',
-            value: `${grouped(atWide * gain)} cd at ${narrow}° · ${grouped(atWide)} cd at ${wide}°${ratio}`,
-          });
-        }
+        if (lumens) facts.push(peakFact(lumens, narrow, wide));
       }
       if (physical.weight) facts.push({ label: 'Weight', value: `${physical.weight} kg` });
       const size = physical.dimensions;
@@ -454,15 +457,7 @@ export default {
       const wide = inputs.maxAngle;
       if (narrow && wide && narrow !== wide) spec.push({ label: 'Zoom', value: `${narrow}° – ${wide}°` });
       if (inputs.lumens && narrow && wide && inputs.category === 'Moving Head') {
-        // The sums the head renders with, as for any profile.
-        const half = (wide / 2) * (Math.PI / 180);
-        const atWide = inputs.lumens / (2 * Math.PI * (1 - Math.cos(half)));
-        const gain = MovingHead.fluxGain(narrow / 2, wide / 2);
-        const ratio = gain > 1.01 ? ` · ${grouped(gain)}x` : '';
-        spec.push({
-          label: 'Peak',
-          value: `${grouped(atWide * gain)} cd at ${narrow}° · ${grouped(atWide)} cd at ${wide}°${ratio}`,
-        });
+        spec.push(peakFact(inputs.lumens, narrow, wide));
       }
       if (inputs.panSpan) spec.push({ label: 'Pan / tilt', value: `${inputs.panSpan}° / ${inputs.tiltSpan || 0}°` });
       if (inputs.panSpeed || inputs.tiltSpeed) {

@@ -6,7 +6,6 @@ import ProjectorDepth, {
 import { hazeShaderPrelude, hazeUniforms } from './haze_noise';
 import SceneEnv from './scene_env';
 import { LUX_SCALE } from './light_field';
-import MovingHead from './moving_head';
 
 /**
  * @file Puts every projector's picture onto whatever the camera can see.
@@ -193,6 +192,14 @@ const SHAFT_FADE_PER_METRE = 0.06;
  * @constant {Number}
  */
 const SHAFT_GAIN = 0.02;
+
+/**
+ * How much of the haze's forward scattering the shaft shows, 0..1: 0 the
+ * same from every angle, 1 the phase function's full ceiling. Set by eye.
+ *
+ * @constant {Number}
+ */
+const SHAFT_SCATTER_AMOUNT = 0.37;
 
 const FRAGMENT = /* glsl */`
   uniform mat4 projInverse;
@@ -550,7 +557,7 @@ class ProjectorEffect extends Effect {
         ['blendEdges', new THREE.Uniform(blendEdges)],
         ['liveCount', new THREE.Uniform(0)],
         ['hasPicture', new THREE.Uniform(0)],
-        ['scatterAmount', new THREE.Uniform(MovingHead.scatterAmount())],
+        ['scatterAmount', new THREE.Uniform(SHAFT_SCATTER_AMOUNT)],
         ['camPos', new THREE.Uniform(new THREE.Vector3())],
         ['hazeMetres', new THREE.Uniform(SceneEnv.hazeScale)],
         ['drift', new THREE.Uniform(0)],
@@ -603,9 +610,6 @@ class ProjectorEffect extends Effect {
     uniforms.get('hazeMetres').value = SceneEnv.hazeScale;
     // The same drift convention the beams and the ambient air use.
     uniforms.get('drift').value = this.elapsed * SceneEnv.hazeDriftRate;
-    // The movers' facing brightness, so a projector and a beam in the same air
-    // brighten alike as they turn towards the camera.
-    uniforms.get('scatterAmount').value = MovingHead.scatterAmount();
 
     const live = this.projections.slice(0, MAX_PROJECTIONS);
     uniforms.get('liveCount').value = live.length;

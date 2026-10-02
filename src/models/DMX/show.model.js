@@ -27,7 +27,7 @@ import VideoRouter from '../../plugins/visualizer/video_router';
 import SceneObjects from '../../plugins/visualizer/scene_objects';
 import Studio from './studio';
 import { normaliseMatrixProfile } from './ofl_matrix';
-import readGdtf from './gdtf/gdtf_reader';
+import readGdtf, { wheelImages } from './gdtf/gdtf_reader';
 import { headInputs } from './gdtf/fixture_parts';
 import { MAX_SHADOW_CASTERS } from '../../plugins/visualizer/moving_head';
 
@@ -1392,9 +1392,14 @@ class Show extends EventEmitter {
       if (!response.ok) throw new Error(`${response.status}`);
       const bytes = new Uint8Array(await response.arrayBuffer());
       const parseXml = (text) => new DOMParser().parseFromString(text, 'text/xml');
-      const { fixtureType, problems } = readGdtf(bytes, { parseXml });
+      const { fixtureType, files, problems } = readGdtf(bytes, { parseXml });
       // eslint-disable-next-line no-console
       if (problems.length) console.warn(`[gdtf] ${key}: ${problems.join('; ')}`);
+      // The wheel slots' own pictures, as URLs the panels can show. Made once
+      // per type, which every fixture of it shares.
+      const urlOf = (image) => URL.createObjectURL(new Blob([image.bytes], { type: image.mime }));
+      fixtureType.wheelImages = new Map([...wheelImages(fixtureType, files)]
+        .map(([name, image]) => [name, urlOf(image)]));
       markRaw(fixtureType);
       this.gdtfTypes.set(key, fixtureType);
       return fixtureType;

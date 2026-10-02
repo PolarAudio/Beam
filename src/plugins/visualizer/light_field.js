@@ -28,7 +28,8 @@ const CANDELA_PER_UNIT = (REFERENCE_LUMENS / REFERENCE_SOLID_ANGLE) / REFERENCE_
  * and fifty, a mover's pool hundreds.
  *
  * Only the last step needs a decision: lux to a value the tone curve can eat.
- * This is it, and it is the only number here set by looking.
+ * This is it, the camera's exposure, and it is the only number here set by
+ * looking.
  *
  * Anchored on a reference rig, the one to check against if this ever drifts:
  * a 10000-lumen machine, throw ratio 1.5, 1920x1200, twenty-seven
@@ -173,9 +174,8 @@ const record = {
 const uniforms = {
   lightField: { value: null },
   lightFieldCount: { value: 0 },
-  // Sources write candela on the lux scale. Set by eye; the inverse square
-  // would be 2.
-  lightFieldDecay: { value: 1.55 },
+  // Sources write candela on the lux scale; light falls as the inverse square.
+  lightFieldDecay: { value: 2 },
   // The mover depth atlas, set by `MovingHead.renderDepth` each frame.
   lightFieldDepth: { value: null },
   lightFieldDepthFar: { value: 1 },
@@ -444,15 +444,7 @@ vec2 fieldStencil( vec2 p, float inner, vec4 gobo, vec4 prism, float split, floa
 }
 `;
 
-/**
- * Scales every pool in the field, set by eye against the beams with pools
- * on the lux scale and falling off as the inverse square.
- */
-let poolGain = 0.01;
-
 const LightField = {
-  setPoolGain(value) { poolGain = Number(value) || 0; },
-  poolGain() { return poolGain; },
   /** @type {Object} the uniforms every receiving material shares */
   uniforms,
 
@@ -527,9 +519,9 @@ const LightField = {
         data[at + 6] = record.direction.z;
         data[at + 7] = record.cosOuter;
 
-        data[at + 8] = record.color.r * record.intensity * poolGain;
-        data[at + 9] = record.color.g * record.intensity * poolGain;
-        data[at + 10] = record.color.b * record.intensity * poolGain;
+        data[at + 8] = record.color.r * record.intensity;
+        data[at + 9] = record.color.g * record.intensity;
+        data[at + 10] = record.color.b * record.intensity;
         data[at + 11] = record.cosInner;
 
         data[at + 12] = record.tile.x;
@@ -563,9 +555,9 @@ const LightField = {
         data[at + 35] = record.prism.w;
 
         const far = record.split > 0 ? record.colorB : record.color;
-        data[at + 36] = far.r * record.intensity * poolGain;
-        data[at + 37] = far.g * record.intensity * poolGain;
-        data[at + 38] = far.b * record.intensity * poolGain;
+        data[at + 36] = far.r * record.intensity;
+        data[at + 37] = far.g * record.intensity;
+        data[at + 38] = far.b * record.intensity;
         data[at + 39] = record.split;
 
         data[at + 40] = record.iris;
@@ -625,6 +617,7 @@ const LightField = {
 
 export default LightField;
 export {
+  REFERENCE_LUMENS,
   CANDELA_PER_UNIT,
   REFERENCE_INTENSITY,
   LUX_SCALE,

@@ -111,29 +111,6 @@ vec2 prismOffset(int k, int facets, bool linear, float angle, float spread) {
 #define BEAM_FIELD_DEPTH 0.5
 
 /**
- * Nearest the lens the irradiance falls off from, in metres.
- *
- * Light spreads as the inverse square of the distance from the virtual
- * point the cone opens from, which sits just behind the lens. Unbounded,
- * that puts hundreds of times more light in the first half metre than at
- * the far end, a white core at the lens that hides the colour. A lens has
- * area rather than being a point, so the falloff has to stop somewhere;
- * three metres, further out than the physics alone gives, is what the
- * projector shaft settled on for the same reason.
- */
-#define BEAM_KNEE 3.0
-
-/**
- * How fast the beam is eaten by the air it lights, per metre per unit haze.
- *
- * Beer-Lambert from the lens: thicker haze scatters more light towards the
- * eye and swallows the beam sooner, which is why a heavily hazed room has
- * short fat beams rather than long ones. The same number the projector
- * shaft uses, so a beam and a projector in the same air fade alike.
- */
-#define BEAM_EXTINCTION 0.06
-
-/**
  * How many points along a ray's lit stretch the radial profile is read at.
  *
  * Arithmetic only, no fetches: a smoothstep each. Four is enough for a
@@ -144,8 +121,8 @@ vec2 prismOffset(int k, int facets, bool linear, float angle, float spread) {
 
 /**
  * Draws one term as greyscale instead of the beam, from the debug panel:
- * 1 the mean field fraction u, 2 the radial profile, 3 the chord fraction,
- * 4 the irradiance, 5 the phase, 6 the haze field, 7 the whole intensity
+ * 1 the mean field fraction u, 2 the radial profile, 3 the path integral of
+ * the irradiance, 4 the irradiance, 5 the phase, 6 the haze field, 7 the whole intensity
  * before colour. 0 is the beam. Each is scaled so it survives the tone curve and
  * bloom readably. Additive blending still applies, so read these on a scene
  * with a single beam.
@@ -158,9 +135,9 @@ float dbgIrradiance = 0.0;
 float dbgField = 0.0;
 
 uniform bool fogState;
-uniform float beamGain;      // Brightness of a ray straight through the axis within the knee, before the haze
-uniform float scatterAmount; // How much of the haze's forward scattering to show, 0..1
-uniform float fogFactor;     // How much haze there is, 0..1
+uniform float beamUnits;     // Light-field intensity into scene luminance, per unit of scattering coefficient
+uniform float hazeScatter;   // The haze's scattering coefficient at full haze, per metre
+uniform float fogFactor;    // How much haze there is, 0..1
 uniform float fogScale;      // How wide one haze feature is, in metres
 uniform float fogTurbulence; // Global fogging turbulence factor
 uniform float time;          // Current time
@@ -179,7 +156,6 @@ varying vec4 vAbsoluteWorldPosition;
 varying float vIntensity;    // Instance intensity
 varying float vAngle;        // Half-angle of the beam's field, degrees
 varying float vInner;        // Inner cone radius over the field's, where the falloff starts
-varying float vGain;         // Brightness normaliser, 1 being the reference cone's light
 varying float vSlope;        // Cone slope, dRadius/dz, of the cone drawn
 varying float vLensRadius;   // Radius of the cone at the lens, in metres
 varying float vZFar;         // Local z of the cone's far rim
@@ -481,28 +457,27 @@ vec2 beamStencil(vec2 p, vec2 along, float lod) {
 }
 
 /**
- * @function kneeIntegral
- * @brief the irradiance integrated along the axis, from the apex to here
- * @param float u distance from the cone's virtual apex
- * @returns float metres of full irradiance: u within the knee, then
- *   approaching twice the knee as the inverse square runs out
+ * @function irradianceIntegral
+ * @brief the inverse square integrated along the axis
+ * @param float u distance from the cone's virtual apex, metres
+ * @returns float the antiderivative of 1 / u^2, which is -1 / u
  *
- * The antiderivative of (KNEE / max(u, KNEE))^2, so the light along any
- * stretch of a ray is a difference of two of these over the ray's rate of
- * travel along the axis.
+ * The light along any stretch of a ray is a difference of two of these over
+ * the ray's rate of travel along the axis. The apex sits behind the lens by
+ * the lens radius over the slope, so u never reaches zero.
  */
-float kneeIntegral(float u) {
-  return u <= BEAM_KNEE ? u : 2.0 * BEAM_KNEE - BEAM_KNEE * BEAM_KNEE / u;
+float irradianceIntegral(float u) {
+  return -1.0 / max(u, 1e-4);
 }
 
 /**
- * @function kneeInverse
- * @brief where along the axis `kneeIntegral` reaches a value
- * @param float g a value of `kneeIntegral`
+ * @function irradianceInverse
+ * @brief where along the axis `irradianceIntegral` reaches a value
+ * @param float g a value of `irradianceIntegral`, negative
  * @returns float distance from the cone's virtual apex
  */
-float kneeInverse(float g) {
-  return g <= BEAM_KNEE ? g : BEAM_KNEE * BEAM_KNEE / max(2.0 * BEAM_KNEE - g, 1e-4);
+float irradianceInverse(float g) {
+  return -1.0 / min(g, -1e-9);
 }
 
 /**
@@ -694,8 +669,8 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
   //
   // **Each sample also carries the light that reaches it and the air it
   // sits in.** Irradiance falls as the inverse square of the distance from
-  // the virtual point the cone opens from, flat within the knee, and pays
-  // Beer-Lambert extinction from the lens through the haze on the way. The
+  // the virtual point the cone opens from, and pays Beer-Lambert extinction
+  // from the lens through the haze on the way. The
   // haze field is read at the sample itself, so the texture passes through
   // the shaft rather than sitting on it: the core averages the field along
   // a long chord and comes out smoother, the thin edges keep its detail,
@@ -705,7 +680,7 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
   //
   // **The samples go where the light is.** The irradiance along the ray is
   // known in closed form, so its integral over the lit stretch is exact
-  // (`kneeIntegral`), and the samples are spaced so that each stands for an
+  // (`irradianceIntegral`), and the samples are spaced so that each stands for an
   // equal share of it: dense near the lens, sparse far out. They then only
   // have to estimate the profile, the haze and the extinction, which vary
   // slowly. Evenly spaced samples on a ray running down a beam put one in
@@ -714,16 +689,19 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
   // A ray crossing the beam side-on sees almost no change in irradiance, and
   // keeps the even spacing with each sample weighted by its own irradiance.
   float tanHalf = tan(radians(vAngle)) * DEPTH_FOV_MARGIN * vSpread;
-  float apexBehind = r0 / max(m, 1e-4);
-  float haze = clamp(fogFactor, 0.0, 1.0);
+  // The light opens from the field's apex; a prism only widens the drawn cone.
+  float apexBehind = r0 / max(m / vSpread, 1e-4);
+  float extinctionPerMetre = hazeScatter * clamp(fogFactor, 0.0, 1.0);
   float samples = float(BEAM_PROFILE_SAMPLES);
   // Distance from the cone's virtual apex at the ends of the lit stretch,
   // which is what the irradiance falls off with.
   float uLo = clamp(oz + vz * sLo, 0.0, vZFar) + apexBehind;
   float uHi = clamp(oz + vz * sHi, 0.0, vZFar) + apexBehind;
-  float gLo = kneeIntegral(uLo);
-  float gHi = kneeIntegral(uHi);
-  bool alongIrradiance = abs(gHi - gLo) > 0.01 && abs(vz) > 1e-4;
+  float gLo = irradianceIntegral(uLo);
+  float gHi = irradianceIntegral(uHi);
+  // Spaced by the irradiance when it changes along the stretch by more than
+  // a percent; a ray crossing side-on sees it nearly constant.
+  bool alongIrradiance = abs(gHi - gLo) > 0.01 * abs(gHi + gLo) * 0.5 && abs(vz) > 1e-4;
   // The irradiance integral each sample stands for, when spaced by it.
   float shareWeight = abs(gHi - gLo) / abs(vz) / samples;
   float sumWeight = 0.0;
@@ -739,16 +717,15 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
     float weight;
     float sampleStep;
     if (alongIrradiance) {
-      float uHere = kneeInverse(mix(gLo, gHi, t));
+      float uHere = irradianceInverse(mix(gLo, gHi, t));
       s = (uHere - apexBehind - oz) / vz;
-      float knee = BEAM_KNEE / max(uHere, BEAM_KNEE);
       weight = shareWeight;
       // The stretch of ray this sample's share covers.
-      sampleStep = min(shareWeight / max(knee * knee, 1e-6), chord);
+      sampleStep = min(shareWeight * uHere * uHere, chord);
     } else {
       s = sLo + chord * t;
-      float knee = BEAM_KNEE / max(clamp(oz + vz * s, 0.0, vZFar) + apexBehind, BEAM_KNEE);
-      weight = chord / samples * knee * knee;
+      float uHere = clamp(oz + vz * s, 0.0, vZFar) + apexBehind;
+      weight = chord / samples / (uHere * uHere);
       sampleStep = chord / samples;
     }
     float z = clamp(oz + vz * s, 0.0, vZFar);
@@ -783,8 +760,8 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
     float lod = GOBO_LOD_BASE + GOBO_BLUR_PER_METRE * z;
     vec2 sides = beamStencil(aperture, apertureNext - aperture, lod) * lit;
     float profileHere = sides.x + sides.y;
-    float spread = BEAM_KNEE / max(z + apexBehind, BEAM_KNEE);
-    float extinction = exp(-BEAM_EXTINCTION * haze * z);
+    float spread = 1.0 / (z + apexBehind);
+    float extinction = exp(-extinctionPerMetre * z);
     float field = hazeField(cameraPos + viewDir * s);
     sumWeight += weight;
     sumLight += weight * profileHere * extinction * field;
@@ -797,26 +774,20 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
   farShare = sumLight > 0.0 ? sumFar / sumLight : 0.0;
   float u = clamp(sumU / samples, 0.0, 1.0);
 
-  // The light scattered along the ray is that integral, in units of the
-  // beam's diameter at the knee: 1 straight through the beam there. Past
-  // the knee a side-on ray crosses a wider beam, so its brightness falls as
-  // 1/z, not with the irradiance's 1/z^2 -- which is why a long throw stays
-  // visible to the floor. Within the knee the diameter is the local one, so
-  // the lens end reads 1 across. A ray running down the beam collects more,
-  // as it does in real air, but never more than the irradiance integral to
-  // infinity, twice the knee. A sliver where the floor, the far end or a
-  // surface cuts the ray short fades to nothing, which is what fades the
+  // The light scattered along the ray is that integral: the irradiance per
+  // candela of the peak, times the profile, the extinction and the haze
+  // field, over the ray's lit stretch, in candela-metres per square metre.
+  // A side-on ray crosses a beam whose width grows as z while its
+  // irradiance falls as 1/z^2, so it falls as 1/z; a ray running down the
+  // beam collects the whole length. A sliver where the floor, the far end or
+  // a surface cuts the ray short fades to nothing, which is what fades the
   // beam out where it lands.
-  float radiusMid = max(r0 + m * zMid, 1e-4);
-  float radiusKnee = max(r0 + m * BEAM_KNEE, 1e-4);
-  float diameter = 2.0 * min(radiusMid, radiusKnee);
-
   dbgU = u;
   dbgProfile = sumProfile / samples;
-  dbgThrough = sumWeight / diameter;
+  dbgThrough = sumWeight;
   dbgIrradiance = sumIrradiance / samples;
   dbgField = sumField / samples;
-  return sumLight / diameter;
+  return sumLight;
 }
 
 void main() {
@@ -838,7 +809,7 @@ void main() {
   float zAlong;
   float sAlong;
   float farShare;
-  float light = beamGain * vGain * beamProfile(viewDir, zAlong, sAlong, farShare);
+  float light = beamProfile(viewDir, zAlong, sAlong, farShare);
 
   if (debugTerm == 1) { gl_FragColor = vec4(vec3(dbgU * 0.2), 1.0); return; }
   if (debugTerm == 2) { gl_FragColor = vec4(vec3(dbgProfile * 0.2), 1.0); return; }
@@ -853,15 +824,17 @@ void main() {
     return;
   }
 
-  // How the air throws this light at the eye: the haze's phase function on
-  // the angle between the beam's travel and the way back to the camera. 1
-  // side-on, rising as the beam turns to face the viewer, by as much as
-  // scatterAmount allows.
-  float phase = hazePhase(dot(safeNormalize(vDirection), -viewDir), scatterAmount);
+  // How the air throws this light at the eye: the haze's phase function, per
+  // steradian, on the angle between the beam's travel and the way back to
+  // the camera.
+  float phase = hazeLobes(dot(safeNormalize(vDirection), -viewDir));
 
-  float intensity = light * phase * haze;
+  // Luminance in from the air: the scattering coefficient, the phase and
+  // the light along the ray, on the light field's scale. The peak candela is
+  // the instance intensity, applied with the colour below.
+  float intensity = beamUnits * hazeScatter * haze * phase * light;
 
-  if (debugTerm == 5) { gl_FragColor = vec4(vec3(phase * 0.05), 1.0); return; }
+  if (debugTerm == 5) { gl_FragColor = vec4(vec3(phase * 0.5), 1.0); return; }
   if (debugTerm == 7) { gl_FragColor = vec4(vec3(intensity * 0.05), 1.0); return; }
 
   // Each side of a colour split in its own colour, weighted by how much of

@@ -190,6 +190,7 @@ export function wheelsForHead(type) {
       if (f.wheel && m && !families.has(f.wheel)) families.set(f.wheel, m[1]);
     });
   })));
+  const filters = new Map(type.physical.filters.map((f) => [f.name, f]));
   const wheels = {};
   type.wheels.forEach((wheel) => {
     const family = families.get(wheel.name) || 'Gobo';
@@ -201,11 +202,18 @@ export function wheelsForHead(type) {
         if (slot.facets.length) kind = 'Prism';
         else if (/^open$/i.test(name) || (!slot.mediaFileName && !slot.color && family !== 'Color')) kind = 'Open';
         else if (/frost/i.test(name)) kind = 'Frost';
-        const hex = cieToHex(slot.color);
+        // A slot naming a filter takes the filter's colour, which is the
+        // measured one. Y in a filter or slot colour is the share of the
+        // light it lets through, in percent.
+        const filter = slot.filter ? filters.get(slot.filter) : null;
+        const color = (filter && filter.color) || slot.color;
+        const hex = cieToHex(color);
+        const transmission = color && color.Y > 0 && color.Y < 100 ? color.Y / 100 : null;
         return {
           type: kind,
           name,
           ...(kind === 'Color' && hex ? { colors: [hex] } : {}),
+          ...(kind === 'Color' && transmission !== null ? { transmission } : {}),
           ...(kind === 'Prism' ? { facets: slot.facets.length } : {}),
           ...(slot.mediaFileName ? { resource: slot.mediaFileName } : {}),
         };

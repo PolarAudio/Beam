@@ -176,7 +176,7 @@ function describe(cap, wheels, wheelName) {
  *   slot, and steps holds the `{ lo, hi, text, colour, split, gobo }` of each
  *   range folded in, empty when none was
  */
-function fold(parts) {
+export function fold(parts) {
   const out = [];
   parts.forEach((part) => {
     const last = out[out.length - 1];

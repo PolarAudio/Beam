@@ -198,9 +198,16 @@ export function wheelsForHead(type) {
       slots: wheel.slots.map((slot) => {
         if (slot.ofl) return slot.ofl;
         const name = slot.name || '';
+        const open = /^open$/i.test(name.trim());
+        // A slot on a gobo or prism wheel with neither a picture nor a name
+        // is the open hole; its colour says nothing on such a wheel. A prism
+        // wheel's named slot is a prism even without facets listed, and its
+        // name -- "8-Facet Circular Prism" -- is where the head reads them.
+        const empty = !slot.mediaFileName && !name.trim();
         let kind = family === 'Color' ? 'Color' : 'Gobo';
         if (slot.facets.length) kind = 'Prism';
-        else if (/^open$/i.test(name) || (!slot.mediaFileName && !slot.color && family !== 'Color')) kind = 'Open';
+        else if (open || (family !== 'Color' && empty)) kind = 'Open';
+        else if (family === 'Prism') kind = 'Prism';
         else if (/frost/i.test(name)) kind = 'Frost';
         // A slot naming a filter takes the filter's colour, which is the
         // measured one. Y in a filter or slot colour is the share of the

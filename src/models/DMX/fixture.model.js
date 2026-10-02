@@ -1157,6 +1157,9 @@ class Fixture extends withTransform(Proxify) {
         // Null where the file has no RealFade; the head then uses its own.
         panSpeed: inputs.panSpeed,
         tiltSpeed: inputs.tiltSpeed,
+        // The file's own body, read when the type was loaded; the shipped
+        // one where the file has no meshes.
+        body: type.body || null,
       });
       this._dispatch = markRaw(new HeadDispatch(this._3DModel, this._engine));
     } else {

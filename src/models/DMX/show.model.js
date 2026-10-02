@@ -28,6 +28,7 @@ import SceneObjects from '../../plugins/visualizer/scene_objects';
 import Studio from './studio';
 import { normaliseMatrixProfile } from './ofl_matrix';
 import readGdtf, { wheelImages } from './gdtf/gdtf_reader';
+import buildBody from '../../plugins/visualizer/gdtf_body';
 import { headInputs } from './gdtf/fixture_parts';
 import { MAX_SHADOW_CASTERS } from '../../plugins/visualizer/moving_head';
 
@@ -1400,6 +1401,15 @@ class Show extends EventEmitter {
       const urlOf = (image) => URL.createObjectURL(new Blob([image.bytes], { type: image.mime }));
       fixtureType.wheelImages = new Map([...wheelImages(fixtureType, files)]
         .map(([name, image]) => [name, urlOf(image)]));
+      // The body its meshes make, shared by every fixture of the type. A file
+      // whose meshes cannot be read keeps the shipped body.
+      try {
+        fixtureType.body = await buildBody(fixtureType, files);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn(`[gdtf] ${key}: body not built: ${err.message}`);
+        fixtureType.body = null;
+      }
       markRaw(fixtureType);
       this.gdtfTypes.set(key, fixtureType);
       return fixtureType;

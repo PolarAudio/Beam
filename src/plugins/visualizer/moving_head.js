@@ -15,14 +15,28 @@ import { DepthAtlas } from './projector_depth';
 import {
   goboTexture, goboLayerFor, goboImageCell, GOBO_BLUR_LEVELS,
 } from './gobo_library';
+import BodyFinish from './body_finish';
 
-const MODEL_MATERIAL = new THREE.MeshStandardMaterial({
-  color: 0x000000,
-  transparent: false,
-  flatShading: false,
-  side: THREE.DoubleSide,
-  clippingPlanes: true,
+/**
+ * A head's casing: dark grey with a satin, part-metallic finish. Pure black,
+ * or anything near it, gives every face the same black and a head a
+ * silhouette with no shape; the room's light reflected along curves and
+ * edges is how a black fixture shows its shape, so the finish carries enough
+ * gloss and metal to catch it. Measured on a close view under the house
+ * lights: body median 14/255 with edges to 57, against 5 with edges to 15
+ * for the old pure black. The emissive floor is small, enough that an unlit
+ * head does not vanish in a black room and not so much that it flattens the
+ * shading.
+ */
+const MODEL_FINISH = new BodyFinish({
+  colour: '#4a4e53',
+  roughness: 0.35,
+  metalness: 0.5,
+  lift: 0.12,
 });
+const MODEL_MATERIAL = MODEL_FINISH.material().clone();
+MODEL_MATERIAL.side = THREE.DoubleSide;
+MODEL_MATERIAL.clippingPlanes = true;
 
 MODEL_MATERIAL.onBeforeCompile = (shader) => {
   // the rest is the same
@@ -669,6 +683,118 @@ const beamAxis = new THREE.Vector3();
 /** Scratch corner, reused while growing a selection box. */
 const boundsCorner = new THREE.Vector3();
 
+/**
+ * Where the beam geometry starts along its own axis, metres from its origin:
+ * the shipped model's lens face, built into the cylinder.
+ *
+ * @constant {Number}
+ */
+const BEAM_START = 0.258;
+
+/** A GDTF body is drawn hanging; Beam stands a head up: half a turn about X. */
+const UPRIGHT = new THREE.Matrix4().makeRotationX(Math.PI);
+
+/** The pick box's geometry: 0.5 x 0.5 x 0.8, centred 0.15 below the origin. */
+const PICK_BOX_SIZE = new THREE.Vector3(0.5, 0.5, 0.8);
+const PICK_BOX_CENTRE = new THREE.Vector3(0, 0, -0.15);
+
+/** Scratch for a GDTF head's pick box. */
+const pickScratch = new THREE.Matrix4();
+
+/** Writes a matrix into an object's position, rotation and scale. */
+function setLocal(object, matrix) {
+  matrix.decompose(object.position, object.quaternion, object.scale);
+}
+
+/**
+ * The instanced meshes of each GDTF body in the scene, by body: one per part
+ * that has geometry, a highlight attribute, and the slots in use. Every head
+ * of one fixture type shares its type's body, so a hundred of them are three
+ * draws, as the shipped body's are.
+ */
+const bodySets = new Map();
+
+/** How many heads a body's meshes hold before they are grown. */
+const BODY_INITIAL_CAPACITY = 16;
+
+/**
+ * A body's instanced part, holding `count` slots, with what an older one held.
+ *
+ * @param {THREE.InstancedBufferGeometry} geometry
+ * @param {Number} count
+ * @param {THREE.InstancedMesh} [old]
+ * @returns {THREE.InstancedMesh}
+ */
+function bodyMesh(geometry, count, old) {
+  const mesh = new THREE.InstancedMesh(geometry, MODEL_MATERIAL, count);
+  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  for (let i = 0; i < count; i += 1) mesh.setMatrixAt(i, COLLAPSED);
+  if (old) mesh.instanceMatrix.array.set(old.instanceMatrix.array);
+  mesh.instanceMatrix.needsUpdate = true;
+  mesh.frustumCulled = false;
+  // As the shipped body: bodies block light, take shadow, stain the floor.
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  castsContactShadow(mesh);
+  return mesh;
+}
+
+/**
+ * The meshes for a body, built the first time a head of its type is placed.
+ *
+ * @param {Object} body from `gdtf_body.js`
+ * @returns {Object} `{ meshes, highlight, capacity, used, free }`
+ */
+function bodySetFor(body) {
+  let set = bodySets.get(body);
+  if (set) return set;
+  set = {
+    meshes: {},
+    highlight: new THREE.InstancedBufferAttribute(new Float32Array(BODY_INITIAL_CAPACITY), 1),
+    capacity: BODY_INITIAL_CAPACITY,
+    used: 0,
+    free: [],
+  };
+  ['base', 'yoke', 'head'].forEach((part) => {
+    if (!body[part]) return;
+    const geometry = new THREE.InstancedBufferGeometry();
+    THREE.BufferGeometry.prototype.copy.call(geometry, body[part]);
+    geometry.setAttribute('highlight', set.highlight);
+    set.meshes[part] = bodyMesh(geometry, set.capacity);
+    scene_handle.add(set.meshes[part]);
+  });
+  bodySets.set(body, set);
+  return set;
+}
+
+/**
+ * A slot in a body's meshes, growing them when they are full.
+ *
+ * @param {Object} set from `bodySetFor`
+ * @returns {Number}
+ */
+function claimBodySlot(set) {
+  if (set.free.length) return set.free.pop();
+  const slot = set.used;
+  set.used += 1;
+  if (set.used > set.capacity) {
+    set.capacity *= 2;
+    const highlight = new THREE.InstancedBufferAttribute(new Float32Array(set.capacity), 1);
+    highlight.array.set(set.highlight.array);
+    set.highlight = highlight;
+    Object.keys(set.meshes).forEach((part) => {
+      const old = set.meshes[part];
+      old.geometry.setAttribute('highlight', highlight);
+      const grown = bodyMesh(old.geometry, set.capacity, old);
+      scene_handle.remove(old);
+      old.dispose();
+      scene_handle.add(grown);
+      set.meshes[part] = grown;
+    });
+  }
+  return slot;
+}
+
 class MovingHead {
   /**
    * Creates an instance of MovingHead.
@@ -828,8 +954,17 @@ class MovingHead {
      */
     this._emitters = {};
     this._highlighted = false;
-    // Every head draws the same body; this is how much of it this one is.
-    this._bodyScale = MovingHead.bodyScaleFor(data.bodyHeight);
+    /**
+     * The fixture's own body from its GDTF file, or null for the shipped one,
+     * which every other head draws scaled to its profile's height.
+     */
+    this._body = data.body || null;
+    this._bodyScale = this._body ? 1 : MovingHead.bodyScaleFor(data.bodyHeight);
+    /** How wide the lens is against the shipped one's; see `mountBody`. */
+    this._lensScale = this._bodyScale;
+    /** Where the body reaches below the origin, and the pick box; see `mountBody`. */
+    this._baseDepth = null;
+    this._pickMatrix = null;
 
     this.prepareInstance();
 
@@ -1070,7 +1205,7 @@ class MovingHead {
       positionVector.x,
       positionVector.y,
       // The base bottom stays on the floor, whatever size the body is.
-      Math.max(positionVector.z, modelBaseDepth * this._bodyScale + 0.01),
+      Math.max(positionVector.z, this.baseDepth + 0.01),
     );
     this._matrixNeedsUpdate = true;
   }
@@ -1165,6 +1300,10 @@ class MovingHead {
     this._highlighted = state;
     emissive_buffer_attribute.setX(this._id, this._highlighted ? 1.0 : 0.0);
     emissive_buffer_attribute.needsUpdate = true;
+    if (this._bodySet) {
+      this._bodySet.highlight.setX(this._bodySlot, this._highlighted ? 1.0 : 0.0);
+      this._bodySet.highlight.needsUpdate = true;
+    }
   }
 
   get highlighted() {
@@ -2154,6 +2293,12 @@ class MovingHead {
    */
   prepareInstance() {
     this._dummy = new THREE.Object3D();
+    // Where each part hangs from its parent at rest. Identity for the shipped
+    // body, whose parts all pivot at the origin; a GDTF body sets them from
+    // its file in `mountBody`.
+    this._bodyRoot = new THREE.Object3D();
+    this._yokeMount = new THREE.Object3D();
+    this._headMount = new THREE.Object3D();
     this._headDummy = new THREE.Object3D();
     this._yokeDummy = new THREE.Object3D();
     this._beamDummy = new THREE.Object3D();
@@ -2203,14 +2348,17 @@ class MovingHead {
     this._spotLight.applyMatrix4(new THREE.Matrix4().makeRotationX(-Math.PI / 2));
     this._spotLight.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 0, 0.9));
 
-    this._dummy.add(this._yokeDummy);
-
-    this._yokeDummy.attach(this._headDummy);
-    this._headDummy.attach(this._beamDummy);
+    this._dummy.add(this._bodyRoot);
+    this._bodyRoot.add(this._yokeMount);
+    this._yokeMount.add(this._yokeDummy);
+    this._yokeDummy.add(this._headMount);
+    this._headMount.add(this._headDummy);
+    this._headDummy.add(this._beamDummy);
     this._beamDummy.attach(this._targetDummy);
     this._beamDummy.attach(this._spotLight);
 
     this._spotLight.target = this._targetDummy;
+    if (this._body) this.mountBody();
 
     // On the root, so the yoke pivot, the head, the lens and the selection box
     // all shrink or grow together. The beam is taken back out: see
@@ -2239,6 +2387,81 @@ class MovingHead {
   }
 
   /**
+   * Hangs a GDTF body on the rig: each part where its file puts it, the beam
+   * leaving its lens, and the slot its type's meshes draw it in.
+   *
+   * The file's frame is the fixture hanging from the centre of its base
+   * plate. Stood upright, its tilt pivot goes to the fixture's origin, where
+   * the shipped body pivots, so a head keeps the place it was given and the
+   * beam leaves upwards at rest, as the shipped head's does. The beam runs
+   * along the lens's -Z, the way the file hangs its light.
+   *
+   * @private
+   */
+  mountBody() {
+    const body = this._body;
+    const tilt = body.yokeFrame.clone().multiply(body.headFrame);
+    const pivot = new THREE.Vector3().setFromMatrixPosition(tilt).applyMatrix4(UPRIGHT);
+    const root = new THREE.Matrix4()
+      .makeTranslation(-pivot.x, -pivot.y, -pivot.z)
+      .multiply(UPRIGHT);
+    setLocal(this._bodyRoot, root);
+    setLocal(this._yokeMount, body.yokeFrame);
+    setLocal(this._headMount, body.headFrame);
+    setLocal(this._beamDummy, body.lensFrame.clone()
+      .multiply(UPRIGHT)
+      .multiply(new THREE.Matrix4().makeTranslation(0, 0, -BEAM_START)));
+    // The lens as wide as the file's, the cap and the beam scaled to it.
+    if (body.lensRadius > 0) this._lensScale = body.lensRadius / BEAM_TOP_RADIUS;
+    this._targetDummy.scale.set(this._lensScale, this._lensScale, 1);
+
+    // The body at rest, in the fixture's frame: how far it reaches below the
+    // origin, and the pick box fitted round it.
+    const bounds = new THREE.Box3();
+    [[body.base, root], [body.yoke, root.clone().multiply(body.yokeFrame)],
+      [body.head, root.clone().multiply(tilt)]].forEach(([geometry, matrix]) => {
+      if (!geometry) return;
+      if (!geometry.boundingBox) geometry.computeBoundingBox();
+      bounds.union(geometry.boundingBox.clone().applyMatrix4(matrix));
+    });
+    this._baseDepth = Math.max(-bounds.min.z, 0);
+    const size = bounds.getSize(new THREE.Vector3()).divide(PICK_BOX_SIZE);
+    const centre = bounds.getCenter(new THREE.Vector3());
+    const back = PICK_BOX_CENTRE.clone().negate();
+    const toCentre = new THREE.Matrix4().makeTranslation(back.x, back.y, back.z);
+    this._pickMatrix = new THREE.Matrix4().makeTranslation(centre.x, centre.y, centre.z)
+      .multiply(new THREE.Matrix4().makeScale(size.x, size.y, size.z))
+      .multiply(toCentre);
+
+    this._bodySet = bodySetFor(body);
+    this._bodySlot = claimBodySlot(this._bodySet);
+  }
+
+  /**
+   * How far the body reaches below the fixture's origin, in metres.
+   *
+   * @readonly
+   * @type {Number}
+   */
+  get baseDepth() {
+    return this._baseDepth !== null ? this._baseDepth : modelBaseDepth * this._bodyScale;
+  }
+
+  /**
+   * Writes one matrix into a slot of every GDTF body part, or collapses them.
+   *
+   * @private
+   */
+  writeBodySlot(base, yoke, head) {
+    const set = this._bodySet;
+    const parts = { base, yoke, head };
+    Object.keys(set.meshes).forEach((part) => {
+      set.meshes[part].setMatrixAt(this._bodySlot, parts[part]);
+      set.meshes[part].instanceMatrix.needsUpdate = true;
+    });
+  }
+
+  /**
    * Updates the Moving Head instance and childs matrixworld
    *
    * @private
@@ -2250,6 +2473,7 @@ class MovingHead {
         mesh.setMatrixAt(this._id, COLLAPSED);
         mesh.instanceMatrix.needsUpdate = true;
       });
+      if (this._bodySet) this.writeBodySlot(COLLAPSED, COLLAPSED, COLLAPSED);
       // So showing it again finds every matrix changed and uploads them all.
       this._writtenMatrices.forEach((written) => written.copy(COLLAPSED));
       this._collapsed = true;
@@ -2269,23 +2493,39 @@ class MovingHead {
       // still; the depth tiles hash those versions, so an upload every frame
       // would owe every tile a redraw every frame.
       const written = this._writtenMatrices;
-      if (written[0].equals(this._dummy.matrixWorld)
+      if (written[0].equals(this._bodyRoot.matrixWorld)
         && written[1].equals(this._yokeDummy.matrixWorld)
         && written[2].equals(this._headDummy.matrixWorld)
         && written[3].equals(rigidMatrix)
         && written[4].equals(this._targetDummy.matrixWorld)) return;
-      written[0].copy(this._dummy.matrixWorld);
+      written[0].copy(this._bodyRoot.matrixWorld);
       written[1].copy(this._yokeDummy.matrixWorld);
       written[2].copy(this._headDummy.matrixWorld);
       written[3].copy(rigidMatrix);
       written[4].copy(this._targetDummy.matrixWorld);
-      baseMesh.setMatrixAt(this._id, this._dummy.matrixWorld);
-      yokeMesh.setMatrixAt(this._id, this._yokeDummy.matrixWorld);
-      headMesh.setMatrixAt(this._id, this._headDummy.matrixWorld);
+      if (this._bodySet) {
+        // Drawn by its type's meshes; its slot in the shipped body's is empty.
+        baseMesh.setMatrixAt(this._id, COLLAPSED);
+        yokeMesh.setMatrixAt(this._id, COLLAPSED);
+        headMesh.setMatrixAt(this._id, COLLAPSED);
+        this.writeBodySlot(
+          this._bodyRoot.matrixWorld,
+          this._yokeDummy.matrixWorld,
+          this._headDummy.matrixWorld,
+        );
+        boundingBoxMesh.setMatrixAt(
+          this._id,
+          pickScratch.multiplyMatrices(this._dummy.matrixWorld, this._pickMatrix),
+        );
+      } else {
+        baseMesh.setMatrixAt(this._id, this._bodyRoot.matrixWorld);
+        yokeMesh.setMatrixAt(this._id, this._yokeDummy.matrixWorld);
+        headMesh.setMatrixAt(this._id, this._headDummy.matrixWorld);
+        boundingBoxMesh.setMatrixAt(this._id, this._dummy.matrixWorld);
+      }
       beamMesh.setMatrixAt(this._id, rigidMatrix);
       // The lens is part of the body, so it takes the scaled frame.
       capMesh.setMatrixAt(this._id, this._targetDummy.matrixWorld);
-      boundingBoxMesh.setMatrixAt(this._id, this._dummy.matrixWorld);
       baseMesh.instanceMatrix.needsUpdate = true;
       yokeMesh.instanceMatrix.needsUpdate = true;
       headMesh.instanceMatrix.needsUpdate = true;
@@ -2325,7 +2565,7 @@ class MovingHead {
     this._beamDummy.matrixWorld.decompose(rigidPosition, rigidQuaternion, rigidScale);
     beamAxis.set(0, 0, 1).applyQuaternion(rigidQuaternion);
     rigidPosition.addScaledVector(beamAxis, this.beamOriginShift);
-    beamScale.set(this._bodyScale, this._bodyScale, 1);
+    beamScale.set(this._lensScale, this._lensScale, 1);
     rigidMatrix.compose(rigidPosition, rigidQuaternion, beamScale);
   }
 
@@ -2559,10 +2799,12 @@ class MovingHead {
    */
   expandGeometryBounds(box) {
     this._dummy.updateMatrixWorld();
-    this._yokeDummy.updateMatrixWorld();
-    this._headDummy.updateMatrixWorld();
-    [[baseGeo, this._dummy], [yokeGeo, this._yokeDummy], [headGeo, this._headDummy]]
+    const body = this._body;
+    [[body ? body.base : baseGeo, this._bodyRoot],
+      [body ? body.yoke : yokeGeo, this._yokeDummy],
+      [body ? body.head : headGeo, this._headDummy]]
       .forEach(([geometry, node]) => {
+        if (!geometry) return;
         if (!geometry.boundingBox) geometry.computeBoundingBox();
         if (!geometry.boundingBox) return;
         partBounds.copy(geometry.boundingBox).applyMatrix4(node.matrixWorld);
@@ -2795,7 +3037,7 @@ class MovingHead {
       0,
     ));
     beamGeometry.applyMatrix4(new THREE.Matrix4().makeRotationX(-Math.PI / 2));
-    beamGeometry.applyMatrix4(new THREE.Matrix4().setPosition(0, 0, 0.258));
+    beamGeometry.applyMatrix4(new THREE.Matrix4().setPosition(0, 0, BEAM_START));
 
     THREE.BufferGeometry.prototype.copy.call(beamGeo, beamGeometry);
 
@@ -3158,6 +3400,12 @@ class MovingHead {
   }
 
   static deleteInstance(instance) {
+    // Its slot in its type's body meshes is emptied and given to the next.
+    if (instance._bodySet) {
+      instance.writeBodySlot(COLLAPSED, COLLAPSED, COLLAPSED);
+      instance._bodySet.free.push(instance._bodySlot);
+      instance._bodySet = null;
+    }
     scene_handle.remove(instance._headDummy);
     scene_handle.remove(instance._yokeDummy);
     scene_handle.remove(instance._beamDummy);

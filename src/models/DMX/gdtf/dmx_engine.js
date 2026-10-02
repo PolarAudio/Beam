@@ -44,8 +44,12 @@ function interpolate(value, dmxFrom, dmxTo, physicalFrom, physicalTo) {
  * The state of a channel at a value: its function, the channel set the value
  * falls in, and the physical value.
  *
- * A set with its own physical range is stated in that range; one without
- * takes the function's, at the value's place in the function.
+ * A set with its own physical range is stated in that range. A value in a
+ * set without one, between two sets that have one, runs on the line between
+ * them: a file that names its points -- CW Fast 1800, CW Med 1080, CW Slow
+ * 360 deg/s -- states the curve through them, and its function's own
+ * from/to may run the other way. Anywhere else the value takes the
+ * function's range, at its place in the function.
  *
  * @param {Object} fn a channel function
  * @param {Number} value at the channel's resolution
@@ -60,11 +64,21 @@ export function stateAt(fn, value) {
       break;
     }
   }
+  const stated = (s) => s.physicalFrom !== null && s.physicalTo !== null;
   let physical;
-  if (set && set.physicalFrom !== null && set.physicalTo !== null) {
+  if (set && stated(set)) {
     physical = interpolate(value, set.dmxFrom, set.dmxTo, set.physicalFrom, set.physicalTo);
   } else {
-    physical = interpolate(value, fn.dmxFrom, fn.dmxTo, fn.physicalFrom, fn.physicalTo);
+    let before = null;
+    let after = null;
+    for (let i = 0; i < fn.sets.length; i += 1) {
+      const s = fn.sets[i];
+      if (stated(s) && s.dmxTo < value && (!before || s.dmxTo > before.dmxTo)) before = s;
+      if (stated(s) && s.dmxFrom > value && (!after || s.dmxFrom < after.dmxFrom)) after = s;
+    }
+    physical = before && after
+      ? interpolate(value, before.dmxTo, after.dmxFrom, before.physicalTo, after.physicalFrom)
+      : interpolate(value, fn.dmxFrom, fn.dmxTo, fn.physicalFrom, fn.physicalTo);
   }
   return { fn, set, physical };
 }

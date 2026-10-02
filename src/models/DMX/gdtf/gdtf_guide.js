@@ -17,6 +17,7 @@
 
 import { cieToHex, attributeLabel } from './fixture_parts';
 import { fold } from '../fixture_guide';
+import { stateAt } from './dmx_engine';
 
 /** Attributes the moving head acts on; anything else is shown but marked. */
 const DRAWN = [
@@ -117,8 +118,10 @@ function slotColour(type, slot) {
  */
 function rotationParts(fn, bytes, verb, kind) {
   const lo = (v) => coarse(v, bytes);
-  const pf = fn.physicalFrom;
-  const pt = fn.physicalTo;
+  // The speed at each end as the engine reads it, named points included,
+  // so the words say what the head does.
+  const pf = stateAt(fn, fn.dmxFrom).physical;
+  const pt = stateAt(fn, fn.dmxTo).physical;
   const dir = (v) => (v > 0 ? 'CW' : 'CCW');
   const part = (from, to, text, rotation) => ({
     lo: lo(from), hi: lo(to), type: kind, text, speed: '', colour: null, split: null, gobo: null, rotation,

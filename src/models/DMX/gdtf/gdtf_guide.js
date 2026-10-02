@@ -18,6 +18,9 @@
 import { cieToHex, attributeLabel } from './fixture_parts';
 import { fold } from '../fixture_guide';
 import { stateAt } from './dmx_engine';
+import {
+  nameOf, namesClosed, namesOpen, slotKind,
+} from './name_rules';
 
 /** Attributes the moving head acts on; anything else is shown but marked. */
 const DRAWN = [
@@ -67,10 +70,13 @@ function words(name) {
   return String(name || '').trim().replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
 }
 
-/** A wheel slot in the guide's words: "open", "red", "gobo 3". */
-function slotText(set, slot, index) {
+/**
+ * A wheel slot in the guide's words: "open", "red", "gobo 3". A slot the head
+ * takes as open says so, whatever the file calls it.
+ */
+function slotText(family, set, slot, index) {
+  if (slot && slotKind(family, slot) === 'Open') return 'open';
   const name = String((set && set.name) || (slot && slot.name) || '').trim();
-  if (/^open$/i.test(name)) return 'open';
   return name ? words(name) : `slot ${index}`;
 }
 
@@ -189,8 +195,9 @@ function partsOf(type, fn, bytes) {
   if (/^Frost\d+$/.test(a)) return whole('Frost', `frost ${span}`);
 
   if (/^Shutter\d+$/.test(a)) {
-    if (!choices.length) return whole('ShutterStrobe', /close/i.test(fn.name) ? 'closed' : 'open');
-    return choices.map((s) => part(s.dmxFrom, s.dmxTo, 'ShutterStrobe', /close/i.test(s.name) ? 'closed' : 'open'));
+    const shut = (s) => (namesClosed(nameOf(fn, s)) ? 'closed' : 'open');
+    if (!choices.length) return whole('ShutterStrobe', shut(null));
+    return choices.map((s) => part(s.dmxFrom, s.dmxTo, 'ShutterStrobe', shut(s)));
   }
   const strobe = /^Shutter\d+/.test(a) && STROBE_WORDS.find(([pattern]) => pattern.test(a));
   if (strobe) return whole('ShutterStrobe', `${strobe[1]} ${span}${strobe[2] ? ' random' : ''}`);
@@ -205,7 +212,7 @@ function partsOf(type, fn, bytes) {
     if (suffix === '' && slotted.length) {
       return slotted.map((s) => {
         const slot = slotOf(s);
-        const text = slotText(s, slot, s.wheelSlotIndex);
+        const text = slotText(family, s, slot, s.wheelSlotIndex);
         return part(s.dmxFrom, s.dmxTo, 'WheelSlot', text, {
           colour: family === 'Color' ? slotColour(type, slot) : null,
           gobo: family === 'Color' ? null : slotImage(type, slot, text),
@@ -214,7 +221,7 @@ function partsOf(type, fn, bytes) {
     }
     if (suffix === '' && family === 'Prism') {
       if (!choices.length) return whole('Prism', 'prism in');
-      return choices.map((s) => (/\bopen\b/i.test(s.name)
+      return choices.map((s) => (namesOpen(nameOf(fn, s))
         ? part(s.dmxFrom, s.dmxTo, 'NoFunction', 'off')
         : part(s.dmxFrom, s.dmxTo, 'Prism', `prism in (${words(s.name)})`)));
     }
@@ -223,7 +230,7 @@ function partsOf(type, fn, bytes) {
       if (!slotted.length) return whole('WheelShake', `shake ${speed}`, { speed });
       return slotted.map((s) => {
         const slot = slotOf(s);
-        const name = slotText(s, slot, s.wheelSlotIndex);
+        const name = slotText(family, s, slot, s.wheelSlotIndex);
         return part(s.dmxFrom, s.dmxTo, 'WheelShake', `shake ${name} ${speed}`, {
           speed, gobo: slotImage(type, slot, name),
         });

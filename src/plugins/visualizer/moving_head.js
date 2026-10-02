@@ -16,6 +16,9 @@ import {
   goboTexture, goboLayerFor, goboImageCell, GOBO_BLUR_LEVELS,
 } from './gobo_library';
 import BodyFinish from './body_finish';
+import {
+  prismFromText, PRISM_DEFAULT_FACETS, PRISM_MAX_FACETS,
+} from '../../models/DMX/gdtf/name_rules';
 
 /**
  * A head's casing: dark grey with a satin, part-metallic finish. Pure black,
@@ -105,27 +108,6 @@ const LENS_DARK = 0.05;
 /** Scratch for the lens colour write. */
 const lensColor = new THREE.Color();
 const BEAM_MAX_ANGLE = 45;
-
-/** Facets a prism has when its profile does not say. */
-const PRISM_DEFAULT_FACETS = 3;
-
-/** The most facets drawn; must match PRISM_FACETS_MAX in the shaders. */
-const PRISM_MAX_FACETS = 8;
-
-/**
- * What a prism describes itself as, from the text a profile gives it: "4-facet
- * linear, rotating", "8-facet 45° circular". Only the text has it; OFL has no
- * field for either on a prism channel.
- *
- * @param {String} text
- * @returns {Object} `{ facets, linear }`, facets null when unstated
- */
-function prismFromText(text) {
-  const t = String(text || '');
-  const match = /(\d+)\s*-?\s*facet/i.exec(t);
-  const facets = match ? Math.min(Math.max(parseInt(match[1], 10), 2), PRISM_MAX_FACETS) : null;
-  return { facets, linear: /linear/i.test(t) };
-}
 
 /**
  * How fast a wheel travels from slot to slot when a new one is chosen, in

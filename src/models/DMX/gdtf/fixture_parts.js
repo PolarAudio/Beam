@@ -8,6 +8,7 @@
  */
 
 import { walkGeometry } from './gdtf_reader';
+import { slotKind } from './name_rules';
 
 /** Old channel types by GDTF attribute, for the quick accessors and the UI. */
 const CHANNEL_TYPES = [
@@ -174,10 +175,8 @@ export function cieToHex(cie) {
 /**
  * The fixture's wheels in the form the moving head builds its optics from.
  *
- * A translated OFL slot is the profile's own. A GDTF slot is read for what
- * it is: facets make a prism, an image a gobo, a colour a colour filter; an
- * empty slot is open. A wheel's kind is otherwise taken from the attributes
- * that select it.
+ * A translated OFL slot is the profile's own. A GDTF slot's kind is
+ * `slotKind`'s, from the family of attributes that select its wheel.
  *
  * @param {Object} type a fixture type
  * @returns {Object} wheel name to `{ slots }`
@@ -198,17 +197,7 @@ export function wheelsForHead(type) {
       slots: wheel.slots.map((slot) => {
         if (slot.ofl) return slot.ofl;
         const name = slot.name || '';
-        const open = /^open$/i.test(name.trim());
-        // A slot on a gobo or prism wheel with neither a picture nor a name
-        // is the open hole; its colour says nothing on such a wheel. A prism
-        // wheel's named slot is a prism even without facets listed, and its
-        // name -- "8-Facet Circular Prism" -- is where the head reads them.
-        const empty = !slot.mediaFileName && !name.trim();
-        let kind = family === 'Color' ? 'Color' : 'Gobo';
-        if (slot.facets.length) kind = 'Prism';
-        else if (open || (family !== 'Color' && empty)) kind = 'Open';
-        else if (family === 'Prism') kind = 'Prism';
-        else if (/frost/i.test(name)) kind = 'Frost';
+        const kind = slotKind(family, slot);
         // A slot naming a filter takes the filter's colour, which is the
         // measured one. Y in a filter or slot colour is the share of the
         // light it lets through, in percent.

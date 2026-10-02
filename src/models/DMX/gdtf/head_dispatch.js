@@ -14,6 +14,8 @@
  * belongs to the channel that set it.
  */
 
+import { nameOf, namesClosed, namesOpen } from './name_rules';
+
 /** GDTF additive and subtractive colour attributes, by the head's colour names. */
 const COLOR_NAMES = {
   ColorAdd_R: 'Red',
@@ -127,17 +129,16 @@ function gdtfAction(c, origins) {
     if (suffix === 'PosRotate') return { kind: 'WheelSlotRotation', values: { wheel: fn.wheel || a, rpm } };
     if (suffix === 'Pos') return { kind: 'WheelSlotRotation', values: { wheel: fn.wheel || a, angle: physical } };
     if (family === 'Prism' && suffix === '') {
-      // No usable slot: the set's name says what is in, the way a shutter's
-      // says it is closed. Open is no prism; any other set names its prism,
-      // which is where the facets and the layout are read from.
-      const named = (set && set.name) || fn.name;
-      if (/\bopen\b/i.test(named)) return { kind: 'Prism', values: { off: true } };
+      // No usable slot: the name says what is in. Open is no prism; any
+      // other names its prism, where the facets and layout are read from.
+      const named = nameOf(fn, set);
+      if (namesOpen(named)) return { kind: 'Prism', values: { off: true } };
       return { kind: 'Prism', values: { comment: named } };
     }
   }
 
   if (/^Shutter\d+$/.test(a)) {
-    const closed = /closed/i.test(`${(set && set.name) || ''} ${fn.name}`);
+    const closed = namesClosed(nameOf(fn, set));
     return {
       kind: 'Shutter',
       values: { strobeEffect: closed ? 'Closed' : 'Open', strobeRandom: false },

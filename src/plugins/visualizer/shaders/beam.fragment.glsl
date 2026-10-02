@@ -34,7 +34,7 @@ uniform float depthBias;         // Metres past the surface a sample may still b
 uniform sampler2D goboAtlas;     // Every gobo pattern, in a grid; pattern 0 open
 
 /** The atlas is a grid of this many patterns across, as gobo_library.js. */
-#define GOBO_GRID 8.0
+#define GOBO_GRID 16.0
 
 /**
  * How blurred a gobo reads in the air, as mip levels of its 256 px pattern:

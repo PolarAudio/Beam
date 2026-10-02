@@ -165,6 +165,8 @@ export default class HeadDispatch {
     this.prism = null;
     this.panTiltSpeed = null;
     this.frost = null;
+    /** The wheel each channel last put on a slot, by channel. */
+    this.wheelOf = new Map();
     // The head counts pan and tilt up from zero, and GDTF often centres them
     // on it, -270 to 270, so its zero is the lowest angle any function gives.
     const lowest = (attribute) => {
@@ -230,11 +232,22 @@ export default class HeadDispatch {
       head.setFrost(0);
       this.frost = null;
     }
+    // A wheel's place follows the channel's current value only. A range
+    // whose function positions no slot -- a wheel mode such as
+    // Gobo(n)WheelMode, which changes how the wheel is controlled, or a
+    // stretch with no function -- leaves the wheel on its first slot.
+    const turning = kind === 'WheelSlot' || kind === 'WheelShake'
+      || kind === 'WheelRotation' || kind === 'WheelSlotRotation';
+    if (this.wheelOf.has(c) && !turning) {
+      if (typeof head.setWheelSlot === 'function') head.setWheelSlot(this.wheelOf.get(c), 0);
+      this.wheelOf.delete(c);
+    }
     // A value no function covers holds the head where it was.
     if (!action) return;
     const { values } = action;
     // OFL names wheels by channel; a translated function keeps that name.
     const channelName = state.fn.ofl ? state.fn.ofl.channel : c.channel.name;
+    if (kind === 'WheelSlot' || kind === 'WheelShake') this.wheelOf.set(c, values.wheel || channelName);
 
     switch (kind) {
       case 'ColorIntensity':

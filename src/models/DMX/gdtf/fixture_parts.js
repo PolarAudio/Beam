@@ -209,6 +209,11 @@ export function wheelsForHead(type) {
         const color = (filter && filter.color) || slot.color;
         const hex = cieToHex(color);
         const transmission = color && color.Y > 0 && color.Y < 100 ? color.Y / 100 : null;
+        // The file's own picture of a gobo, when the show has loaded it.
+        const url = slot.mediaFileName && type.wheelImages
+          ? type.wheelImages.get(slot.mediaFileName) : null;
+        const image = kind === 'Gobo' && url
+          ? { key: `${type.fixtureTypeId || type.name}/${slot.mediaFileName}`, url } : null;
         return {
           type: kind,
           name,
@@ -216,6 +221,7 @@ export function wheelsForHead(type) {
           ...(kind === 'Color' && transmission !== null ? { transmission } : {}),
           ...(kind === 'Prism' ? { facets: slot.facets.length } : {}),
           ...(slot.mediaFileName ? { resource: slot.mediaFileName } : {}),
+          ...(image ? { image } : {}),
         };
       }),
     };

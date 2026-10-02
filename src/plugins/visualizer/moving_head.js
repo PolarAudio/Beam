@@ -12,7 +12,9 @@ import LightField, {
 } from './light_field';
 import { castsContactShadow } from './contact_shadows';
 import { DepthAtlas } from './projector_depth';
-import { goboTexture, goboLayerFor, GOBO_BLUR_LEVELS } from './gobo_library';
+import {
+  goboTexture, goboLayerFor, goboImageCell, GOBO_BLUR_LEVELS,
+} from './gobo_library';
 
 const MODEL_MATERIAL = new THREE.MeshStandardMaterial({
   color: 0x000000,
@@ -1857,6 +1859,8 @@ class MovingHead {
   static goboPatternAt(wheel, index) {
     const slot = wheel.slots[index];
     if (!slot || slot.type !== SLOT_TYPES.GOBO) return 0;
+    // A fixture that carries its own picture of the gobo draws that one.
+    if (slot.image) return goboImageCell(slot.image.key, slot.image.url);
     const goboIndex = wheel.slots.slice(0, index)
       .filter((s) => s && s.type === SLOT_TYPES.GOBO).length;
     return goboLayerFor(slot, goboIndex);

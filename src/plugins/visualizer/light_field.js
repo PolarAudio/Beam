@@ -345,7 +345,7 @@ vec2 fieldPrismOffset( int k, int facets, bool linear, float angle, float spread
 // The most facets a prism is drawn with.
 #define FIELD_PRISM_FACETS 8
 // The gobo atlas is a grid of this many patterns across, as gobo_library.js.
-#define FIELD_GOBO_GRID 8.0
+#define FIELD_GOBO_GRID 16.0
 
 // A gobo's stencil at a point of the aperture, (0,0) the axis and 1 the
 // field's radius; 1 where light passes. Pattern 0 is open and skips the

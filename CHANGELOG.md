@@ -1,5 +1,65 @@
 # Changelog
 
+## 0.1.0-alpha.18
+
+### GDTF fixtures
+
+- Beam reads GDTF fixture files. **File → Import GDTF...** or dropping a .gdtf on the window copies it into `Library/Profiles/<manufacturer>/`, unchanged. A GDTF fixture replaces the OFL entry of the same name in Add to Show. Exports carry the file as it is.
+- OFL profiles are translated to GDTF internally, so both kinds drive moving heads through the same DMX engine. 16-bit channels are read in full, and mode masters are honoured.
+- Moving heads are built from the file's own meshes when it has them: base, yoke and head, placed where the file puts them. A file without meshes gets the shipped body at the file's height. GDTF primitives (base, yoke, head, conventional, scanner) are drawn as shapes of the model's size.
+- Gobos use the file's own wheel images. Colour wheel slots use the filter's colour and transmission from the file.
+- Speeds between named points (such as a gobo rotation that names its fast and slow ends) follow the line between those points.
+- Pan/tilt speed overrides are removed; GDTF heads take their speed from the file.
+- The range guide covers GDTF fixtures and shows each gobo slot's own image.
+
+### Static lights
+
+- A GDTF fixture that neither pans nor tilts is a static light: a par, a wash, a bar, a blinder. It is listed as **Static** and drawn standing still.
+- A light with several lenses gives each lens its own beam and its share of the output. A mode that addresses the lenses separately lights each one on its own.
+- A beam the file types None or Glow lights its face without throwing a beam into the haze.
+- A lens face is drawn in the shape and size the file gives it: a rectangle for a box-shaped lens, a disc for a round one. It sits on the outside of the lens, where the light leaves.
+- A light whose mode has colour channels but no dimmer runs at full, its colour channels the only control.
+- A light with red, green and blue at zero is dark. It showed white.
+
+### Brightness
+
+- Moving head brightness follows from the fixture's lumens, with no gains set by eye. Zoom, frost and focus keep the total output.
+- Beams in haze are computed from the haze's scattering along the ray. 100% haze is 10 m visibility.
+- The light leaves at the lens. A thin fixture no longer lights its own back or shows its beam through its body.
+
+### GDTF Share
+
+- Searching in Add to Show lists your library first, then the fixtures on GDTF Share that your library does not have. Picking one fills the form from the Share; **download and add** downloads, imports and places it.
+- Log in, refresh and log out from the panel beside the form. The account is stored encrypted by Windows and is never shown.
+- A fixture type already in the library is asked about: keep both (default), replace, or skip. Saved shows keep the revision they were built with.
+- **Newer on GDTF Share** marks a library file with a newer revision available.
+
+### Add to Show
+
+- Double-clicking an item in the item list opens Add to Show on its library entry: a fixture in its mode, an object, or a structure.
+- Any library fixture or Share fixture can be marked as a favourite or as bad, with the heart and thumbs-down buttons in the panel above the form.
+- The bad and favourite filters on the search line each have three states: all, only marked, not marked.
+- The funnel button filters by type (moving head, static, matrix, LED bar, laser, strobe, projector) and by origin (GDTF, OFL, Generic), with counts.
+- Every fixture row shows its origin in a column: GDTF, OFL or Generic.
+- Removing a GDTF file from the library moves it to `Library/Removed/Profiles` instead of deleting it. Shows that use it still open. Importing it again lists it again. Replacing a file on import moves the old one there too.
+- New icons for static lights, lasers and strobes. A fixture shows the same icon in the item list, the fixture panel and Add to Show.
+
+### Selection
+
+- A selected fixture is drawn as it is, with an orange outline. The white tint and the corner brackets are gone.
+- The move and rotate gizmo is drawn on top of the picture, unaffected by light, haze and bloom, and is left out of recordings.
+
+### Fixture panel
+
+- Values a GDTF file left at the format's defaults are left out, when most of a beam's values are defaults.
+- Selecting a light whose file gives it nothing to draw no longer breaks the scene.
+
+### Fixes
+
+- A dimmer change while the shutter was closed no longer lights the head for one frame.
+- Changing mode resets the head's optics; a gobo or shake from the previous mode no longer stays in.
+- Patching in a mode other than the first no longer patches the first mode.
+
 ## 0.1.0-alpha.17
 
 ### Brightness

@@ -41,7 +41,7 @@ const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <AttributeDefinitions><Attributes>
   <Attribute Name="Dimmer"/><Attribute Name="ColorAdd_R"/><Attribute Name="ColorAdd_G"/><Attribute Name="ColorAdd_B"/>
 </Attributes></AttributeDefinitions>
-<Geometries><Geometry Name="Body"><Beam Name="Beam" LuminousFlux="3000" PowerConsumption="90"/></Geometry></Geometries>
+<Geometries><Geometry Name="Body"/></Geometries>
 <DMXModes>
   <DMXMode Name="RGB" Geometry="Body"><DMXChannels>${channel(1, 'ColorAdd_R')}${channel(2, 'ColorAdd_G')}${channel(3, 'ColorAdd_B')}</DMXChannels></DMXMode>
   <DMXMode Name="Dimmer RGB" Geometry="Body"><DMXChannels>${channel('1,2', 'Dimmer')}${channel(3, 'ColorAdd_R')}${channel(4, 'ColorAdd_G')}${channel(5, 'ColorAdd_B')}</DMXChannels></DMXMode>
@@ -57,7 +57,7 @@ check('mode by place, kept by name', fixture.modeName, 'Dimmer RGB');
 check('one row per address', fixture.channels.length, 5);
 check('row names', fixture.channels.map((c) => c.name), ['Dimmer', 'Dimmer fine', 'Red', 'Green', 'Blue']);
 check('fine byte is a row of its own', fixture.channels.map((c) => c.isFine), [false, true, false, false, false]);
-check('not a moving head', fixture.category, 'Other');
+check('no beam: nothing to draw', fixture.category, 'Other');
 fixture.setChannel(2, 200);
 check('value held as value.DMX', fixture.channels[2].value.DMX, 200);
 check('the show saves the mode by name', fixture.showData.mode, 'Dimmer RGB');

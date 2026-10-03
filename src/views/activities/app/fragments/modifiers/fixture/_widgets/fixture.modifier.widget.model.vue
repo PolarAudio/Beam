@@ -456,7 +456,7 @@ export default {
       const narrow = inputs.minAngle;
       const wide = inputs.maxAngle;
       if (narrow && wide && narrow !== wide) spec.push({ label: 'Zoom', value: `${narrow}° – ${wide}°` });
-      if (inputs.lumens && narrow && wide && inputs.category === 'Moving Head') {
+      if (inputs.lumens && narrow && wide && ['Moving Head', 'Static'].includes(inputs.category)) {
         spec.push(peakFact(inputs.lumens, narrow, wide));
       }
       if (inputs.panSpan) spec.push({ label: 'Pan / tilt', value: `${inputs.panSpan}° / ${inputs.tiltSpan || 0}°` });

@@ -2222,14 +2222,14 @@ class Show extends EventEmitter {
     all.forEach((entry) => {
       const maker = fold(entry.manufacturer);
       const match = named.find(({ name }) => name && (maker === name || maker.startsWith(`${name} `)));
-      // Typed and marked as an OFL profile is: GDTF drives moving heads only
-      // so far, and the rest patch and draw nothing.
+      // Typed and marked as an OFL profile is: GDTF draws moving heads and
+      // static lights so far, and the rest patch and draw nothing.
       const row = {
         file: entry.key,
         name: entry.name,
         manufacturer: entry.key.split('/')[0],
         category: entry.category || 'unreadable file',
-        supported: entry.category === 'Moving Head',
+        supported: entry.category === 'Moving Head' || entry.category === 'Static',
         gdtf: true,
         fixtureTypeId: entry.fixtureTypeId || null,
         revision: entry.revision || null,

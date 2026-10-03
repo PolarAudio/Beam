@@ -237,6 +237,22 @@ export function isPlaceholderBeam(beam) {
 }
 
 /**
+ * Whether a fixture type pans or tilts: a Pan or Tilt function in any of its
+ * modes, or an Axis anywhere in its geometry. Not every file models the yoke
+ * and head as axes -- Martin's are plain geometry -- so the channels count as
+ * much as the geometry.
+ *
+ * @param {Object} type a fixture type
+ * @returns {Boolean}
+ */
+export function moves(type) {
+  const axis = (g) => g.type === 'Axis' || g.children.some(axis);
+  if (type.geometries.some(axis)) return true;
+  return type.modes.some((mode) => mode.channels.some((c) => c.logicalChannels
+    .some((l) => l.functions.some((f) => f.attribute === 'Pan' || f.attribute === 'Tilt'))));
+}
+
+/**
  * The moving head's inputs from a fixture type in one mode.
  *
  * @param {Object} type a fixture type
@@ -251,11 +267,9 @@ export function headInputs(type, mode) {
   // describe one emitter twice -- as a compound beam for one mode and as
   // pixels for another -- so beams outside the mode are not this fixture.
   const beams = [];
-  let axes = 0;
   const root = type.index.geometry.get(mode.geometry) || type.geometries[0] || null;
   const visit = (geometry) => walkGeometry(geometry, (g) => {
     if (g.beam) beams.push(g.beam);
-    if (g.type === 'Axis') axes += 1;
     if (g.type === 'GeometryReference') {
       const template = type.index.geometry.get(g.geometry);
       if (template) visit(template);
@@ -309,10 +323,12 @@ export function headInputs(type, mode) {
     return m && m.height > 0 ? m.height : 0;
   };
   const height = heightOf(top) + heightOf(yoke);
+  let category = 'Other';
+  // A light that pans or tilts is a moving head in every mode, including one
+  // that leaves pan and tilt out; a light that does neither is static.
+  if (beams.length) category = moves(type) ? 'Moving Head' : 'Static';
   return {
-    // A head that pans or tilts. Not every file models the yoke and head as
-    // axes -- Martin's are plain geometry -- so the channels decide.
-    category: (pan || tilt || axes > 0) && beams.length ? 'Moving Head' : 'Other',
+    category,
     minAngle: zoom ? zoom[0] : fixed,
     maxAngle: zoom ? zoom[1] : fixed,
     lumens: lumens || null,
@@ -336,7 +352,8 @@ export function headInputs(type, mode) {
  * fixture list shows and the one a placed fixture takes.
  *
  * @param {Object} type a fixture type
- * @returns {String} 'Moving Head' or 'Other'
+ * @returns {String} 'Moving Head', 'Static', or 'Other' for a type that
+ *   gives no light
  */
 export function fixtureCategory(type) {
   return headInputs(type, type.modes[0] || { channels: [] }).category;

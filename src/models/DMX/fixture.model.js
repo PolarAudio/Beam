@@ -110,7 +110,13 @@ const FINE_CHANNEL_TERMINOLOGY = 'Fine';
  */
 const FIXTURE_TYPES = {
   MOVING_HEAD: 'Moving Head',
+  // A light that neither pans nor tilts; drawn by the moving head's renderer
+  // standing still.
+  STATIC: 'Static',
 };
+
+/** Categories the moving head's renderer draws. */
+const HEAD_CATEGORIES = [FIXTURE_TYPES.MOVING_HEAD, FIXTURE_TYPES.STATIC];
 
 /** Fallback bulb colour temperature, for profiles that omit one. */
 const DEFAULT_COLOR_TEMP = 8000;
@@ -1142,7 +1148,7 @@ class Fixture extends withTransform(Proxify) {
     const inputs = this.applyGdtfMode();
     this.category = inputs.category;
     this.wheels = wheelsForHead(type);
-    if (inputs.category === FIXTURE_TYPES.MOVING_HEAD) {
+    if (HEAD_CATEGORIES.includes(inputs.category)) {
       this.createMovingHead({
         minAngle: inputs.minAngle || 10,
         maxAngle: inputs.maxAngle || 25,
@@ -1199,8 +1205,10 @@ class Fixture extends withTransform(Proxify) {
       ...spec,
       colorWheel: spec.wheels && spec.wheels['Color Wheel'] ? spec.wheels['Color Wheel'].slots : [],
       intensity: 0.0,
-      pan: 128,
-      tilt: 128,
+      // At the centre of its travel, where the yoke and head are not turned;
+      // a light that neither pans nor tilts stays there.
+      pan: (spec.maxPan || 0) / 2,
+      tilt: (spec.maxTilt || 0) / 2,
     });
     movingHead.position = this._position;
     movingHead.rotation = this._rotation;
@@ -1679,7 +1687,7 @@ class Fixture extends withTransform(Proxify) {
     const model = instance._3DModel;
     if (model instanceof LedBar) {
       LedBar.deleteInstance(model);
-    } else if (instance.category === FIXTURE_TYPES.MOVING_HEAD) {
+    } else if (HEAD_CATEGORIES.includes(instance.category)) {
       MovingHead.deleteInstance(model);
     } else if (model && model.constructor
       && typeof model.constructor.deleteInstance === 'function') {

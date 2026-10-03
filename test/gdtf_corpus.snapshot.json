@@ -730,7 +730,7 @@
    },
    "Pixels RGB": {
     "inputs": {
-     "category": "Other",
+     "category": "Moving Head",
      "lumens": 10193.5,
      "power": 1480,
      "zoom": [
@@ -860,7 +860,7 @@
    },
    "Pixels RGBW": {
     "inputs": {
-     "category": "Other",
+     "category": "Moving Head",
      "lumens": 10193.5,
      "power": 1480,
      "zoom": [
@@ -1111,7 +1111,7 @@
   "modes": {
    "5ch(Default)": {
     "inputs": {
-     "category": "Other",
+     "category": "Static",
      "lumens": 1000,
      "power": 1000,
      "zoom": [
@@ -1135,7 +1135,7 @@
    },
    "6ch (Direct)": {
     "inputs": {
-     "category": "Other",
+     "category": "Static",
      "lumens": 1000,
      "power": 1000,
      "zoom": [
@@ -1160,7 +1160,7 @@
    },
    "3ch(RGB)": {
     "inputs": {
-     "category": "Other",
+     "category": "Static",
      "lumens": 1000,
      "power": 1000,
      "zoom": [
@@ -1182,7 +1182,7 @@
    },
    "1ch": {
     "inputs": {
-     "category": "Other",
+     "category": "Static",
      "lumens": 1000,
      "power": 1000,
      "zoom": [
@@ -1252,7 +1252,7 @@
   "modes": {
    "01 CH": {
     "inputs": {
-     "category": "Other",
+     "category": "Static",
      "lumens": 11800,
      "power": 200,
      "zoom": [
@@ -1272,7 +1272,7 @@
    },
    "2 CH": {
     "inputs": {
-     "category": "Other",
+     "category": "Static",
      "lumens": 11800,
      "power": 200,
      "zoom": [
@@ -1293,7 +1293,7 @@
    },
    "3 CH": {
     "inputs": {
-     "category": "Other",
+     "category": "Static",
      "lumens": 11800,
      "power": 200,
      "zoom": [
@@ -1315,7 +1315,7 @@
    },
    "4 CH  ": {
     "inputs": {
-     "category": "Other",
+     "category": "Static",
      "lumens": 11800,
      "power": 200,
      "zoom": [
@@ -1605,7 +1605,7 @@
   "modes": {
    "Mode 4 - 10ch": {
     "inputs": {
-     "category": "Other",
+     "category": "Static",
      "lumens": 6000,
      "power": 500,
      "zoom": [
@@ -2317,7 +2317,7 @@
   "modes": {
    "60-CH-Mode - 20 Pixel": {
     "inputs": {
-     "category": "Other",
+     "category": "Static",
      "lumens": 200000,
      "power": 20000,
      "zoom": [
@@ -2403,7 +2403,7 @@
   "modes": {
    "3 Channel": {
     "inputs": {
-     "category": "Other",
+     "category": "Static",
      "lumens": 10000,
      "power": 100,
      "zoom": [
@@ -2425,7 +2425,7 @@
    },
    "4 Channel": {
     "inputs": {
-     "category": "Other",
+     "category": "Static",
      "lumens": 10000,
      "power": 100,
      "zoom": [
@@ -2448,7 +2448,7 @@
    },
    "Extended mode": {
     "inputs": {
-     "category": "Other",
+     "category": "Static",
      "lumens": 10000,
      "power": 100,
      "zoom": [

@@ -3,11 +3,13 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { TDSLoader } from 'three/examples/jsm/loaders/TDSLoader.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { modelFiles } from '../../models/DMX/gdtf/gdtf_reader';
+import primitiveShape from './gdtf_primitives';
 
 /**
- * @file A moving head's body from its GDTF file: the meshes the file carries,
- * cut into the three parts a head moves -- what stays still, what pans, what
- * tilts -- and the frames that join them.
+ * @file A light's body from its GDTF file: the meshes the file carries, cut
+ * into the three parts a moving head moves -- what stays still, what pans,
+ * what tilts -- and the frames that join them. A static light is all base,
+ * with its lens wherever its first beam is.
  *
  * The file draws the fixture hanging, Z up, from the centre of the base
  * plate. Each geometry's Position places it relative to its parent, each mesh
@@ -16,10 +18,12 @@ import { modelFiles } from '../../models/DMX/gdtf/gdtf_reader';
  * in. A `.glb` is Y-up, as glTF is, and is turned onto Z first; a `.3ds` is
  * Z-up already.
  *
- * A geometry with no mesh file is drawn as its primitive: a cube, cylinder
- * or sphere as that shape; any other primitive as a box of its size hanging
- * from its suspension point. A light-emitting geometry's own model is left
- * out, because the head draws its lens itself.
+ * A moving head with no mesh at all is no body: the head draws the shipped
+ * one, scaled to the height the file gives, as it does for a profile. There
+ * is no shipped static light, so a static light's geometries are drawn as
+ * their primitives, as is any geometry without a mesh in a file that has
+ * some. A light-emitting geometry's own model is left out, because the head
+ * draws its lens itself.
  */
 
 /** glTF's Y-up onto GDTF's Z-up: +90 degrees about X. */
@@ -62,30 +66,18 @@ function flatten(object) {
 /** A Model with no mesh file, as its primitive at unit size. */
 function primitiveOf(model) {
   if (!(model.length > 0 && model.width > 0 && model.height > 0)) return null;
-  let g;
-  switch (model.primitiveType) {
-    case 'Undefined': case 'Pigtail': return null;
-    case 'Cube': g = new THREE.BoxGeometry(1, 1, 1); break;
-    case 'Cylinder': g = new THREE.CylinderGeometry(0.5, 0.5, 1, 24).rotateX(Math.PI / 2); break;
-    case 'Sphere': g = new THREE.SphereGeometry(0.5, 16, 12); break;
-    // Base, Yoke, Head, Scanner, Conventional: a box hanging from its
-    // suspension point, the way the file draws those parts.
-    default: g = new THREE.BoxGeometry(1, 1, 1).translate(0, 0, -0.5); break;
-  }
-  const kept = new THREE.BufferGeometry();
-  const flat = g.toNonIndexed();
-  kept.setAttribute('position', flat.attributes.position);
-  kept.setAttribute('normal', flat.attributes.normal);
-  return kept;
+  return primitiveShape(model.primitiveType);
 }
 
 /**
  * A model's mesh, oriented Z-up and scaled to the Model's size about its own
- * origin, or null when there is nothing to draw.
+ * origin, as `{ geometry, fromFile }`: `fromFile` false for a primitive drawn
+ * in its place. Null when there is nothing to draw.
  */
 async function meshOf(model, files) {
   const found = modelFiles(files, model);
   let geometry = null;
+  let fromFile = false;
   try {
     if (found.gltf) {
       const gltf = await new GLTFLoader().parseAsync(bufferOf(files[found.gltf]), '');
@@ -99,7 +91,8 @@ async function meshOf(model, files) {
     console.warn(`[gdtf body] cannot read the mesh of ${model.name}: ${err.message}`);
     geometry = null;
   }
-  if (!geometry) geometry = primitiveOf(model);
+  if (geometry) fromFile = true;
+  else geometry = primitiveOf(model);
   if (!geometry) return null;
   geometry.computeBoundingBox();
   const size = new THREE.Vector3();
@@ -110,7 +103,7 @@ async function meshOf(model, files) {
     scale(model.width, size.y),
     scale(model.height, size.z),
   );
-  return geometry;
+  return { geometry, fromFile };
 }
 
 /** The geometry names a mode's pan and tilt channels move. */
@@ -132,12 +125,14 @@ function axesOf(type) {
  *   lensFrame, lensRadius }`: three geometries, each in its own part's frame
  *   (null when the part has nothing to draw), the yoke's frame in the base's,
  *   the head's in the yoke's and the lens's in the head's, all in the file's
- *   hanging frame; null when the file has no meshes at all
+ *   hanging frame; null for a moving head whose file has no mesh of its own
  */
 export default async function buildBody(type, files) {
   const root = type.geometries[0];
   if (!root) return null;
   const axes = axesOf(type);
+  // A light that neither pans nor tilts: its lens is wherever its first beam is.
+  const still = !axes.pan && !axes.tilt;
   const placed = { base: [], yoke: [], head: [] };
   const worldOf = { pan: null, tilt: null, lens: null };
   let lensBeam = null;
@@ -150,7 +145,7 @@ export default async function buildBody(type, files) {
     let here = part;
     if (g.name === axes.pan) { here = 'yoke'; worldOf.pan = world.clone(); }
     if (g.name === axes.tilt) { here = 'head'; worldOf.tilt = world.clone(); }
-    if (g.beam && !worldOf.lens && here === 'head') {
+    if (g.beam && !worldOf.lens && (here === 'head' || still)) {
       worldOf.lens = world.clone();
       lensBeam = g.beam;
       lensModel = g.model ? type.index.model.get(g.model) : null;
@@ -167,14 +162,17 @@ export default async function buildBody(type, files) {
 
   const models = [...new Set(Object.values(placed).flat().map((p) => p.model))];
   const loaded = await Promise.all(models.map((model) => meshOf(model, files)));
-  const meshes = new Map(models.map((model, i) => [model, loaded[i]]));
+  // Primitives alone are not a moving head's shape; the shipped body is closer.
+  if (!still && !loaded.some((m) => m && m.fromFile)) return null;
+  const meshes = new Map(models.map((model, i) => [model, loaded[i] && loaded[i].geometry]));
   const pieces = {};
   Object.keys(placed).forEach((part) => {
     pieces[part] = placed[part]
       .filter((p) => meshes.get(p.model))
       .map((p) => ({ mesh: meshes.get(p.model), world: p.world }));
   });
-  if (!pieces.base.length && !pieces.yoke.length && !pieces.head.length) return null;
+  // A static light with nothing to draw still has its lens and beam.
+  if (!still && !pieces.base.length && !pieces.yoke.length && !pieces.head.length) return null;
 
   const identity = new THREE.Matrix4();
   const panWorld = worldOf.pan || identity;

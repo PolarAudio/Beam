@@ -2222,13 +2222,17 @@ class Show extends EventEmitter {
     all.forEach((entry) => {
       const maker = fold(entry.manufacturer);
       const match = named.find(({ name }) => name && (maker === name || maker.startsWith(`${name} `)));
+      // Typed and marked as an OFL profile is: GDTF drives moving heads only
+      // so far, and the rest patch and draw nothing.
       const row = {
         file: entry.key,
         name: entry.name,
         manufacturer: entry.key.split('/')[0],
-        category: 'GDTF',
-        supported: true,
+        category: entry.category || 'unreadable file',
+        supported: entry.category === 'Moving Head',
         gdtf: true,
+        fixtureTypeId: entry.fixtureTypeId || null,
+        revision: entry.revision || null,
       };
       if (match) {
         const model = fold(entry.name);
@@ -2244,7 +2248,29 @@ class Show extends EventEmitter {
         unfiled.get(entry.manufacturer).fixtures.push(row);
       }
     });
+    // Revisions kept side by side share a name; each says which it is, by
+    // its revision, or by its file where the revisions say the same.
+    const told = (rows) => {
+      const sameName = new Map();
+      rows.filter((row) => row.gdtf).forEach((row) => {
+        const key = fold(row.name);
+        if (!sameName.has(key)) sameName.set(key, []);
+        sameName.get(key).push(row);
+      });
+      sameName.forEach((same) => {
+        if (same.length < 2) return;
+        const revisions = same.map((row) => row.revision || '');
+        same.forEach((row, i) => {
+          const repeated = revisions.indexOf(revisions[i]) !== i
+            || revisions.lastIndexOf(revisions[i]) !== i;
+          const which = !repeated && row.revision ? row.revision : row.file.split('/').pop();
+          row.name = `${row.name} · ${which}`;
+        });
+      });
+    };
     const byName = (a, b) => String(a.name).localeCompare(String(b.name));
+    folders.forEach((folder) => told(folder.fixtures));
+    unfiled.forEach((folder) => told(folder.fixtures));
     folders.forEach((folder) => folder.fixtures.sort(byName));
     return { folders, unfiled: [...unfiled.values()] };
   }

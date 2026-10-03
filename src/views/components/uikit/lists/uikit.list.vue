@@ -1,14 +1,20 @@
 <template>
   <div class="uikit_list">
-    <uk-txt-input
+    <!-- The owner's filter buttons sit after the search box, on its line. -->
+    <div
       v-if="filterable"
-      v-model="searchString"
-      :disabled="disabled"
-      :outlined="false"
-      auto-update
-      class="uikit_list_searchbox"
-      :placeholder="'Search items'"
-    />
+      class="uikit_list_search"
+    >
+      <uk-txt-input
+        v-model="searchString"
+        :disabled="disabled"
+        :outlined="false"
+        auto-update
+        class="uikit_list_searchbox"
+        :placeholder="'Search items'"
+      />
+      <slot name="filters" />
+    </div>
     <!-- `band`: a margin round the rows and room below them, where a press
          starts a band selection rather than landing on a row. -->
     <div
@@ -119,6 +125,8 @@
   </div>
 </template>
 <script>
+import { searchWords, matchesWords } from '@/plugins/word_search';
+
 /**
  * A row's key: the id its owner gave it, or its name where it has none. A
  * child without an id is keyed under its parent, so two folders can each hold
@@ -165,8 +173,16 @@ export default {
     disabled: Boolean,
     /** Whether Delete and Backspace report the selection for deletion */
     deletable: Boolean,
-    /** Whether a search box filters the rows by name */
+    /**
+     * Whether a search box filters the rows by name: every word, in any
+     * order. A row with `unfiltered` set is shown as given whatever the search.
+     */
     filterable: Boolean,
+    /** The search box's text, when the owner wants to read or set it (`v-model:search`). */
+    search: {
+      type: String,
+      default: undefined,
+    },
     /** Whether rows may be dragged to a new place in the list */
     draggable: Boolean,
     /**
@@ -208,11 +224,11 @@ export default {
     /** Only one row open at a time, sharing the height between open rows */
     accordion: Boolean,
   },
-  emits: ['unfold', 'focused', 'highlight', 'select', 'reorder', 'delete'],
+  emits: ['unfold', 'focused', 'highlight', 'select', 'reorder', 'delete', 'update:search'],
   data() {
     return {
       /** The search box's text. */
-      searchString: '',
+      searchString: this.search || '',
       /** Highlighted keys, when the owner does not hold them. */
       ownHighlight: [],
       /** Selected key, when the owner does not hold it. */
@@ -276,15 +292,21 @@ export default {
      * @returns {Array<Object>} `{ key, value, children, opened? }`
      */
     rows() {
-      const search = this.searchString.toLowerCase();
-      if (!search) return this.allRows;
-      const matches = (value) => (value.name || '').toLowerCase().replace('-', ' ').indexOf(search) > -1;
+      const words = searchWords(this.searchString);
+      if (!words.length) return this.allRows;
       return this.allRows.flatMap((row) => {
+        // A row that answers the search itself, already narrowed by its owner.
+        if (row.value.unfiltered) return [{ ...row, opened: true }];
+        // A folder matched by its own name shows whole, as it is.
+        if (matchesWords(words, row.value.name)) return [row];
         if (row.children) {
-          const found = row.children.filter((child) => matches(child.value));
+          // A child is read with its folder's name, so "maker model" finds a
+          // model filed under its maker.
+          const found = row.children
+            .filter((child) => matchesWords(words, row.value.name, child.value.name));
           if (found.length) return [{ ...row, children: found, opened: true }];
         }
-        return matches(row.value) ? [row] : [];
+        return [];
       });
     },
     /** @returns {Set} highlighted keys, the owner's or the list's own */
@@ -308,6 +330,12 @@ export default {
     autoSelect(index) {
       const row = this.rows[parseInt(index, 10)];
       if (row) this.selectOnly(row);
+    },
+    search(text) {
+      if (text !== undefined && text !== this.searchString) this.searchString = text;
+    },
+    searchString(text) {
+      this.$emit('update:search', text);
     },
   },
   mounted() {
@@ -722,6 +750,25 @@ export default {
 </style>
 
 <style scoped>
+.uikit_list_search {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.uikit_list_searchbox {
+  flex: 1;
+  min-width: 0;
+}
+/* Filter buttons stand as tall as the search box beside them. */
+.uikit_list_search :deep(.uikit_button.icon_only) {
+  width: 25px;
+  min-width: 25px;
+  height: 25px;
+}
+.uikit_list_search :deep(.uikit_button.icon_only .uikit_button_icon) {
+  width: 15px !important;
+  height: 15px !important;
+}
 .uikit_list {
   display: flex;
   flex-direction: column;

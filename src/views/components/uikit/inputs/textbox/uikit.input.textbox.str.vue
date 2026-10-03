@@ -16,7 +16,7 @@
         v-model="content"
         class="uikit_txt_input_textbox"
         :disabled="disabled || readonly"
-        type="text"
+        :type="password ? 'password' : 'text'"
         :placeholder="placeholder"
         @keydown.stop
         @keydown.enter="updateValue"
@@ -75,6 +75,10 @@ export default {
      * Whether or not the input should be read-only
      */
     readonly: Boolean,
+    /**
+     * Whether what is typed is hidden, as a password is
+     */
+    password: Boolean,
     /**
      * Whether or not to apply alternative outlined styling to the input
      */

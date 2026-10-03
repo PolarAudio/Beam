@@ -46,6 +46,7 @@
       :detail="confirmation.detail"
       :yes="confirmation.yes"
       :no="confirmation.no"
+      :also="confirmation.also"
       @answer="answerConfirmation"
     />
   </uk-flex>
@@ -125,6 +126,7 @@ export default {
         detail: '',
         yes: 'yes',
         no: 'no',
+        also: '',
         resolve: null,
       },
       /**
@@ -230,13 +232,13 @@ export default {
       // A question still open when another arrives is answered no, rather
       // than left waiting forever for a popup that has moved on.
       if (this.confirmation.resolve) this.confirmation.resolve(false);
-      Object.assign(this.confirmation, question, { state: true });
+      Object.assign(this.confirmation, { also: '' }, question, { state: true });
     },
     /**
      * Hands the answer to whoever asked.
      *
      * @public
-     * @param {Boolean} yes
+     * @param {Boolean|String} yes true, false, or 'also'
      */
     answerConfirmation(yes) {
       const { resolve } = this.confirmation;

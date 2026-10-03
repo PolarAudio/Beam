@@ -31,6 +31,7 @@ import projectexport from './projectexport';
 import videorecorder from './videorecorder';
 import environmentstore from './environmentstore';
 import gdtfstore from './gdtfstore';
+import gdtfshare from './gdtfshare';
 import fileexport from './fileexport';
 
 // GPU timer queries are disabled by default because precise timing is a
@@ -531,6 +532,23 @@ function setupLibrary() {
   // Takes a path, so a file dropped on the window imports the same way as a
   // picked one.
   ipcMain.handle('library:importGdtf', (event, source, options) => gdtfstore.importFile(source, options));
+  ipcMain.handle('library:removeGdtf', (event, key) => {
+    const result = gdtfstore.removeFile(key);
+    if (result.ok) gdtfshare.recordImport(key, null);
+    return result;
+  });
+  ipcMain.handle('library:gdtfMarks', () => gdtfstore.marks());
+  ipcMain.handle('library:setGdtfBad', (event, what, bad) => gdtfstore.setBad(what, !!bad));
+
+  // GDTF Share. The account goes in and never comes back out: the renderer
+  // only learns whether one is stored and whose it is.
+  ipcMain.handle('gdtfShare:status', () => gdtfshare.status());
+  ipcMain.handle('gdtfShare:saveAccount', (event, user, password) => gdtfshare.saveAccount(user, password));
+  ipcMain.handle('gdtfShare:forgetAccount', () => gdtfshare.forgetAccount());
+  ipcMain.handle('gdtfShare:list', (event, refresh) => gdtfshare.list(!!refresh));
+  ipcMain.handle('gdtfShare:download', (event, rid, hint) => gdtfshare.download(rid, hint));
+  ipcMain.handle('gdtfShare:imported', () => gdtfshare.imported());
+  ipcMain.handle('gdtfShare:recordImport', (event, id, rid) => gdtfshare.recordImport(id, rid));
 }
 
 /**

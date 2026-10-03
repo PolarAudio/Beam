@@ -2,6 +2,9 @@
 import fs from 'fs';
 import path from 'path';
 import { unzipSync, strFromU8 } from 'fflate';
+import { DOMParser } from '@xmldom/xmldom';
+import readGdtf from '@/models/DMX/gdtf/gdtf_reader';
+import { fixtureCategory } from '@/models/DMX/gdtf/fixture_parts';
 import library from './library';
 
 /**
@@ -14,7 +17,15 @@ import library from './library';
  * Nothing in it is rewritten. The file is the fixture's definition, and a
  * definition is never edited -- a newer revision replaces it whole. The
  * renderer reads the bytes over `library://profiles/...`; here only enough of
- * each file is read to list it: its name, manufacturer and fixture type ID.
+ * each file is read to list it: its name, manufacturer, fixture type ID and
+ * revision, and its type, which takes reading the whole file the way the
+ * renderer does.
+ *
+ * Revisions of one fixture type can sit side by side, each its own file and
+ * key, so a show keeps the revision it was built with. A file, or a GDTF
+ * Share revision, can be marked bad, which hides it from Add to Show until it
+ * is asked to show marked ones; the marks live beside the files, in
+ * `gdtf-marks.json`.
  *
  * A fixture's key is `<manufacturer folder>/<file name without .gdtf>`. The
  * file name, not the fixture name, because two revisions of one fixture are
@@ -42,8 +53,9 @@ function unescapeXml(text) {
  * parsing the rest.
  *
  * @param {Uint8Array} bytes the .gdtf file
- * @returns {Object|null} `{ name, manufacturer, fixtureTypeId, dataVersion }`,
- *   or null when the bytes are not a GDTF file
+ * @returns {Object|null} `{ name, manufacturer, fixtureTypeId, dataVersion,
+ *   revision }`, or null when the bytes are not a GDTF file; `revision` is
+ *   the text of the file's last Revision, as written
  */
 function peek(bytes) {
   let files;
@@ -62,15 +74,35 @@ function peek(bytes) {
     const m = new RegExp(`\\b${name}="([^"]*)"`).exec(attributes);
     return m ? unescapeXml(m[1]) : '';
   };
+  const revisions = [...xml.matchAll(/<Revision\b([^>]*)>/g)];
+  const last = revisions.length ? revisions[revisions.length - 1][1] : '';
   return {
     name: read(tag[1], 'Name'),
     manufacturer: read(tag[1], 'Manufacturer'),
     fixtureTypeId: read(tag[1], 'FixtureTypeID') || null,
     dataVersion: read(root[1], 'DataVersion') || null,
+    revision: read(last, 'Text').trim() || null,
   };
 }
 
-/** Peeks at a file on disk, through the cache. */
+/**
+ * What a fixture type is -- a moving head or not -- by the same reading and
+ * the same rule as a placed fixture, so the list and the fixture agree.
+ *
+ * @param {Uint8Array} bytes the .gdtf file
+ * @returns {String|null} null when the file cannot be read
+ */
+function categoryOf(bytes) {
+  try {
+    const parseXml = (s) => new DOMParser().parseFromString(s, 'text/xml');
+    return fixtureCategory(readGdtf(bytes, { parseXml }).fixtureType);
+  } catch (err) {
+    console.error(`[gdtf] cannot read the fixture type: ${err.message}`);
+    return null;
+  }
+}
+
+/** Peeks at a file on disk, through the cache, with its type. */
 function peekFile(file) {
   let stat;
   try {
@@ -82,7 +114,9 @@ function peekFile(file) {
   if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) return cached.info;
   let info = null;
   try {
-    info = peek(new Uint8Array(fs.readFileSync(file)));
+    const bytes = new Uint8Array(fs.readFileSync(file));
+    info = peek(bytes);
+    if (info) info.category = categoryOf(bytes);
   } catch (err) {
     console.error(`[gdtf] cannot read ${file}: ${err.message}`);
   }
@@ -95,13 +129,56 @@ function profilesRoot(base) {
   return path.join(base || library.libraryRoot(), PROFILES_DIR);
 }
 
+/** Where the bad marks are kept: beside the files they judge. */
+const marksFile = () => path.join(profilesRoot(), 'gdtf-marks.json');
+
+/**
+ * Files and Share revisions marked bad.
+ *
+ * @returns {Object} `{ files, revisions }`: library keys, and GDTF Share
+ *   revision ids, each to the time it was marked
+ */
+function marks() {
+  try {
+    const read = JSON.parse(fs.readFileSync(marksFile(), 'utf8')) || {};
+    return { files: read.files || {}, revisions: read.revisions || {} };
+  } catch (err) {
+    return { files: {}, revisions: {} };
+  }
+}
+
+/**
+ * Marks a file, a Share revision or both bad, or clears the mark.
+ *
+ * @param {Object} what `{ key, rid }`, either may be missing
+ * @param {Boolean} bad
+ * @returns {Object} every mark, as `marks` gives them
+ */
+function setBad(what, bad) {
+  const { key, rid } = what || {};
+  const all = marks();
+  const at = Date.now();
+  if (key) {
+    if (bad) all.files[key] = at;
+    else delete all.files[key];
+  }
+  if (rid !== undefined && rid !== null) {
+    if (bad) all.revisions[rid] = at;
+    else delete all.revisions[rid];
+  }
+  fs.mkdirSync(profilesRoot(), { recursive: true });
+  fs.writeFileSync(marksFile(), JSON.stringify(all, null, 1));
+  return all;
+}
+
 /**
  * Every GDTF fixture in a library.
  *
  * @param {String} [base] a library root other than the user's, for the files
  *   an opened export carries
  * @returns {Array<Object>} `{ key, file, name, manufacturer, fixtureTypeId,
- *   dataVersion }`, `file` relative to the Profiles folder with `/` separators
+ *   dataVersion, revision, category }`, `file` relative to the Profiles
+ *   folder with `/` separators
  */
 function list(base) {
   const root = profilesRoot(base);
@@ -145,16 +222,18 @@ function pathFor(key, base) {
  *
  * Filed under its manufacturer, by its own file name. A file of the same
  * fixture type -- another revision, or the same one again -- is not replaced
- * without being asked: the first call reports it, and a second with `replace`
- * removes it and copies the new one in.
+ * without being asked: the first call reports it, and a second either
+ * `replace`s it, removing it and copying the new one in, or keeps both,
+ * the new one under a name of its own when the file name is taken.
  *
  * @param {String} source absolute path of the file to import
  * @param {Object} [options]
  * @param {Boolean} [options.replace] replace a file of the same fixture type
+ * @param {Boolean} [options.keepBoth] add it beside a file of the same type
  * @returns {Object} `{ ok, entry }`, `{ ok: false, conflict }` naming the file
  *   it would replace, or `{ ok: false, reason }`
  */
-function importFile(source, { replace = false } = {}) {
+function importFile(source, { replace = false, keepBoth = false } = {}) {
   if (path.extname(source).toLowerCase() !== EXTENSION) {
     return { ok: false, reason: `${path.basename(source)} is not a .gdtf file` };
   }
@@ -169,13 +248,18 @@ function importFile(source, { replace = false } = {}) {
 
   const folder = library.safeSegment(info.manufacturer || 'Unknown');
   const dir = path.join(profilesRoot(), folder);
-  const stem = library.safeSegment(path.basename(source, path.extname(source)));
+  const given = library.safeSegment(path.basename(source, path.extname(source)));
+  // Kept beside a file of the same name: the same file again, numbered.
+  let stem = given;
+  for (let n = 2; keepBoth && fs.existsSync(path.join(dir, `${stem}${EXTENSION}`)); n += 1) {
+    stem = `${given} (${n})`;
+  }
   const target = path.join(dir, `${stem}${EXTENSION}`);
 
   // The same fixture already filed, under any file name -- another revision
   // -- and whatever already has this file name.
   const file = `${folder}/${stem}${EXTENSION}`;
-  const conflicts = list().filter((e) => e.file === file
+  const conflicts = keepBoth ? [] : list().filter((e) => e.file === file
     || (e.fixtureTypeId && e.fixtureTypeId === info.fixtureTypeId));
   if (conflicts.length && !replace) {
     return {
@@ -192,9 +276,30 @@ function importFile(source, { replace = false } = {}) {
     console.error('[gdtf] import failed:', err.message);
     return { ok: false, reason: err.message };
   }
+  // A replaced file's mark goes with it; the new file is judged afresh.
+  conflicts.forEach((c) => { if (marks().files[c.key]) setBad({ key: c.key }, false); });
   return { ok: true, entry: { key: `${folder}/${stem}`, file, ...info } };
 }
 
+/**
+ * Removes a GDTF file from the user's library, and its mark.
+ *
+ * @param {String} key `<manufacturer folder>/<file stem>`
+ * @returns {Object} `{ ok }` or `{ ok: false, reason }`
+ */
+function removeFile(key) {
+  const file = pathFor(key);
+  if (!file) return { ok: false, reason: `${key} is not in the library` };
+  try {
+    fs.rmSync(file);
+  } catch (err) {
+    console.error('[gdtf] remove failed:', err.message);
+    return { ok: false, reason: err.message };
+  }
+  if (marks().files[key]) setBad({ key }, false);
+  return { ok: true };
+}
+
 export default {
-  peek, list, pathFor, importFile, profilesRoot, EXTENSION,
+  peek, list, pathFor, importFile, removeFile, marks, setBad, profilesRoot, EXTENSION,
 };

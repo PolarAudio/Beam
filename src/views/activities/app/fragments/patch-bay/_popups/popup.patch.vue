@@ -3,6 +3,7 @@
     v-model="state"
     :valid="submittable"
     :header="headerData"
+    :validate-txt="okText"
     @submit="submit"
     @input="update()"
   >
@@ -36,11 +37,28 @@
         />
         <uk-list
           v-else
+          v-model:search="search"
           class="fixture_list"
-          :items="items"
+          :items="listItems"
+          :selected-id="activeKind === 'fixtures' ? selectedRowId : undefined"
           filterable
           @select="selectItem"
-        />
+        >
+          <template #filters>
+            <uk-button
+              v-if="activeKind === 'fixtures'"
+              icon="hide"
+              icon-only
+              square
+              toggleable
+              :value="false"
+              :model-value="showBad"
+              color="var(--accent-blue)"
+              :label="showBad ? 'Hide fixtures marked bad' : 'Show fixtures marked bad'"
+              @click="toggleShowBad"
+            />
+          </template>
+        </uk-list>
         <h4
           v-if="activeKind !== 'objects' && !items.length"
           class="kind_empty"
@@ -89,6 +107,21 @@
         class="patch_form"
       >
         <div style="padding: 10px">
+          <share-panel
+            v-if="sharePanel"
+            :mode="sharePanel"
+            :share="shareInfo"
+            :fixture="sharePanel === 'library' ? newerOnShare(selectedItem) : fixture.share"
+            :entry="sharePanel === 'library' ? selectedItem : null"
+            :bad="selectedBad"
+            :busy="loading"
+            @log-in="shareLogIn"
+            @log-out="shareLogOut"
+            @refresh="loadShare(true)"
+            @update="updateFromShare"
+            @mark-bad="markBad"
+            @remove="removeFromLibrary"
+          />
           <uk-flex
             :gap="8"
             class="patch_form_section"
@@ -341,15 +374,23 @@
 </template>
 
 <script>
+import { markRaw } from 'vue';
 import PopupMixin from '@/views/mixins/popup.mixin';
 import { DMX_UNIVERSE_LENGTH, channelAddress } from '@/models/DMX/patch.model';
 import { buildMadMapperFixture } from '@/models/DMX/generic/madmapper';
 import Fixture from '@/models/DMX/fixture.model';
 import { normaliseMatrixProfile } from '@/models/DMX/ofl_matrix';
+import importGdtfFiles from '@/plugins/gdtf_import';
+import confirm from '@/plugins/confirm';
+import { searchWords } from '@/plugins/word_search';
+import {
+  shareFixtures, searchFixtures, shareFixtureName, uploaderText, modesText,
+} from '@/models/DMX/gdtf/share_list';
 import CreateFixturePopup from './popup.create.fixture.vue';
 import CreateObjectPopup from './popup.create.object.vue';
 import ImportObjectPopup from './popup.import.object.vue';
 import ObjectBrowser from './object.browser.vue';
+import SharePanel from './share.panel.vue';
 import { generateMissing } from '@/plugins/visualizer/thumbnailer';
 
 /** How long the export button confirms for, in ms. */
@@ -370,6 +411,9 @@ const DEFAULT_FIXTURE_DATA = {
   loaded: false,
 };
 
+/** How many GDTF Share matches the list shows; a longer search narrows the rest. */
+const SHARE_SHOWN = 50;
+
 /** What the root objects are gathered under once folders exist. */
 const UNSORTED_FOLDER = 'Unsorted';
 
@@ -380,6 +424,7 @@ export default {
     CreateObjectPopup,
     ImportObjectPopup,
     ObjectBrowser,
+    SharePanel,
   },
   mixins: [PopupMixin],
   compatConfig: {
@@ -392,6 +437,14 @@ export default {
      */
     startAddress: {
       type: Number,
+      default: null,
+    },
+    /**
+     * A library fixture to open on, searched for and selected:
+     * `{ key, name }`, as a GDTF import leaves it.
+     */
+    reveal: {
+      type: Object,
       default: null,
     },
   },
@@ -441,6 +494,31 @@ export default {
       patchAddress: 0,
       patchError: false,
       loading: false,
+      /** The list's search box, which the GDTF Share group follows. */
+      search: '',
+      /** The fixture list row picked, and its id, which the list shows selected. */
+      selectedItem: null,
+      selectedRowId: null,
+      /**
+       * GDTF Share: whether an account can be stored and whose is, the
+       * revision list and when it was fetched, which revision of each fixture
+       * type was imported from it, and what last went wrong. Kept while the
+       * dialog is closed: the list is 13,000 revisions and changes slowly.
+       */
+      share: {
+        available: true,
+        user: null,
+        list: markRaw([]),
+        fetched: null,
+        imported: {},
+        error: '',
+      },
+      /** The library's GDTF fixtures, as the Share list is matched against. */
+      libraryGdtf: [],
+      /** GDTF files and Share revisions marked bad: `{ files, revisions }`. */
+      marks: { files: {}, revisions: {} },
+      /** Whether fixtures marked bad are listed. Kept while the dialog is closed. */
+      showBad: false,
     };
   },
   computed: {
@@ -451,6 +529,94 @@ export default {
      *
      * @type {Boolean}
      */
+    okText() {
+      return this.activeKind === 'fixtures' && this.fixture.share ? 'download and add' : 'ok';
+    },
+    /** Every fixture on the Share, marked against the library. */
+    shareAll() {
+      return shareFixtures(this.share.list, this.libraryGdtf, this.share.imported);
+    },
+    /** The Share fixtures the search finds that the library does not have. */
+    shareMatches() {
+      if (!searchWords(this.search).length) return [];
+      return searchFixtures(this.shareAll, this.search)
+        .filter((f) => !f.inLibrary && (this.showBad || !this.marks.revisions[f.latest.rid]));
+    },
+    /** The newer Share revision of each library file that has one, by key. */
+    newerByKey() {
+      const newer = new Map();
+      this.shareAll.forEach((f) => f.older.forEach((key) => newer.set(key, f)));
+      return newer;
+    },
+    /** Whether the row picked, from the library or the Share, is marked bad. */
+    selectedBad() {
+      if (this.fixture.share) return !!this.marks.revisions[this.fixture.share.latest.rid];
+      const item = this.selectedItem;
+      return !!(item && item.gdtf && this.marks.files[item.fixture]);
+    },
+    shareInfo() {
+      return {
+        available: this.share.available,
+        user: this.share.user,
+        fetched: this.share.fetched,
+        count: this.shareAll.length,
+        error: this.share.error,
+      };
+    },
+    /**
+     * The GDTF Share group under the library's matches, while there is a
+     * search: the login while no account is stored, else what the Share has
+     * that the library does not.
+     */
+    shareGroup() {
+      if (this.activeKind !== 'fixtures' || !window.gdtfShare) return null;
+      if (!searchWords(this.search).length) return null;
+      const note = (id, name, icon) => ({
+        id: `share/${id}`, name, icon, shareAccount: true,
+      });
+      let children;
+      if (!this.share.user) {
+        children = [note('login', 'Log in to search GDTF Share', 'key')];
+      } else if (!this.share.fetched) {
+        children = [note('nolist', this.share.error ? 'No list: see the error' : 'Fetching the list', 'undef')];
+      } else {
+        children = this.shareMatches.slice(0, SHARE_SHOWN).map((f) => {
+          const bad = !!this.marks.revisions[f.latest.rid];
+          const more = `${uploaderText(f)} · ${modesText(f.latest)}`;
+          return {
+            id: `share/${f.key}`,
+            name: `${f.manufacturer} ${shareFixtureName(f)}`,
+            icon: bad ? 'disabled' : 'fixture',
+            more: bad ? `marked bad · ${more}` : more,
+            share: f,
+          };
+        });
+        const rest = this.shareMatches.length - children.length;
+        if (rest > 0) children.push(note('more', `${rest} more: narrow the search`, 'help'));
+      }
+      return {
+        id: 'share',
+        name: 'On GDTF Share',
+        icon: 'library',
+        more: this.share.fetched ? `${this.shareMatches.length}` : '',
+        // Matched by the Share's own search above, and holding the login.
+        unfiltered: true,
+        shareAccount: true,
+        unfold: children,
+      };
+    },
+    listItems() {
+      return this.shareGroup ? [...this.items, this.shareGroup] : this.items;
+    },
+    /** What the GDTF Share panel shows for the row picked, or null for none. */
+    sharePanel() {
+      if (this.activeKind !== 'fixtures') return null;
+      if (this.fixture.share) return 'fixture';
+      const item = this.selectedItem;
+      if (item && item.shareAccount) return 'account';
+      if (item && item.gdtf) return 'library';
+      return null;
+    },
     formEnabled() {
       return (this.fixture.loaded || !!this.selectedStructure || !!this.selectedObject)
         && !this.loading;
@@ -606,6 +772,10 @@ export default {
         this.init();
       }
     },
+    // An import while the dialog is already open.
+    reveal(reveal) {
+      if (this.state && reveal) this.revealFixture(reveal);
+    },
   },
   mounted() {
     this.init();
@@ -629,6 +799,13 @@ export default {
       this.chStop = 0;
       this.patchAddress = this.startAddress || 0;
       this.patchError = false;
+      this.selectedItem = null;
+      this.selectedRowId = null;
+      this.search = '';
+      this.libraryGdtf = this.$show.gdtfFixtures || [];
+      this.loadMarks();
+      this.loadShare(false);
+      if (this.reveal) this.revealFixture(this.reveal);
     },
     /**
      * Adds whatever is selected, in as many copies as asked for.
@@ -643,6 +820,10 @@ export default {
       }
       if (this.activeKind === 'objects') {
         await this.placeObjects();
+        return;
+      }
+      if (this.fixture.share) {
+        await this.addFromShare();
         return;
       }
       this.patchFixtures();
@@ -823,7 +1004,6 @@ export default {
      * @returns {String} icon name
      */
     entryIcon(entry) {
-      if (entry.gdtf) return 'movinghead';
       if (entry.generated) return 'ledbar';
       return entry.supported ? 'movinghead' : 'undef';
     },
@@ -886,6 +1066,303 @@ export default {
       this.state = false;
       this.update();
     },
+    /**
+     * The account and, once, the revision list; again when `refresh`.
+     *
+     * @public
+     * @async
+     * @param {Boolean} refresh fetch the list from the Share
+     */
+    async loadShare(refresh) {
+      if (!window.gdtfShare) return;
+      const status = await window.gdtfShare.status();
+      this.share.available = status.available;
+      this.share.user = status.user;
+      if (!status.user) return;
+      if (this.share.fetched && !refresh) return;
+      this.loading = refresh;
+      const [result, imported] = await Promise.all([
+        window.gdtfShare.list(refresh),
+        window.gdtfShare.imported(),
+      ]);
+      this.loading = false;
+      this.share.imported = imported || {};
+      if (!result.ok) {
+        this.share.error = result.error;
+        return;
+      }
+      this.share.list = markRaw(result.list);
+      this.share.fetched = result.fetched;
+      // A saved list shown because the Share could not be reached.
+      this.share.error = result.error ? `Showing the saved list: ${result.error}` : '';
+      // The library's rows say which of them the Share has newer.
+      if (this.activeKind === 'fixtures') this.items = this.buildItems('fixtures');
+    },
+    async shareLogIn(user, password) {
+      this.loading = true;
+      this.share.error = '';
+      const result = await window.gdtfShare.saveAccount(user, password);
+      this.loading = false;
+      if (!result.ok) {
+        this.share.error = result.error;
+        return;
+      }
+      await this.loadShare(true);
+    },
+    async shareLogOut() {
+      await window.gdtfShare.forgetAccount();
+      Object.assign(this.share, {
+        user: null, list: markRaw([]), fetched: null, imported: {}, error: '',
+      });
+      this.items = this.buildItems('fixtures');
+    },
+    /**
+     * The newer Share revision of a library row, or null.
+     *
+     * @public
+     * @param {Object} item a fixture list row
+     * @returns {Object|null} from `shareFixtures`
+     */
+    newerOnShare(item) {
+      if (!item || !item.gdtf) return null;
+      return this.newerByKey.get(item.fixture) || null;
+    },
+    /**
+     * Reads the bad marks, and relists the library by them.
+     *
+     * @public
+     * @async
+     */
+    async loadMarks() {
+      if (!window.library || !window.library.gdtfMarks) return;
+      this.marks = await window.library.gdtfMarks();
+      if (this.activeKind === 'fixtures') this.items = this.buildItems('fixtures');
+    },
+    toggleShowBad() {
+      this.showBad = !this.showBad;
+      this.items = this.buildItems('fixtures');
+    },
+    /**
+     * Marks what is picked bad, or clears the mark: a library file, with the
+     * Share revision it was imported as, or a Share fixture's revision. A
+     * marked one leaves the list while marked ones are hidden, and the form
+     * with it.
+     *
+     * @public
+     * @async
+     * @param {Boolean} bad
+     */
+    async markBad(bad) {
+      const item = this.selectedItem;
+      if (!this.fixture.share && !(item && item.gdtf)) return;
+      const what = this.fixture.share
+        ? { rid: this.fixture.share.latest.rid }
+        : { key: item.fixture, rid: this.share.imported[item.fixture] };
+      this.marks = await window.library.setGdtfBad(what, bad);
+      this.items = this.buildItems('fixtures');
+      if (bad && !this.showBad) {
+        this.selectedItem = null;
+        this.selectedRowId = null;
+        this.clearFixture();
+      }
+    },
+    /**
+     * Deletes the picked GDTF file from the library, after saying what it
+     * costs: the fixtures of it in this show, and in any saved show.
+     *
+     * @public
+     * @async
+     */
+    async removeFromLibrary() {
+      const item = this.selectedItem;
+      if (!item || !item.gdtf) return;
+      const used = this.$show.fixturePool.fixtures
+        .filter((f) => f.profileKey === item.fixture).length;
+      let inShow = '';
+      if (used === 1) inShow = '1 fixture in this show uses it. ';
+      else if (used > 1) inShow = `${used} fixtures in this show use it. `;
+      const yes = await confirm({
+        title: 'Remove from library',
+        message: `Remove ${item.name} from your library?`,
+        detail: `File: ${item.fixture.split('/').pop()}.gdtf\n${inShow}`
+          + 'Saved shows that use it lose those fixtures when they are opened.',
+        yes: 'Remove',
+        no: 'Keep',
+      });
+      if (!yes) return;
+      const result = await window.library.removeGdtf(item.fixture);
+      if (!result.ok) {
+        this.share.error = `Could not remove ${item.name}: ${result.reason}`;
+        return;
+      }
+      await this.$show.refreshGdtfFixtures();
+      this.libraryGdtf = this.$show.gdtfFixtures || [];
+      this.share.imported = await window.gdtfShare.imported();
+      this.marks = await window.library.gdtfMarks();
+      this.selectedItem = null;
+      this.selectedRowId = null;
+      this.clearFixture();
+      this.items = this.buildItems('fixtures');
+    },
+    /**
+     * Fills the form from what the Share lists about a fixture, so a mode and
+     * an address can be chosen before anything is downloaded. The channel
+     * counts are the Share's; the file decides once it is in.
+     *
+     * @public
+     * @param {Object} f from `shareFixtures`
+     */
+    selectShareFixture(f) {
+      const modes = (f.latest.modes || []).map((m) => ({
+        name: m.name,
+        channels: new Array(Math.max(0, Number(m.dmxfootprint) || 0)).fill(''),
+      }));
+      Object.assign(this.fixture, {
+        OFLData: null,
+        fixtureType: null,
+        modes: modes.length ? modes : [{}],
+        modeNames: modes.length ? modes.map((m) => m.name) : ['no modes listed'],
+        mode: 0,
+        name: shareFixtureName(f),
+        model: '',
+        manufacturer: f.manufacturer,
+        category: '',
+        universeAligned: false,
+        loaded: true,
+        share: f,
+      });
+      this.patchError = false;
+      this.autoPatch();
+    },
+    /** Empties the form's fixture, leaving position and the rest as typed. */
+    clearFixture() {
+      Object.assign(this.fixture, {
+        OFLData: null,
+        fixtureType: null,
+        modes: [{}],
+        modeNames: [NO_FIXTURE_STR],
+        mode: 0,
+        name: NO_FIXTURE_STR,
+        category: NO_FIXTURE_STR,
+        loaded: false,
+        share: null,
+      });
+      this.patchError = false;
+    },
+    /**
+     * Downloads a Share fixture's newest revision into the library.
+     *
+     * @public
+     * @async
+     * @param {Object} f from `shareFixtures`
+     * @param {String} [conflict] 'keepBoth' to add it beside a revision in the
+     *   library without asking; otherwise asked
+     * @returns {Promise<Object|null>} the library entry, or null when it did
+     *   not arrive
+     */
+    async downloadFromShare(f, conflict = null) {
+      this.share.error = '';
+      const r = f.latest;
+      const result = await window.gdtfShare.download(r.rid, {
+        manufacturer: r.manufacturer, fixture: r.fixture, revision: r.revision,
+      });
+      if (!result.ok) {
+        this.share.error = `Could not download ${r.manufacturer} ${r.fixture}: ${result.error}`;
+        return null;
+      }
+      const entries = await importGdtfFiles([result.path], this.$show, { conflict, reveal: false });
+      const took = entries.find((e) => String(e.fixtureTypeId || '').toUpperCase() === f.uuid)
+        || (entries.length === 1 ? entries[0] : null);
+      if (!took) return null;
+      this.share.imported = await window.gdtfShare.recordImport(took.key, r.rid);
+      this.libraryGdtf = this.$show.gdtfFixtures || [];
+      this.items = this.buildItems('fixtures');
+      return took;
+    },
+    /**
+     * Adds a fixture picked from the Share: downloads it, loads it as any
+     * library fixture loads, keeps the mode, name and address chosen, and
+     * places it.
+     *
+     * @public
+     * @async
+     */
+    async addFromShare() {
+      const f = this.fixture.share;
+      const form = {
+        name: this.fixture.name,
+        named: this.fixture.name !== shareFixtureName(f),
+        modeName: this.fixture.modeNames[this.fixture.mode],
+        modeIndex: this.fixture.mode,
+        address: this.patchAddress,
+      };
+      this.loading = true;
+      const entry = await this.downloadFromShare(f);
+      if (!entry) {
+        this.loading = false;
+        return;
+      }
+      const row = this.findGdtfRow(entry.key);
+      this.selectedItem = row;
+      this.selectedRowId = row ? row.id : null;
+      await this.loadGdtfFixture({ fixture: entry.key, name: entry.name });
+      this.loading = false;
+      if (!this.fixture.loaded) {
+        this.share.error = `${entry.manufacturer} ${entry.name} is in the library but cannot be read.`;
+        return;
+      }
+      const byName = this.fixture.modeNames.indexOf(form.modeName);
+      this.fixture.mode = byName >= 0 ? byName
+        : Math.min(form.modeIndex, this.fixture.modeNames.length - 1);
+      if (form.named) this.fixture.name = form.name;
+      this.patchAddress = form.address;
+      // Placed only where the file's own channel count still fits; otherwise
+      // the form shows why, with the fixture now in the library.
+      if (this.checkPatch()) this.patchFixtures();
+    },
+    /**
+     * Brings the Share's newer revision of the selected library fixture in
+     * beside it, so shows built on the one there keep it.
+     *
+     * @public
+     * @async
+     */
+    async updateFromShare() {
+      const f = this.newerOnShare(this.selectedItem);
+      if (!f) return;
+      this.loading = true;
+      const entry = await this.downloadFromShare(f, 'keepBoth');
+      this.loading = false;
+      if (!entry) return;
+      const row = this.findGdtfRow(entry.key);
+      if (row) await this.selectItem(row);
+    },
+    /**
+     * A GDTF fixture's row in the fixture list.
+     *
+     * @public
+     * @param {String} key
+     * @returns {Object|null}
+     */
+    findGdtfRow(key) {
+      const rows = this.items.flatMap((folder) => folder.unfold || []);
+      return rows.find((row) => row.gdtf && row.fixture === key) || null;
+    },
+    /**
+     * Opens on a library fixture: searched for, so it shows, and selected.
+     *
+     * @public
+     * @async
+     * @param {Object} reveal `{ key, name }`
+     */
+    async revealFixture({ key, name }) {
+      if (this.activeKind !== 'fixtures') this.selectKind('fixtures');
+      this.libraryGdtf = this.$show.gdtfFixtures || [];
+      this.items = this.buildItems('fixtures');
+      const row = this.findGdtfRow(key);
+      this.search = name || '';
+      if (row) await this.selectItem(row);
+    },
     async handleProfileCreated(key) {
       this.items = this.buildItems('fixtures');
       const [manufacturer, model] = key.split('/');
@@ -901,6 +1378,9 @@ export default {
       this.activeKind = id;
       this.selectedStructure = null;
       this.selectedObject = null;
+      this.selectedItem = null;
+      this.selectedRowId = null;
+      if (this.fixture.share) this.clearFixture();
       this.items = this.buildItems(id);
     },
     /**
@@ -1104,6 +1584,16 @@ export default {
     },
     async selectItem(item) {
       if (this.activeKind === 'fixtures') {
+        this.selectedItem = item || null;
+        this.selectedRowId = item && item.id !== undefined ? item.id : null;
+        if (item && item.share) {
+          this.selectShareFixture(item.share);
+          return;
+        }
+        if (item && item.shareAccount) {
+          this.clearFixture();
+          return;
+        }
         await this.loadFixture(item);
         return;
       }
@@ -1155,12 +1645,13 @@ export default {
     async loadGdtfFixture(item) {
       const type = await this.$show.loadGdtfType(item.fixture);
       if (!type) {
-        Object.assign(this.fixture, { name: item.name, loaded: false });
+        Object.assign(this.fixture, { name: item.name, loaded: false, share: null });
         return;
       }
       const [manufacturer, model] = item.fixture.split('/');
       const listing = Fixture.gdtfListing(type);
       Object.assign(this.fixture, {
+        share: null,
         OFLData: listing,
         fixtureType: type,
         modes: listing.modes,
@@ -1198,6 +1689,7 @@ export default {
         ? JSON.parse(JSON.stringify(generated))
         : normaliseMatrixProfile((await this.$http.get(`${import.meta.env.VITE_STATIC_URL}fixtures/${manufacturer.name}/${fixture}`)).data);
       Object.assign(this.fixture, {
+        share: null,
         OFLData: data,
         fixtureType: null,
         modes: data.modes,
@@ -1310,22 +1802,41 @@ export default {
      */
     prepareFixtures() {
       return this.$show.rawOFLFixtures.map((manufacturer) => ({
+        id: `folder/${manufacturer.name}`,
         name: manufacturer.name,
         icon: 'folder',
-        unfold: manufacturer.fixtures.map((entry) => ({
-          // The profile's own name, rather than its filename.
-          name: entry.name,
-          // Fixtures the visualizer has no 3D model for still patch and hold
-          // addresses, but draw nothing; the icon says which is which.
-          icon: this.entryIcon(entry),
-          more: entry.supported ? entry.category : `${entry.category} (not rendered)`,
-          // An entry under "This show" is not filed under a manufacturer folder
-          // and carries its own; everything else takes the folder's.
-          manufacturer: entry.manufacturer ? { name: entry.manufacturer } : manufacturer,
-          fixture: entry.file,
-          gdtf: !!entry.gdtf,
-        })),
-      }));
+        unfold: manufacturer.fixtures
+          .filter((entry) => this.showBad || !(entry.gdtf && this.marks.files[entry.file]))
+          .map((entry) => {
+            // An entry under "This show" is not filed under a manufacturer
+            // folder and carries its own; everything else takes the folder's.
+            const maker = entry.manufacturer ? { name: entry.manufacturer } : manufacturer;
+            const bad = entry.gdtf && !!this.marks.files[entry.file];
+            const more = [
+              bad ? 'marked bad' : null,
+              entry.supported ? entry.category : `${entry.category} (not rendered)`,
+              entry.gdtf && this.newerByKey.has(entry.file) ? 'newer on GDTF Share' : null,
+            ].filter(Boolean).join(' · ');
+            return {
+              id: `fixture/${manufacturer.name}/${entry.file}`,
+              // The profile's own name, rather than its filename.
+              name: entry.name,
+              // Fixtures the visualizer has no 3D model for still patch and
+              // hold addresses, but draw nothing; the icon says which is which.
+              icon: bad ? 'disabled' : this.entryIcon(entry),
+              more,
+              manufacturer: maker,
+              fixture: entry.file,
+              gdtf: !!entry.gdtf,
+              fixtureTypeId: entry.fixtureTypeId || null,
+              revision: entry.revision || null,
+            };
+          }),
+        // Whether the folder had fixtures before the marked ones were hidden.
+        filled: manufacturer.fixtures.length > 0,
+      }))
+        // A folder whose fixtures are all marked bad is not listed.
+        .filter((folder) => folder.unfold.length || !folder.filled);
     },
   },
 };

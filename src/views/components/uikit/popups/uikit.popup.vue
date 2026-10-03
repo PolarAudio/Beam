@@ -34,6 +34,8 @@
         :gap="8"
       >
         <uk-spacer />
+        <!-- Further answers, beside cancel and validate. -->
+        <slot name="actions" />
         <uk-button
           v-if="cancelable"
           :label="cancelTxt"

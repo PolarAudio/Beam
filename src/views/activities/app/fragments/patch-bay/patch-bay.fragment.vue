@@ -67,6 +67,7 @@
     />
     <patch-popup
       v-model="patchPopupDisplayState"
+      :reveal="revealFixture"
       @placed="selectPlaced"
     />
     <export-popup
@@ -119,6 +120,8 @@ export default {
       pool: this.$show.fixturePool,
       show: this.$show,
       patchPopupDisplayState: false,
+      /** A fixture just imported, for Add to Show to open on: `{ key, name }`. */
+      revealFixture: null,
       /**
        * Ids of items selected in the 3D view, mirrored into the list. Mixed:
        * a fixture is its numeric id, a structure the `structure:N` its row
@@ -266,6 +269,7 @@ export default {
     EventBus.on('copy_requested', this.copySelection);
     EventBus.on('paste_requested', this.pasteClipboard);
     EventBus.on('duplicate_requested', this.duplicateSelection);
+    EventBus.on('reveal_fixture', this.showImported);
     this.watchHeaderWidth();
   },
   beforeUnmount() {
@@ -274,6 +278,7 @@ export default {
     EventBus.off('copy_requested', this.copySelection);
     EventBus.off('paste_requested', this.pasteClipboard);
     EventBus.off('duplicate_requested', this.duplicateSelection);
+    EventBus.off('reveal_fixture', this.showImported);
     if (this.headerObserver) this.headerObserver.disconnect();
   },
   methods: {
@@ -858,6 +863,18 @@ export default {
      * @public
      */
     displayPatchPopup() {
+      this.revealFixture = null;
+      this.patchPopupDisplayState = true;
+    },
+    /**
+     * Opens Add to Show on a fixture just imported, so placing it is the
+     * next step rather than finding it.
+     *
+     * @public
+     * @param {Object} reveal `{ key, name }`
+     */
+    showImported(reveal) {
+      this.revealFixture = reveal;
       this.patchPopupDisplayState = true;
     },
   },

@@ -22,7 +22,7 @@ import translateOfl from './gdtf/ofl_to_gdtf';
 import DmxEngine from './gdtf/dmx_engine';
 import HeadDispatch from './gdtf/head_dispatch';
 import {
-  channelRows, headInputs, wheelsForHead,
+  channelRows, fixtureCategory, headInputs, wheelsForHead,
 } from './gdtf/fixture_parts';
 
 /**
@@ -75,7 +75,7 @@ function listingFor(type) {
   });
   return {
     name: type.name,
-    categories: [headInputs(type, type.modes[0] || { channels: [] }).category],
+    categories: [fixtureCategory(type)],
     modes,
     availableChannels,
     wheels: {},

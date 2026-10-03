@@ -270,6 +270,9 @@ contextBridge.exposeInMainWorld('library', {
    *   or `{ ok: false, reason }`
    */
   importGdtf: (source, options) => ipcRenderer.invoke('library:importGdtf', source, options),
+  removeGdtf: (key) => ipcRenderer.invoke('library:removeGdtf', key),
+  gdtfMarks: () => ipcRenderer.invoke('library:gdtfMarks'),
+  setGdtfBad: (what, bad) => ipcRenderer.invoke('library:setGdtfBad', what, bad),
   /**
    * The path of a file dropped on the window. The page cannot see paths; the
    * preload can, and hands over only this one.
@@ -278,6 +281,39 @@ contextBridge.exposeInMainWorld('library', {
    * @returns {String}
    */
   pathForFile: (file) => webUtils.getPathForFile(file),
+});
+
+/**
+ * GDTF Share. The account is stored by the main process, encrypted, and is
+ * never handed back: `status` says only whether one is stored and whose.
+ */
+contextBridge.exposeInMainWorld('gdtfShare', {
+  /** @returns {Promise<Object>} `{ available, user }` */
+  status: () => ipcRenderer.invoke('gdtfShare:status'),
+  /**
+   * Checks an account with GDTF Share and stores it if it is good.
+   *
+   * @returns {Promise<Object>} `{ ok, error }`
+   */
+  saveAccount: (user, password) => ipcRenderer.invoke('gdtfShare:saveAccount', user, password),
+  /** @returns {Promise<Object>} `{ ok }` */
+  forgetAccount: () => ipcRenderer.invoke('gdtfShare:forgetAccount'),
+  /**
+   * Every revision on the Share, cached unless `refresh`.
+   *
+   * @returns {Promise<Object>} `{ ok, list, fetched, error }`
+   */
+  list: (refresh) => ipcRenderer.invoke('gdtfShare:list', refresh),
+  /**
+   * Downloads a revision to a temporary .gdtf for the import.
+   *
+   * @returns {Promise<Object>} `{ ok, path, error }`
+   */
+  download: (rid, hint) => ipcRenderer.invoke('gdtfShare:download', rid, hint),
+  /** @returns {Promise<Object>} revision id imported, by fixture type ID */
+  imported: () => ipcRenderer.invoke('gdtfShare:imported'),
+  /** Notes a revision as imported. @returns {Promise<Object>} every record */
+  recordImport: (fixtureTypeId, rid) => ipcRenderer.invoke('gdtfShare:recordImport', fixtureTypeId, rid),
 });
 
 /**

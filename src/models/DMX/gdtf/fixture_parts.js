@@ -330,3 +330,14 @@ export function headInputs(type, mode) {
     bodyHeight: height > 0 ? height : null,
   };
 }
+
+/**
+ * What a fixture type is, as its first mode describes it: the type the
+ * fixture list shows and the one a placed fixture takes.
+ *
+ * @param {Object} type a fixture type
+ * @returns {String} 'Moving Head' or 'Other'
+ */
+export function fixtureCategory(type) {
+  return headInputs(type, type.modes[0] || { channels: [] }).category;
+}

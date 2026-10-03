@@ -440,6 +440,8 @@ let yokeMesh;
 let headMesh;
 let beamMesh;
 let capMesh;
+/** The lens faces a file draws as rectangles; the same slots as `capMesh`. */
+let rectCapMesh;
 let boundingBoxMesh;
 
 let camera_handle = null;
@@ -913,6 +915,8 @@ class Light {
     this._bodyScale = this._body ? 1 : Light.bodyScaleFor(data.bodyHeight);
     /** How wide the lens is against the shipped one's; see `mountBody`. */
     this._lensScale = this._bodyScale;
+    /** Whether the lens face is a rectangle rather than a disc. */
+    this._rectLens = false;
     /** Where the body reaches below the origin, and the pick box; see `mountBody`. */
     this._baseDepth = null;
     this._pickMatrix = null;
@@ -992,6 +996,8 @@ class Light {
     lensColor.b += LENS_DARK * (1 - lit);
     capMesh.setColorAt(this._id, lensColor);
     capMesh.instanceColor.needsUpdate = true;
+    rectCapMesh.setColorAt(this._id, lensColor);
+    rectCapMesh.instanceColor.needsUpdate = true;
   }
 
   /**
@@ -2252,6 +2258,7 @@ class Light {
     headMesh.count = instanceCount;
     beamMesh.count = instanceCount;
     capMesh.count = instanceCount;
+    rectCapMesh.count = instanceCount;
     boundingBoxMesh.count = instanceCount;
 
     scene_handle.add(this._dummy);
@@ -2372,8 +2379,30 @@ class Light {
       .multiply(UPRIGHT)
       .multiply(new THREE.Matrix4().makeTranslation(0, 0, -BEAM_START)));
     if (lens.radius > 0) this._lensScale = lens.radius / BEAM_TOP_RADIUS;
-    this._targetDummy.scale.set(this._lensScale, this._lensScale, 1);
+    this.shapeLens(lens.face);
     this._matrixNeedsUpdate = true;
+  }
+
+  /**
+   * Shapes the lens face: the file's rectangle or oval, Length along the
+   * lens's X and Width along its Y, else a disc as wide as the lens; on the
+   * outer side of the lens's model, where the light leaves.
+   *
+   * @private
+   * @param {Object} [face] `{ rect, halfX, halfY, out }`
+   */
+  shapeLens(face) {
+    if (face && face.halfX > 0 && face.halfY > 0) {
+      this._rectLens = !!face.rect;
+      this._targetDummy.scale.set(face.halfX / BEAM_TOP_RADIUS, face.halfY / BEAM_TOP_RADIUS, 1);
+      // The cap is drawn a little short of the beam's start, which suits the
+      // shipped head; a file's face goes where the file puts it.
+      this._targetDummy.position.z = (face.out || 0) + (BEAM_START - LENS_FACE_OFFSET);
+    } else {
+      this._rectLens = false;
+      this._targetDummy.scale.set(this._lensScale, this._lensScale, 1);
+      this._targetDummy.position.z = 0;
+    }
   }
 
   /**
@@ -2423,7 +2452,7 @@ class Light {
       .multiply(new THREE.Matrix4().makeTranslation(0, 0, -BEAM_START)));
     // The lens as wide as the file's, the cap and the beam scaled to it.
     if (body.lensRadius > 0) this._lensScale = body.lensRadius / BEAM_TOP_RADIUS;
-    this._targetDummy.scale.set(this._lensScale, this._lensScale, 1);
+    this.shapeLens(body.lensFace);
 
     // The body at rest, in the fixture's frame: how far it reaches below the
     // origin, and the pick box fitted round it.
@@ -2487,7 +2516,9 @@ class Light {
   updateMatrix() {
     if (this._hidden) {
       if (this._collapsed) return;
-      [baseMesh, yokeMesh, headMesh, beamMesh, capMesh, boundingBoxMesh].forEach((mesh) => {
+      [
+        baseMesh, yokeMesh, headMesh, beamMesh, capMesh, rectCapMesh, boundingBoxMesh,
+      ].forEach((mesh) => {
         mesh.setMatrixAt(this._id, COLLAPSED);
         mesh.instanceMatrix.needsUpdate = true;
       });
@@ -2544,13 +2575,16 @@ class Light {
         boundingBoxMesh.setMatrixAt(this._id, this._dummy.matrixWorld);
       }
       beamMesh.setMatrixAt(this._id, rigidMatrix);
-      // The lens is part of the body, so it takes the scaled frame.
-      capMesh.setMatrixAt(this._id, this._targetDummy.matrixWorld);
+      // The lens is part of the body, so it takes the scaled frame, in
+      // whichever of the two caps has its shape.
+      capMesh.setMatrixAt(this._id, this._rectLens ? COLLAPSED : this._targetDummy.matrixWorld);
+      rectCapMesh.setMatrixAt(this._id, this._rectLens ? this._targetDummy.matrixWorld : COLLAPSED);
       baseMesh.instanceMatrix.needsUpdate = true;
       yokeMesh.instanceMatrix.needsUpdate = true;
       headMesh.instanceMatrix.needsUpdate = true;
       beamMesh.instanceMatrix.needsUpdate = true;
       capMesh.instanceMatrix.needsUpdate = true;
+      rectCapMesh.instanceMatrix.needsUpdate = true;
       boundingBoxMesh.instanceMatrix.needsUpdate = true;
     }
   }
@@ -3093,6 +3127,22 @@ class Light {
       3,
     );
     capMesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+
+    // The same face as a square, as wide as the disc is across, for a lens the
+    // file draws as a rectangle.
+    const rectGeometry = new THREE.PlaneGeometry(BEAM_TOP_RADIUS * 2, BEAM_TOP_RADIUS * 2);
+    rectGeometry.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 0, LENS_FACE_OFFSET));
+    rectCapMesh = new THREE.InstancedMesh(rectGeometry, capMaterial, capacity);
+    rectCapMesh.frustumCulled = false;
+    rectCapMesh.count = instanceCount;
+    rectCapMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    rectCapMesh.instanceMatrix.array.fill(0);
+    rectCapMesh.instanceMatrix.needsUpdate = true;
+    rectCapMesh.instanceColor = new THREE.InstancedBufferAttribute(
+      new Float32Array(capacity * 3).fill(LENS_DARK),
+      3,
+    );
+    rectCapMesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
   }
 
   static prepareBoxHelperInstance() {
@@ -3129,7 +3179,7 @@ class Light {
     // beam misses.
     LightField.receive(MODEL_MATERIAL);
 
-    scene.add(baseMesh, yokeMesh, headMesh, beamMesh, capMesh, boundingBoxMesh);
+    scene.add(baseMesh, yokeMesh, headMesh, beamMesh, capMesh, rectCapMesh, boundingBoxMesh);
   }
 
   /**
@@ -3286,6 +3336,7 @@ class Light {
     headMesh = grownMesh(headMesh);
     beamMesh = grownMesh(beamMesh);
     capMesh = grownMesh(capMesh);
+    rectCapMesh = grownMesh(rectCapMesh);
     boundingBoxMesh = grownMesh(boundingBoxMesh);
     return true;
   }
@@ -3317,6 +3368,7 @@ class Light {
     headMesh.count = instanceCount;
     beamMesh.count = instanceCount;
     capMesh.count = instanceCount;
+    rectCapMesh.count = instanceCount;
     boundingBoxMesh.count = instanceCount;
   }
 

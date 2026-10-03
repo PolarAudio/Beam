@@ -134,7 +134,9 @@ function axesOf(type) {
  *   frame (null when the part has nothing to draw), the yoke's frame in the
  *   base's, the head's in the yoke's and the first lens's in the head's, all
  *   in the file's hanging frame; `lenses` every lens, first first, as
- *   `{ frame, radius, beam, path }`, `frame` in the head's frame and `path`
+ *   `{ frame, radius, face, beam, path }`, `frame` in the head's frame, `face`
+ *   `{ rect, halfX, halfY, radius, out }` the lens's shape and how
+ *   far its face stands out along the beam, and `path`
  *   the names of every geometry from the root to it; for a static light,
  *   `lensSets`, the lenses of each top-level geometry by its name, since a
  *   file may describe the fixture once per set of modes and a mode names the
@@ -205,16 +207,43 @@ export default async function buildBody(type, files) {
       .applyMatrix4(inverse.clone().multiply(world)));
     merged[part] = inPart.length ? mergeGeometries(inPart) : null;
   });
-  // A lens is as wide as its model, else its beam's stated radius.
-  const radiusOf = ({ model, beam }) => {
-    if (model && model.length > 0) return Math.max(model.length, model.width) / 2;
-    if (beam && beam.beamRadius > 0) return beam.beamRadius;
+  // A lens's face is its model: a Cube a rectangle, a Cylinder a disc or an
+  // oval, Length by Width; any other model as wide as its longer side. With
+  // no model, a disc of the beam's stated radius. `radius` is the disc of the
+  // same area, which the beam leaves.
+  const shape = (rect, halfX, halfY, radius, out = 0) => ({
+    rect, halfX, halfY, radius, out,
+  });
+  // The face is the model's outer side, half its height out along the beam.
+  const faceOf = ({ model, beam }) => {
+    if (model && model.length > 0) {
+      const out = model.height > 0 ? model.height / 2 : 0;
+      const halfX = model.length / 2;
+      const halfY = (model.width > 0 ? model.width : model.length) / 2;
+      if (model.primitiveType === 'Cube') {
+        return shape(true, halfX, halfY, Math.sqrt((4 * halfX * halfY) / Math.PI), out);
+      }
+      if (model.primitiveType === 'Cylinder') {
+        return shape(false, halfX, halfY, Math.sqrt(halfX * halfY), out);
+      }
+      const half = Math.max(halfX, halfY);
+      return shape(false, half, half, half, out);
+    }
+    if (beam && beam.beamRadius > 0) {
+      const r = beam.beamRadius;
+      return shape(false, r, r, r);
+    }
     return null;
+  };
+  const radiusOf = (lens) => {
+    const face = faceOf(lens);
+    return face ? face.radius : null;
   };
   const toHead = tiltWorld.clone().invert();
   const asLens = (lens) => ({
     frame: toHead.clone().multiply(lens.world),
     radius: radiusOf(lens),
+    face: faceOf(lens),
     beam: lens.beam,
     path: lens.path,
   });
@@ -249,6 +278,7 @@ export default async function buildBody(type, files) {
     headFrame: panWorld.clone().invert().multiply(tiltWorld),
     lensFrame: toHead.clone().multiply(lensWorld),
     lensRadius: main ? radiusOf(main) : null,
+    lensFace: main ? faceOf(main) : null,
     lenses,
     lensSets,
   };

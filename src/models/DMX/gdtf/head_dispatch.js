@@ -206,6 +206,21 @@ export default class HeadDispatch {
    * default would otherwise never reach a newly built or reset head.
    */
   applyAll() {
+    // A light the mode controls without a dimmer runs at full, its colour
+    // channels its only control: an RGB bar with red at full is lit. One no
+    // channel reaches at all is not driven in this mode and stays dark.
+    const reached = new Set();
+    const dimmed = new Set();
+    this.engine.channels.forEach((c) => {
+      const heads = this.targetsOf(c);
+      heads.forEach((head) => reached.add(head));
+      if (c.functions.some((f) => f.attribute === 'Dimmer')) {
+        heads.forEach((head) => dimmed.add(head));
+      }
+    });
+    reached.forEach((head) => {
+      if (!dimmed.has(head)) head.intensity = 1;
+    });
     this.apply(this.engine.channels);
   }
 

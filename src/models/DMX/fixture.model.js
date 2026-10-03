@@ -1279,7 +1279,7 @@ class Fixture extends withTransform(Proxify) {
         body: null,
         bodyHeight: null,
         lamp: true,
-        lens: { frame: lens.frame, radius: lens.radius },
+        lens: { frame: lens.frame, radius: lens.radius, face: lens.face },
         share: shareOf(k + 1),
         lumens: spec.lumens * shareOf(k + 1),
         glow: glows(lens),

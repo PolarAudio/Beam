@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import axios from 'axios';
-import { merge } from 'lodash';
+import { markRaw } from 'vue';
 import {
   EventEmitter,
 } from 'events';
@@ -15,6 +15,8 @@ import FixturePool from './fixture.pool.model';
 import Group from './group.model';
 import Structure from './structure.model';
 import SceneObject from './object.model';
+import { SCENE_ITEM_KINDS, kindOf } from './scene_item';
+import { claimInstance, setSiblingResolver } from './item_naming';
 import Live from './live.model';
 import {
   expandLedBarProfile, withoutLedBarChannels,
@@ -25,7 +27,10 @@ import VideoRouter from '../../plugins/visualizer/video_router';
 import SceneObjects from '../../plugins/visualizer/scene_objects';
 import Studio from './studio';
 import { normaliseMatrixProfile } from './ofl_matrix';
-import { MAX_SHADOW_CASTERS } from '../../plugins/visualizer/moving_head';
+import readGdtf, { wheelImages } from './gdtf/gdtf_reader';
+import buildBody from '../../plugins/visualizer/gdtf_body';
+import { headInputs } from './gdtf/fixture_parts';
+import { MAX_SHADOW_CASTERS } from '../../plugins/visualizer/light';
 
 const SHOWFILE_EXTENSIONS = {
   JSON: 'json',
@@ -36,9 +41,9 @@ const fixtureDataCache = {};
 /**
  * The names the app hands out when nobody has given one.
  *
- * `untitled`, `untitled 2`, `Group`, `Group 3`, `Structure 1` -- what
- * `numberedStructureName`, `uniqueStructureName` and `uniqueGroupName` fall
- * back to, with or without the number that keeps them apart.
+ * `untitled`, `Group`, `Structure` -- what a structure or a group is
+ * called when it is made without a name. The trailing number is for names
+ * saved before the instance number was kept apart from the name.
  *
  * @constant {RegExp}
  */
@@ -117,12 +122,39 @@ async function fetchProfile(profileKey) {
  * @todo Refactor whole class. it's messy
  * @extends {EventEmitter}
  */
+/**
+ * An item's show data with its place in the item list, when it has one.
+ *
+ * Written by the show rather than by each item: the place belongs to the list,
+ * and a copy on the clipboard deliberately arrives without one.
+ *
+ * @param {Object} item a fixture, object, structure or group
+ * @returns {Object} its show data
+ */
+function withListOrder(item) {
+  const data = item.showData;
+  return Number.isFinite(item.listOrder) ? { ...data, listOrder: item.listOrder } : data;
+}
+
+/**
+ * Gives a loaded item back the place in the item list it was saved with.
+ *
+ * @param {Object} item the item just made
+ * @param {Object} data the record it was made from
+ */
+function restoreListOrder(item, data) {
+  if (item && data && Number.isFinite(data.listOrder)) item.listOrder = data.listOrder;
+}
+
 class Show extends EventEmitter {
   /**
    * Creates an instance of Show.
    */
   constructor() {
     super();
+    // So an item can be named on screen -- with its number only when another
+    // of its kind shares its name -- without the models reaching for the show.
+    setSiblingResolver((item) => this.siblingsOf(item));
     /**
      * Absolute path of the document this show was opened from or last saved
      * to, or null when it has never been saved.
@@ -136,8 +168,6 @@ class Show extends EventEmitter {
     this.projectName = '';
     this.isSaved = true;
     this.rawOFLFixtures = [];
-    /** Local corrections to library profiles, keyed `manufacturer/model`. */
-    this.fixtureOverrides = {};
     /**
      * Profiles built here rather than fetched, keyed the same way. OFL cannot
      * describe an emitter array, so these are generated from parameters the
@@ -145,8 +175,26 @@ class Show extends EventEmitter {
      */
     this.generatedProfiles = {};
     /**
-     * What the open document carries with it: the profiles and overrides an
-     * export collected, keyed like the library. Resolved after the show's own
+     * GDTF fixtures in the user's library, as listed by the main process:
+     * `{ key, file, name, manufacturer, fixtureTypeId, dataVersion }`. The
+     * files themselves are fetched from `library://profiles/<file>` when
+     * they are needed.
+     */
+    this.gdtfFixtures = [];
+    /**
+     * GDTF fixtures removed from the library, listed the same way. Not
+     * offered to add, but resolved after the library, so a show that uses one
+     * still opens.
+     */
+    this.removedGdtf = [];
+    /**
+     * GDTF fixture types read so far, by key. Read-only once read, so every
+     * fixture of a type shares one.
+     */
+    this.gdtfTypes = new Map();
+    /**
+     * What the open document carries with it: the profiles an export
+     * collected, keyed like the library. Resolved after the show's own
      * definitions and ahead of the library, so an export opened on another
      * machine shows the fixtures it was made with. Models an export carries
      * arrive through the object library instead, served by the main process.
@@ -278,16 +326,16 @@ class Show extends EventEmitter {
       diffInput: PatchSingleton.diffInput,
       // Addressing lives entirely on the fixtures. Universe records are
       // kept only for the name and colour the patch bay displays.
-      groups: this.groups.map((group) => group.showData),
-      structures: this.structures.map((structure) => structure.showData),
+      groups: this.groups.map(withListOrder),
+      structures: this.structures.map(withListOrder),
       // Keys and transforms. The geometry stays in the library until an export
       // collects it, which is the same bargain profiles make.
-      objects: this.objects.map((object) => object.showData),
+      objects: this.objects.map(withListOrder),
       // The show's own fixture definitions travel with it, so it opens on a
       // machine whose library has never seen them. Pruned first: a definition
       // nothing references any more is not part of this show.
       definitions: this.pruneDefinitions().toJSON(),
-      fixtures: this.fixturePool.fixtures.map((f) => f.showData),
+      fixtures: this.fixturePool.fixtures.map(withListOrder),
       // The rectangles, and deliberately not which sender fills them: that is
       // a fact about one machine, and this file opens on others.
       videoConnectors: this.videoConnectors.map((connector) => connector.showData),
@@ -302,6 +350,7 @@ class Show extends EventEmitter {
       // whatever the view was when studio was last left rather than the one
       // being saved.
       cameras: Studio.showData,
+      studio: Studio.showSettings,
     };
   }
 
@@ -527,10 +576,10 @@ class Show extends EventEmitter {
   /**
    * The shape of `collected` when the open document carries nothing.
    *
-   * @returns {Object} `{ profiles, overrides }`, both empty
+   * @returns {Object} `{ profiles, gdtf }`, both empty
    */
   static nothingCollected() {
-    return { profiles: {}, overrides: {} };
+    return { profiles: {}, gdtf: [] };
   }
 
   /**
@@ -565,7 +614,7 @@ class Show extends EventEmitter {
    *
    * A save names what the show uses and leaves it in the library, so that
    * editing a profile reaches every show placing it. An export is the one
-   * deliberate freeze: every profile, override and model the show references
+   * deliberate freeze: every profile and model the show references
    * goes into the file, so it opens the same way anywhere. It is a copy -- the
    * show stays on the document it was on, and stays as saved or unsaved as
    * it was.
@@ -616,8 +665,11 @@ class Show extends EventEmitter {
    */
   async writeDocument(target) {
     const json = JSON.stringify(this.showData, null, 2);
-    const written = await window.documentStore.write(target, json);
-    if (!written) return false;
+    const written = await window.documentStore.write(target, json, this.referencedResources());
+    if (!written || !written.ok) return false;
+    // A document that carries files carries only what the show uses once
+    // saved, so what resolves from it has to shrink to match.
+    if (written.carried) this.collected = Show.collectedFrom(written);
     await this.setDocument(target);
     this.isSaved = true;
     this.emit('saveState', this.isSaved);
@@ -723,6 +775,9 @@ class Show extends EventEmitter {
    */
   async loadShowData(rawShowData, options = {}) {
     const showData = migrateShowData(rawShowData);
+    // A document may carry its own copy of a GDTF fixture, so what was read
+    // for the last one does not stand for this one.
+    this.gdtfTypes = new Map();
     this.loading.state = true;
     this.loading.message = 'Clearing Show Data';
     this.loading.percentage = 20;
@@ -730,16 +785,19 @@ class Show extends EventEmitter {
 
     // Mounted inside the load rather than before it, because loads queue: two
     // documents opened in quick succession must each load against their own
-    // files, not both against whichever was mounted last.
-    await this.mountDocument(options.document || null);
+    // files, not both against whichever was mounted last. A refresh has
+    // already replaced the mount and hands over what it now carries: mounting
+    // again would unpack the file on disk and bring the old copies back.
+    if (options.carried) this.collected = Show.collectedFrom(options.carried);
+    else await this.mountDocument(options.document || null);
 
     this.loading.message = 'Preloading fixture library';
     this.loading.percentage = 40;
     await this.preloadGeneratedProfiles();
+    await this.preloadGdtfFixtures();
     await this.preloadStructures();
     await this.preloadManufacturers();
     await this.preloadFixtureList();
-    await this.preloadFixtureOverrides();
 
     // Before the fixtures, which resolve their profiles through it.
     this.definitions = DefinitionStore.fromJSON(showData.definitions);
@@ -753,11 +811,12 @@ class Show extends EventEmitter {
     this.loading.message = 'Restoring groups';
     this.prepareGroups(showData);
 
-    this.loading.message = 'Restoring structures';
-    this.prepareStructures(showData);
-
+    // Objects before structures, which may hold them.
     this.loading.message = 'Placing objects';
     await this.prepareObjects(showData);
+
+    this.loading.message = 'Restoring structures';
+    this.prepareStructures(showData);
 
     this.videoConnectors = (showData.videoConnectors || [])
       .map((data) => new VideoConnector(data));
@@ -771,6 +830,7 @@ class Show extends EventEmitter {
     // down rather than here -- `frameDefault` runs at the end of this method
     // and would fly straight over the top of it.
     const storedView = Studio.loadCameras(showData.cameras);
+    Studio.loadSettings(showData.studio);
 
     this.loading.message = 'Patching fixtures';
     this.loading.percentage = 80;
@@ -816,6 +876,20 @@ class Show extends EventEmitter {
     for (let i = 0; i < showData.fixtures.length; i++) {
       const fixtureData = showData.fixtures[i];
       const profileKey = `${fixtureData.manufacturer}/${fixtureData.model}`;
+      if (this.gdtfEntry(profileKey)) {
+        // eslint-disable-next-line no-await-in-loop
+        fixtureData.fixtureType = await this.loadGdtfType(profileKey);
+        fixtureData.OFLData = null;
+        if (fixtureData.fixtureType) {
+          const created = this.fixturePool.addRaw(fixtureData);
+          restoreListOrder(created, fixtureData);
+          if (fixtureData.id !== undefined) this.loadedFixturesById.set(fixtureData.id, created);
+        } else {
+          this.missingProfiles.push(profileKey);
+        }
+        // eslint-disable-next-line no-continue
+        continue;
+      }
       const local = this.localProfile(profileKey);
       fixtureData.OFLData = local
         ? JSON.parse(JSON.stringify(local))
@@ -835,12 +909,8 @@ class Show extends EventEmitter {
         }
       }
       if (fixtureData.OFLData) {
-        // Applied after caching, so the cache keeps the library profile
-        // untouched and an edited overrides file takes effect on the next load.
-        if (this.fixtureOverrides[profileKey]) {
-          merge(fixtureData.OFLData, this.fixtureOverrides[profileKey]);
-        }
         const created = this.fixturePool.addRaw(fixtureData);
+        restoreListOrder(created, fixtureData);
         if (fixtureData.id !== undefined) this.loadedFixturesById.set(fixtureData.id, created);
       }
     }
@@ -854,35 +924,9 @@ class Show extends EventEmitter {
   }
 
   /**
-   * Loads local corrections to library profiles, keyed `manufacturer/model`.
-   *
-   * The shipped library is Open Fixture Library data and stays untouched so it
-   * can be replaced wholesale; anything measured or guessed locally -- head slew
-   * rates, which OFL has no field for -- lives here instead. It sits beside the
-   * show rather than in the bundle because the app writes it.
-   *
-   * @public
-   * @async
-   */
-  async preloadFixtureOverrides() {
-    if (typeof window === 'undefined' || !window.library) {
-      this.fixtureOverrides = {};
-      return;
-    }
-    // Nothing overridden is a perfectly ordinary state; every fixture then
-    // falls back to its library profile and the renderer's own defaults.
-    // What the open document carries wins over the library's, for the same
-    // profile: an export freezes the corrections it was made with.
-    this.fixtureOverrides = {
-      ...((await window.library.readAll('overrides')) || {}),
-      ...this.collected.overrides,
-    };
-  }
-
-  /**
    * Makes a document the open one, taking on what it carries.
    *
-   * An export carries its profiles, overrides and models; a plain save
+   * An export carries its profiles and models; a plain save
    * carries nothing, and then this is only bookkeeping. No document at all --
    * a template, an imported showfile -- unmounts, so that nothing of the last
    * document lingers to resolve a name in this one.
@@ -898,91 +942,55 @@ class Show extends EventEmitter {
       await window.documentStore.unmount();
       return;
     }
-    const carried = (await window.documentStore.mount(target)) || {};
+    this.collected = Show.collectedFrom(await window.documentStore.mount(target));
+  }
+
+  /**
+   * What a document carries, in the shape `collected` holds it.
+   *
+   * @param {Object} [carried] `{ profiles, gdtf }` from the document store
+   * @returns {Object} `{ profiles, gdtf }`
+   */
+  static collectedFrom(carried) {
+    const { profiles, gdtf } = carried || {};
     // Bars are stored without their channels, as the library stores them.
-    this.collected = {
-      profiles: Object.fromEntries(Object.entries(carried.profiles || {})
+    return {
+      profiles: Object.fromEntries(Object.entries(profiles || {})
         .map(([key, profile]) => [key, expandLedBarProfile(profile)])),
-      overrides: carried.overrides || {},
+      gdtf: gdtf || [],
     };
   }
 
   /**
-   * Writes the overrides file.
+   * Replaces the copies an exported project carries with the library's.
+   *
+   * An export resolves what it carries ahead of the library, so a profile or
+   * model edited in the library afterwards never reaches it. This collects
+   * every item the show references again from the library, reloads the show
+   * against the new copies, and leaves it unsaved: the file takes them on the
+   * next save, and closing without saving keeps it as it was.
    *
    * @public
+   * @async
+   * @returns {Promise<Object>} `{ carried, refreshed, kept }` -- whether the
+   *   project carries anything, the items whose copy changed, and the items
+   *   only the project has
    */
-  persistFixtureOverrides(profileKey) {
-    if (typeof window === 'undefined' || !window.library) return;
-    // One item, one file. Writing only the profile that changed is the point of
-    // the library being files: nothing else is put at risk by this save.
-    const keys = profileKey ? [profileKey] : Object.keys(this.fixtureOverrides);
-    keys.forEach((key) => {
-      const entry = this.fixtureOverrides[key];
-      // A model whose last override has just been cleared has no entry left,
-      // and its file has to go with it. Written back instead it would return as
-      // an empty object on the next launch, and the default would stay
-      // overridden by nothing at all.
-      if (!entry || !Object.keys(entry).length) {
-        window.library.remove('overrides', key);
-        return;
-      }
-      window.library.write('overrides', key, JSON.stringify(entry, null, 2));
-    });
-  }
-
-  /**
-   * Sets one override for a model and applies it to everything already patched.
-   *
-   * @public
-   * @param {String} profileKey `manufacturer/model`
-   * @param {String} key property being overridden
-   * @param {Number|String} value value to store
-   */
-  setFixtureOverride(profileKey, key, value) {
-    const entry = this.fixtureOverrides[profileKey] || {};
-    entry[key] = value;
-    this.fixtureOverrides[profileKey] = entry;
-    this.persistFixtureOverrides(profileKey);
-    this.applyFixtureOverride(profileKey, key, value);
-  }
-
-  /**
-   * Drops one override and restores the system default.
-   *
-   * The model's entry is removed once its last override goes, so the file never
-   * accumulates empty objects for models that are no longer customised.
-   *
-   * @public
-   * @param {String} profileKey `manufacturer/model`
-   * @param {String} key property being cleared
-   * @param {Number} fallback value to restore
-   */
-  clearFixtureOverride(profileKey, key, fallback) {
-    const entry = this.fixtureOverrides[profileKey];
-    if (entry) {
-      delete entry[key];
-      if (!Object.keys(entry).length) delete this.fixtureOverrides[profileKey];
-      this.persistFixtureOverrides(profileKey);
+  async refreshFromLibrary() {
+    const nothing = { carried: false, refreshed: [], kept: [] };
+    if (typeof window === 'undefined' || !window.documentStore || !this.documentPath) return nothing;
+    const result = (await window.documentStore.refresh(this.referencedResources())) || nothing;
+    if (result.refreshed && result.refreshed.length) {
+      await this.loadFromData(JSON.parse(JSON.stringify(this.showData)), {
+        document: this.documentPath,
+        carried: result,
+      });
+      // The load treats the show as freshly opened; it is not, until saved.
+      this.isSaved = false;
+      this.emit('saveState', this.isSaved);
     }
-    this.applyFixtureOverride(profileKey, key, fallback);
-  }
-
-  /**
-   * Pushes an override onto every patched fixture of that model.
-   *
-   * @public
-   * @param {String} profileKey `manufacturer/model`
-   * @param {String} key property being set
-   * @param {Number|String} value value to apply
-   */
-  applyFixtureOverride(profileKey, key, value) {
-    this.fixturePool.fixtures.forEach((fixture) => {
-      if (fixture.profileKey !== profileKey) return;
-      // Kept on the raw profile too, so a fixture rebuilt from it agrees.
-      fixture.OFLData[key] = value;
-      fixture[key] = value;
-    });
+    this.emit('refreshed', result);
+    return result;
   }
 
   /**
@@ -1023,6 +1031,7 @@ class Show extends EventEmitter {
     // that is the whole difference between loading a chunk and loading a file.
     const made = (showData.groups || []).map((groupData) => {
       const group = new Group(groupData);
+      restoreListOrder(group, groupData);
       (groupData.members || []).forEach((id) => {
         // Resolved through the load index rather than the pool: addRaw hands
         // out fresh ids, so a saved member id means nothing once a fixture has
@@ -1032,53 +1041,59 @@ class Show extends EventEmitter {
       });
       return group;
     });
-    this.groups.push(...made);
+    Show.joinNumbered(this.groups, made);
     return made;
   }
 
   /**
-   * The nearest free group name to the one asked for.
-   *
-   * Groups are told apart by name in the patch bay, so two sharing one makes
-   * the list ambiguous. A taken name gains a number rather than being refused.
+   * The items of one kind, which instance numbers are counted among.
    *
    * @public
-   * @param {String} desired name the user asked for
-   * @param {Number} [ignoreId] id of the group allowed to keep this name
-   * @returns {String} a name no other group is using
+   * @param {Object} item any scene item
+   * @returns {Array}
    */
-  uniqueGroupName(desired, ignoreId = null) {
-    const wanted = (desired || '').trim() || 'Group';
-    const taken = new Set(
-      this.groups.filter((group) => group.id !== ignoreId).map((group) => group.name),
-    );
-    if (!taken.has(wanted)) return wanted;
-    let n = 2;
-    while (taken.has(`${wanted} ${n}`)) n += 1;
-    return `${wanted} ${n}`;
+  siblingsOf(item) {
+    switch (kindOf(item)) {
+      case SCENE_ITEM_KINDS.FIXTURE: return this.fixturePool.fixtures;
+      case SCENE_ITEM_KINDS.OBJECT: return this.objects;
+      case SCENE_ITEM_KINDS.STRUCTURE: return this.structures;
+      case SCENE_ITEM_KINDS.GROUP: return this.groups;
+      default: return [];
+    }
   }
 
   /**
-   * The nearest free object name to the one asked for.
+   * Gives an item a new name, and the lowest free instance number under it.
    *
-   * The counterpart of `uniqueGroupName` and `uniqueStructureName`, and it
-   * exists for the same reason they do: a copy has to be told apart from what
-   * it was copied from, and the list is where that happens.
+   * The number follows the name rather than the item: renaming `Truss 3` to
+   * `Stage` makes `Stage 1` when no other stage is there.
    *
    * @public
-   * @param {String} desired name the user asked for
-   * @param {Number} [ignoreId] id of the object allowed to keep this name
-   * @returns {String} a name no other object is using
+   * @param {Object} item any scene item
+   * @param {String} desired the name typed; blank keeps the current one
    */
-  uniqueObjectName(desired, ignoreId = null) {
-    const wanted = (desired || '').trim() || 'Object';
-    const taken = new Set(
-      this.objects.filter((object) => object.id !== ignoreId).map((object) => object.name),
-    );
-    if (!taken.has(wanted)) return wanted;
-    let n = 2;
-    while (taken.has(`${wanted} ${n}`)) n += 1;
-    return `${wanted} ${n}`;
+  renameItem(item, desired) {
+    const name = (desired || '').trim();
+    if (!name || name === item.name) return;
+    item.name = name;
+    item.instance = null;
+    claimInstance(item, this.siblingsOf(item));
+  }
+
+  /**
+   * Adds items to one of the show's lists, each numbered as it goes in.
+   *
+   * One at a time, so items added together number against each other as
+   * well as against what was already there.
+   *
+   * @param {Array} list the show's list for their kind
+   * @param {Array} items
+   */
+  static joinNumbered(list, items) {
+    items.forEach((item) => {
+      claimInstance(item, list);
+      list.push(item);
+    });
   }
 
   /**
@@ -1121,6 +1136,19 @@ class Show extends EventEmitter {
         const local = member.localTransform
           ? member.localTransform.clone()
           : inverse.clone();
+        // An object keeps what it is -- its library key, or the parameters of
+        // a created one -- and its own scale, beside where it stands.
+        if (kindOf(member) === SCENE_ITEM_KINDS.OBJECT) {
+          const data = member.showData;
+          return {
+            kind: SCENE_ITEM_KINDS.OBJECT,
+            name: data.name,
+            model: data.model,
+            primitive: data.primitive,
+            scale: data.scale,
+            transform: local.elements.slice(),
+          };
+        }
         return {
           manufacturer: member.manufacturer,
           model: member.model,
@@ -1183,31 +1211,58 @@ class Show extends EventEmitter {
     // microtasks without exception: one yield here rather than one per member,
     // and the distinct profiles fetched together rather than in series.
     const wanted = new Set();
+    const isObject = (member) => member.kind === SCENE_ITEM_KINDS.OBJECT;
+    if (definition.members.some(isObject)) await this.preloadObjectLibrary();
     const distinct = definition.members.filter((member) => {
+      if (isObject(member)) return false;
       const key = `${member.manufacturer}/${member.model}`;
       if (wanted.has(key)) return false;
       wanted.add(key);
       return true;
     });
     await Promise.all(
-      distinct.map((member) => this.resolveProfile(member.manufacturer, member.model)),
+      distinct.map((member) => this.resolveFixture(member.manufacturer, member.model)),
     );
 
     for (let i = 0; i < definition.members.length; i += 1) {
       const member = definition.members[i];
+      if (isObject(member)) {
+        world.multiplyMatrices(origin, new THREE.Matrix4().fromArray(member.transform));
+        world.decompose(position, quaternion, scale);
+        euler.setFromQuaternion(quaternion);
+        // A missing library model still arrives, unresolved, as it does when
+        // a show is opened without it.
+        const object = new SceneObject({
+          model: member.primitive ? undefined : member.model,
+          primitive: member.primitive || null,
+          name: member.name || member.model || 'object',
+          position: { x: position.x, y: position.y, z: position.z },
+          rotation: { x: euler.x, y: euler.y, z: euler.z },
+          scale: member.scale,
+        });
+        // eslint-disable-next-line no-await-in-loop
+        await object.attach(member.primitive
+          ? null
+          : (this.objectLibrary[foldModelKey(member.model)] || null));
+        Show.joinNumbered(this.objects, [object]);
+        members.push(object);
+        // eslint-disable-next-line no-continue
+        continue;
+      }
       // eslint-disable-next-line no-await-in-loop
-      const OFLData = await this.resolveProfile(member.manufacturer, member.model);
-      if (OFLData) {
+      const resolved = await this.resolveFixture(member.manufacturer, member.model);
+      if (resolved) {
         world.multiplyMatrices(origin, new THREE.Matrix4().fromArray(member.transform));
         world.decompose(position, quaternion, scale);
         euler.setFromQuaternion(quaternion);
 
         const fixture = this.fixturePool.addRaw({
-          OFLData,
+          OFLData: resolved.OFLData,
+          fixtureType: resolved.fixtureType,
           manufacturer: member.manufacturer,
           model: member.model,
-          category: OFLData.categories[0],
-          name: this.fixturePool.numberedName(OFLData.name),
+          category: resolved.category,
+          name: resolved.name,
           mode: member.mode,
           universeAligned: !!member.universeAligned,
           position: { x: position.x, y: position.y, z: position.z },
@@ -1266,6 +1321,7 @@ class Show extends EventEmitter {
     structure.members.forEach((member) => {
       const model = member._3DModel;
       if (model && model.expandGeometryBounds) model.expandGeometryBounds(box);
+      else if (model && model.expandBounds) model.expandBounds(box);
     });
     if (box.isEmpty()) return;
     const centre = box.getCenter(new THREE.Vector3());
@@ -1276,6 +1332,104 @@ class Show extends EventEmitter {
       y: origin.y + ((at.y || 0) - centre.y),
       z: origin.z + ((at.z || 0) - box.min.z),
     };
+  }
+
+  /**
+   * A fixture's profile by key, from whichever kind of file holds it.
+   *
+   * @public
+   * @async
+   * @param {String} manufacturer
+   * @param {String} model
+   * @returns {Promise<Object|null>} `{ OFLData, fixtureType, category, name }`
+   *   with one of the two set, or null when neither is found
+   */
+  async resolveFixture(manufacturer, model) {
+    const key = `${manufacturer}/${model}`;
+    if (this.gdtfEntry(key)) {
+      const fixtureType = await this.loadGdtfType(key);
+      if (!fixtureType) return null;
+      return {
+        OFLData: null,
+        fixtureType,
+        category: headInputs(fixtureType, fixtureType.modes[0] || { channels: [] }).category,
+        name: fixtureType.name,
+      };
+    }
+    const OFLData = await this.resolveProfile(manufacturer, model);
+    if (!OFLData) return null;
+    return {
+      OFLData, fixtureType: null, category: OFLData.categories[0], name: OFLData.name,
+    };
+  }
+
+  /**
+   * A GDTF fixture by key: the open document's copy, else the library's,
+   * else one removed from the library.
+   *
+   * @public
+   * @param {String} key `<manufacturer folder>/<file stem>`
+   * @returns {Object|null} `{ entry, carried, removed }`
+   */
+  gdtfEntry(key) {
+    const carried = (this.collected.gdtf || []).find((e) => e.key === key);
+    if (carried) return { entry: carried, carried: true, removed: false };
+    const own = this.gdtfFixtures.find((e) => e.key === key);
+    if (own) return { entry: own, carried: false, removed: false };
+    const removed = this.removedGdtf.find((e) => e.key === key);
+    return removed ? { entry: removed, carried: false, removed: true } : null;
+  }
+
+  /**
+   * Reads a GDTF fixture type, once per key.
+   *
+   * Fetched as `library://`, which streams the file rather than carrying
+   * megabytes across IPC, and parsed with the page's own XML parser.
+   *
+   * @public
+   * @async
+   * @param {String} key
+   * @returns {Promise<Object|null>} the fixture type, or null when it cannot be read
+   */
+  async loadGdtfType(key) {
+    if (this.gdtfTypes.has(key)) return this.gdtfTypes.get(key);
+    const found = this.gdtfEntry(key);
+    if (!found || typeof fetch === 'undefined' || typeof DOMParser === 'undefined') return null;
+    let host = 'profiles';
+    if (found.carried) host = 'projectprofiles';
+    else if (found.removed) host = 'removedprofiles';
+    const path = found.entry.file.split('/').map(encodeURIComponent).join('/');
+    try {
+      const response = await fetch(`library://${host}/${path}`);
+      if (!response.ok) throw new Error(`${response.status}`);
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      const parseXml = (text) => new DOMParser().parseFromString(text, 'text/xml');
+      const { fixtureType, files, problems } = readGdtf(bytes, { parseXml });
+      // eslint-disable-next-line no-console
+      if (problems.length) console.warn(`[gdtf] ${key}: ${problems.join('; ')}`);
+      // The wheel slots' own pictures, as URLs the panels can show. Made once
+      // per type, which every fixture of it shares.
+      const urlOf = (image) => URL.createObjectURL(new Blob([image.bytes], { type: image.mime }));
+      fixtureType.wheelImages = new Map([...wheelImages(fixtureType, files)]
+        .map(([name, image]) => [name, urlOf(image)]));
+      // The body its meshes make, shared by every fixture of the type. A file
+      // whose meshes cannot be read keeps the shipped body.
+      try {
+        fixtureType.body = await buildBody(fixtureType, files);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn(`[gdtf] ${key}: body not built: ${err.message}`);
+        fixtureType.body = null;
+      }
+      markRaw(fixtureType);
+      this.gdtfTypes.set(key, fixtureType);
+      return fixtureType;
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(`[gdtf] cannot read ${key}: ${err.message}`);
+      this.gdtfTypes.set(key, null);
+      return null;
+    }
   }
 
   /**
@@ -1309,7 +1463,7 @@ class Show extends EventEmitter {
     // somewhere with no idea which profile it was looking at.
     const profile = await fetchProfile(key);
     // Parsed back out on every read, so each caller gets its own copy to
-    // mutate -- fixture overrides are merged into what this returns.
+    // mutate.
     if (profile) fixtureDataCache[key] = JSON.stringify(profile);
     return profile;
   }
@@ -1349,7 +1503,15 @@ class Show extends EventEmitter {
   async prepareObjects(showData) {
     const records = showData.objects || [];
     const made = records.map((data) => new SceneObject(data));
-    this.objects.push(...made);
+    made.forEach((object, i) => restoreListOrder(object, records[i]));
+    // By the id the record was saved or copied with, for the structures that
+    // name their members by it.
+    this.loadedObjectsById = new Map();
+    records.forEach((data, i) => {
+      const id = data.sourceId !== undefined ? data.sourceId : data.id;
+      if (id !== undefined) this.loadedObjectsById.set(id, made[i]);
+    });
+    Show.joinNumbered(this.objects, made);
     if (!made.length) return made;
     await this.preloadObjectLibrary();
     // Awaited, all of them. Fired and left to land, the load would report
@@ -1439,13 +1601,13 @@ class Show extends EventEmitter {
       // `objectLibrary` is keyed by.
       model: inline ? undefined : (descriptor.key || descriptor.name),
       primitive: inline,
-      name: this.numberedObjectName(descriptor.name),
+      name: descriptor.name,
       position: transform.position,
       rotation: transform.rotation,
       scale: transform.scale,
     });
     await object.attach(inline ? null : descriptor);
-    this.objects.push(object);
+    Show.joinNumbered(this.objects, [object]);
     return object;
   }
 
@@ -1572,10 +1734,11 @@ class Show extends EventEmitter {
     // load index maps to the new instances.
     const fresh = (records) => (records || []).map(({ id, ...rest }) => rest);
 
+    // Names travel with the copies; each is given the lowest free instance
+    // number under its name as it joins the show -- see `joinNumbered`.
     await this.prepareFixtures({ fixtures: data.fixtures || [] });
     const fixtures = [...this.loadedFixturesById.values()];
     fixtures.forEach((fixture) => {
-      fixture.name = this.fixturePool.uniqueName(fixture.name, fixture.id);
       // With the patch not strict, a copy keeps the address it was copied with.
       if (!PatchSingleton.strict) {
         PatchSingleton.patchFixture(fixture);
@@ -1594,15 +1757,15 @@ class Show extends EventEmitter {
     });
 
     const groups = this.prepareGroups({ groups: fresh(data.groups) });
-    groups.forEach((group) => { group.name = this.uniqueGroupName(group.name, group.id); });
 
-    const structures = this.prepareStructures({ structures: fresh(data.structures) });
-    structures.forEach((structure) => {
-      structure.name = this.uniqueStructureName(structure.name, structure.id);
+    // Objects before structures, which may hold them. A copy gets a new id,
+    // and keeps the one it was copied from as `sourceId`, which is what a
+    // pasted structure names its members by.
+    const objects = await this.prepareObjects({
+      objects: (data.objects || []).map(({ id, ...rest }) => ({ ...rest, sourceId: id })),
     });
 
-    const objects = await this.prepareObjects({ objects: fresh(data.objects) });
-    objects.forEach((object) => { object.name = this.uniqueObjectName(object.name, object.id); });
+    const structures = this.prepareStructures({ structures: fresh(data.structures) });
 
     this.capShadowCasters();
     // A fixture inside a pasted structure or group is not a loose item, and
@@ -1627,81 +1790,29 @@ class Show extends EventEmitter {
     return true;
   }
 
-  /**
-   * A name not already taken by another object.
-   *
-   * @public
-   * @param {String} base the model's name
-   * @returns {String}
-   */
-  numberedObjectName(base) {
-    const taken = new Set(this.objects.map((object) => object.name));
-    if (!taken.has(base)) return base;
-    let n = 2;
-    while (taken.has(`${base} ${n}`)) n += 1;
-    return `${base} ${n}`;
-  }
-
   prepareStructures(showData) {
     const made = (showData.structures || []).map((structureData) => {
       const structure = new Structure(structureData);
-      (structureData.members || []).forEach((id) => {
+      restoreListOrder(structure, structureData);
+      (structureData.members || []).forEach((ref) => {
+        // An object member is `{ kind, id }`, resolved through the objects
+        // just loaded.
+        if (ref && typeof ref === 'object') {
+          if (ref.kind !== SCENE_ITEM_KINDS.OBJECT) return;
+          const object = (this.loadedObjectsById || new Map()).get(ref.id);
+          if (object) structure.add(object);
+          return;
+        }
         // Resolved through the load index rather than the pool: addRaw hands
         // out fresh ids, so a saved member id means nothing once a fixture has
         // been deleted and the rest have shuffled down.
-        const fixture = this.loadedFixturesById.get(id);
+        const fixture = this.loadedFixturesById.get(ref);
         if (fixture) structure.add(fixture);
       });
       return structure;
     });
-    this.structures.push(...made);
+    Show.joinNumbered(this.structures, made);
     return made;
-  }
-
-  /**
-   * The next free numbered name for a structure, e.g. "Fusion 2".
-   *
-   * Numbered from one even when it is the only one, so a name never has to be
-   * rewritten once a second arrives -- and so every name in an export reads
-   * the same way. The counterpart of `FixturePool.numberedName`; renaming goes
-   * through `uniqueStructureName` instead, which leaves a typed name alone.
-   *
-   * @public
-   * @param {String} base name to number
-   * @returns {String} a name no structure is using
-   */
-  numberedStructureName(base) {
-    const wanted = (base || '').trim() || 'untitled';
-    const taken = new Set(this.structures.map((structure) => structure.name));
-    let n = 1;
-    while (taken.has(`${wanted} ${n}`)) n += 1;
-    return `${wanted} ${n}`;
-  }
-
-  /**
-   * The nearest free structure name to the one asked for.
-   *
-   * Placing the same definition twice is normal, so a clash is expected rather
-   * than exceptional: the second one gains a number instead of being refused.
-   *
-   * @public
-   * @param {String} desired name the user asked for
-   * @param {Number} [ignoreId] id of the structure allowed to keep this name
-   * @returns {String} a name no other structure is using
-   */
-  uniqueStructureName(desired, ignoreId = null) {
-    // Untitled, as an unsaved show is: the name is the user's to give, and a
-    // made-up one reads as though it had already been named.
-    const wanted = (desired || '').trim() || 'untitled';
-    const taken = new Set(
-      this.structures
-        .filter((structure) => structure.id !== ignoreId)
-        .map((structure) => structure.name),
-    );
-    if (!taken.has(wanted)) return wanted;
-    let n = 2;
-    while (taken.has(`${wanted} ${n}`)) n += 1;
-    return `${wanted} ${n}`;
   }
 
   /**
@@ -1720,13 +1831,13 @@ class Show extends EventEmitter {
    */
   createStructure(members = [], name = undefined, origin = null) {
     const structure = new Structure({
-      name: this.numberedStructureName(name),
+      name: (name || '').trim() || 'untitled',
       position: (origin || {}).position,
       rotation: (origin || {}).rotation,
     });
     members.forEach((member) => structure.add(member));
     if (members.length && !origin) structure.centreOnMembers();
-    this.structures.push(structure);
+    Show.joinNumbered(this.structures, [structure]);
     return structure;
   }
 
@@ -1764,6 +1875,10 @@ class Show extends EventEmitter {
     const index = this.structures.indexOf(structure);
     if (index === -1) return;
     structure.release().forEach((member) => {
+      if (kindOf(member) === SCENE_ITEM_KINDS.OBJECT) {
+        this.removeObject(member);
+        return;
+      }
       const handle = this.fixturePool.findFromId(member.id);
       if (!handle) return;
       PatchSingleton.unpatchFixture(handle);
@@ -1788,7 +1903,7 @@ class Show extends EventEmitter {
     const group = new Group({ name });
     members.forEach((member) => group.add(member));
     if (members.length) group.centreOnMembers();
-    this.groups.push(group);
+    Show.joinNumbered(this.groups, [group]);
     return group;
   }
 
@@ -1840,6 +1955,44 @@ class Show extends EventEmitter {
     if (!member) return;
     if (member.group) member.group.remove(member);
     if (group) group.add(member);
+  }
+
+  /**
+   * Sets the order of the item list, first to last.
+   *
+   * @public
+   * @param {Array} items fixtures, objects, structures and groups, in order
+   */
+  setListOrder(items) {
+    items.forEach((item, i) => {
+      item.listOrder = i;
+    });
+    this.touch();
+  }
+
+  /**
+   * Lists the GDTF fixtures in the user's library.
+   *
+   * @public
+   * @async
+   */
+  async preloadGdtfFixtures() {
+    if (typeof window === 'undefined' || !window.library || !window.library.gdtfList) return;
+    this.gdtfFixtures = await window.library.gdtfList();
+    if (window.library.gdtfRemoved) this.removedGdtf = await window.library.gdtfRemoved();
+  }
+
+  /**
+   * Lists the library's GDTF fixtures again, after an import.
+   *
+   * @public
+   * @async
+   */
+  async refreshGdtfFixtures() {
+    // An import may have replaced a file under a key already read.
+    this.gdtfTypes = new Map();
+    await this.preloadGdtfFixtures();
+    this.refreshFixtureList();
   }
 
   /**
@@ -2026,8 +2179,7 @@ class Show extends EventEmitter {
    * @returns {Object}
    */
   collectedOnlyProfiles() {
-    const shipped = new Set(this.rawOFLFixtures
-      .filter((entry) => !entry.generated)
+    const shipped = new Set((this.shippedFixtureList || [])
       .flatMap((entry) => (entry.fixtures || [])
         .map((fixture) => `${entry.name}/${String(fixture.file).replace(/\.json$/i, '')}`)));
     return Object.fromEntries(Object.entries(this.collected.profiles)
@@ -2040,14 +2192,99 @@ class Show extends EventEmitter {
    * @public
    */
   refreshFixtureList() {
-    const library = this.rawOFLFixtures.filter((entry) => !entry.generated);
     // This show's own definitions first -- they are what the user just made --
-    // then the library's, then the shipped profiles.
+    // then the library's, then the shipped profiles with GDTF fixtures filed
+    // among them.
+    const { folders, unfiled } = this.withGdtfFixtures(this.shippedFixtureList || []);
     this.rawOFLFixtures = [
       ...this.definitions.list(),
       ...this.generatedFixtureList(),
-      ...library,
+      ...unfiled,
+      ...folders,
     ];
+  }
+
+  /**
+   * The shipped index with the GDTF fixtures filed in it.
+   *
+   * A GDTF fixture joins its manufacturer's folder -- the one whose name its
+   * own begins with, since GDTF says "Martin Professional" where the index
+   * says "Martin" -- and takes the place of a shipped profile of the same
+   * name, which GDTF supersedes. A manufacturer the index does not have gets
+   * a folder of its own. Rebuilt from the untouched index every time, so a
+   * GDTF file removed brings its OFL profile back.
+   *
+   * @public
+   * @param {Array} shipped the shipped index
+   * @returns {{folders: Array, unfiled: Array}} the index's folders, and
+   *   folders for manufacturers it lacks
+   */
+  withGdtfFixtures(shipped) {
+    const known = new Set(this.gdtfFixtures.map((entry) => entry.key));
+    const carried = (this.collected.gdtf || []).filter((entry) => !known.has(entry.key));
+    const all = [...this.gdtfFixtures, ...carried];
+    const fold = (text) => String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const folders = shipped.map((folder) => ({
+      ...folder, fixtures: [...(folder.fixtures || [])],
+    }));
+    const named = folders.map((folder) => ({
+      folder, name: fold(this.manufacturerName(folder.name)),
+    })).sort((a, b) => b.name.length - a.name.length);
+    const unfiled = new Map();
+    all.forEach((entry) => {
+      const maker = fold(entry.manufacturer);
+      const match = named.find(({ name }) => name && (maker === name || maker.startsWith(`${name} `)));
+      // Typed and marked as an OFL profile is: GDTF draws moving heads and
+      // static lights so far, and the rest patch and draw nothing.
+      const row = {
+        file: entry.key,
+        name: entry.name,
+        manufacturer: entry.key.split('/')[0],
+        category: entry.category || 'unreadable file',
+        supported: entry.category === 'Moving Head' || entry.category === 'Static',
+        gdtf: true,
+        fixtureTypeId: entry.fixtureTypeId || null,
+        revision: entry.revision || null,
+      };
+      if (match) {
+        const model = fold(entry.name);
+        match.folder.fixtures = match.folder.fixtures
+          .filter((f) => f.gdtf || fold(f.name) !== model);
+        match.folder.fixtures.push(row);
+      } else {
+        if (!unfiled.has(entry.manufacturer)) {
+          unfiled.set(entry.manufacturer, {
+            name: entry.manufacturer, generated: true, gdtf: true, fixtures: [],
+          });
+        }
+        unfiled.get(entry.manufacturer).fixtures.push(row);
+      }
+    });
+    // Revisions kept side by side share a name; each says which it is, by
+    // its revision, or by its file where the revisions say the same.
+    const told = (rows) => {
+      const sameName = new Map();
+      rows.filter((row) => row.gdtf).forEach((row) => {
+        const key = fold(row.name);
+        if (!sameName.has(key)) sameName.set(key, []);
+        sameName.get(key).push(row);
+      });
+      sameName.forEach((same) => {
+        if (same.length < 2) return;
+        const revisions = same.map((row) => row.revision || '');
+        same.forEach((row, i) => {
+          const repeated = revisions.indexOf(revisions[i]) !== i
+            || revisions.lastIndexOf(revisions[i]) !== i;
+          const which = !repeated && row.revision ? row.revision : row.file.split('/').pop();
+          row.name = `${row.name} · ${which}`;
+        });
+      });
+    };
+    const byName = (a, b) => String(a.name).localeCompare(String(b.name));
+    folders.forEach((folder) => told(folder.fixtures));
+    unfiled.forEach((folder) => told(folder.fixtures));
+    folders.forEach((folder) => folder.fixtures.sort(byName));
+    return { folders, unfiled: [...unfiled.values()] };
   }
 
   /**
@@ -2079,10 +2316,11 @@ class Show extends EventEmitter {
   async preloadFixtureList() {
     try {
       const res = await axios.get(`${import.meta.env.VITE_STATIC_URL}fixtures/fixture_list.json`);
-      this.rawOFLFixtures = res.data;
+      /** The shipped index as fetched, which every refresh starts from. */
+      this.shippedFixtureList = res.data;
     } catch (err) {
       console.log('could not fetch fixture list.');
-      this.rawOFLFixtures = [];
+      this.shippedFixtureList = [];
     }
     this.refreshFixtureList();
   }

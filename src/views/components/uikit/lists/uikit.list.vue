@@ -1,550 +1,642 @@
 <template>
   <div class="uikit_list">
-    <uk-list-item
-      v-if="toggleable && !tree.some(i=>i.value.unfold)"
-      toggleable
-      :item="{
-        value: {
-          name: toggledItems.length ? 'Uncheck All' : 'Check All',
-          more: `${toggledItems.length}/${items.length}`,
-        },
-        toggled: toggledItems.length,
-      }"
-      style="padding: 6px 8px;"
-      @click="checkAll(!toggledItems.length)"
-    />
-    <uk-txt-input
-      v-if="filterable"
-      v-model="searchString"
-      :disabled="disabled"
-      :outlined="false"
-      auto-update
-      class="uikit_list_searchbox"
-      :placeholder="'Search items'"
-    />
+    <!-- The owner's filter buttons sit after the search box, on its line. -->
     <div
-      v-if="filteredItems.length != 0"
+      v-if="filterable"
+      class="uikit_list_search"
+    >
+      <uk-txt-input
+        v-model="searchString"
+        :disabled="disabled"
+        :outlined="false"
+        auto-update
+        class="uikit_list_searchbox"
+        :placeholder="'Search items'"
+      />
+      <slot name="filters" />
+    </div>
+    <!-- `band`: a margin round the rows and room below them, where a press
+         starts a band selection rather than landing on a row. -->
+    <div
+      v-if="rows.length"
+      ref="body"
       tabindex="0"
       class="uikit_list_body"
+      :class="{ band: bandSelect && !noHighlight }"
       @focus="handleFocusIn"
       @focusout="handleFocusOut"
+      @dragleave="dragLeave"
+      @mousedown="startBand"
     >
       <!-- Stretching an unfolded item to share the container's height is what
            accordion mode is, so it follows that flag. Without it a group takes
            only the room its own items need and the slack gathers at the bottom,
            rather than being dealt out equally between the groups. -->
       <div
-        v-for="(treeItem, index) in filteredItems"
-        :key="index"
+        v-for="(row, index) in rows"
+        :key="row.key"
         class="uikit_list_item parent"
-        :style="{
-          flex: treeItem.unfolded && accordion ? 1 : 'unset',
-          overflowY: treeItem.unfolded && treeItem.value.unfold && accordion ? 'hidden' : 'visible',
+        :class="{
+          drop_before: dropIndex === index,
+          drop_after: dropIndex === rows.length && index === rows.length - 1,
         }"
+        :style="{
+          flex: isOpen(row) && accordion ? 1 : 'unset',
+          overflowY: isOpen(row) && row.children && accordion ? 'hidden' : 'visible',
+        }"
+        @dragover.prevent="(e) => dragOver(e, index)"
+        @drop.prevent="drop"
       >
         <div
-          v-if="treeItem.value.unfold"
+          v-if="row.children"
           class="uikit_list_item_unfoldable"
-          @dragover.prevent
-          @dragenter.prevent="(e) => dragEnter(e, treeItem)"
-          @dragleave.prevent="dragOut"
-          @drop.prevent="(e) => drop(e, treeItem)"
         >
           <uk-list-item
+            :value="row.value"
+            :data-band-key="bandKey(row)"
+            :selected="isSelected(row)"
+            :highlighted="isHighlighted(row)"
+            :unfolded="isOpen(row)"
             :colored="colored"
-            :index="index"
-            :item="treeItem"
+            :focused="hasFocus"
             :tall="tall"
+            :no-select="noSelect"
             :draggable="draggable"
-            @dragstart="(e) => startDrag(e, treeItem)"
+            @dragstart="(e) => startDrag(e, row)"
             @dragend.prevent="stopDrag"
-            @click="(e) => selectItem(e, treeItem, filteredItems)"
-            @unfold="unfold(treeItem)"
+            @click="(e) => clickRow(e, row, rows)"
+            @dblclick="activate(row)"
+            @unfold="unfold(row)"
           />
-          <Transition
-            name="fadeHeight"
-          >
+          <Transition name="fadeHeight">
             <span
-              v-if="treeItem.unfolded"
-              :style="{
-                overflowY: 'auto'
-              }"
+              v-if="isOpen(row) && row.children.length"
+              :style="{ overflowY: 'auto' }"
             >
-              <template v-if="treeItem.value.unfold && treeItem.value.unfold.length">
-                <uk-list-item
-                  v-show="toggleable"
-                  toggleable
-                  :item="{
-                    value: {
-                      name: treeItem.value.unfold.filter(i=>i.toggled).length
-                        ? 'Uncheck All'
-                        : 'Check All',
-                      more: `${treeItem.value.unfold.filter(i=>i.toggled).length}
-                      /${treeItem.value.unfold.length}`,
-                    },
-                    toggled: treeItem.value.unfold.filter(i=>i.toggled).length,
-                  }"
-                  style="padding: 6px 6px 6px 16px;"
-                  @click="checkAll(!treeItem.value.unfold.filter(i=>i.toggled).length, treeItem)"
-                />
-                <uk-list-item
-                  v-for="(subTreeItem, subIndex) in treeItem.value.unfold"
-                  :key="subIndex"
-                  class="uikit_sublist_body"
-                  :item="subTreeItem"
-                  :toggleable="toggleable"
-                  :no-highlight="noHighlight"
-                  :focused="hasFocus"
-                  :tall="tall"
-                  :no-select="noSelect"
-                  :draggable="draggable"
-                  @dragstart="(e) => startDrag(e, subTreeItem)"
-                  @dragend.prevent="stopDrag"
-                  @dragover.prevent
-                  @dragenter.prevent="(e) => dragEnter(e, subTreeItem)"
-                  @dragleave.prevent="dragOut"
-                  @drop.prevent="(e) => drop(e, subTreeItem)"
-                  @click="(e) => selectItem(e, subTreeItem, treeItem.value.unfold)"
-                  @toggle="toggleItem(subTreeItem)"
-                />
-              </template>
+              <uk-list-item
+                v-for="child in row.children"
+                :key="child.key"
+                class="uikit_sublist_body"
+                :value="child.value"
+                :data-band-key="bandKey(child)"
+                :selected="isSelected(child)"
+                :highlighted="isHighlighted(child)"
+                :no-highlight="noHighlight"
+                :focused="hasFocus"
+                :tall="tall"
+                :no-select="noSelect"
+                :draggable="draggable"
+                @dragstart="(e) => startDrag(e, child)"
+                @dragend.prevent="stopDrag"
+                @click="(e) => clickRow(e, child, row.children)"
+                @dblclick="activate(child)"
+              />
             </span>
           </Transition>
           <div
-            v-if="treeItem.unfolded && !treeItem.value.unfold.length"
+            v-if="isOpen(row) && !row.children.length"
             class="uikit_list_body_empty"
           >
-            <h3 v-if="!treeItem.value.unfold.length">
-              Nothing to display
-            </h3>
-            <!-- <uk-button
-              label="patch fixture"
-            /> -->
+            <h3>Nothing to display</h3>
           </div>
         </div>
         <uk-list-item
           v-else
-          :item="treeItem"
+          :value="row.value"
+          :data-band-key="bandKey(row)"
+          :selected="isSelected(row)"
+          :highlighted="isHighlighted(row)"
           :colored="colored"
-          :toggleable="toggleable"
           :focused="hasFocus"
           :tall="tall"
           :no-select="noSelect"
           :draggable="draggable"
-          @dragstart="(e) => startDrag(e, treeItem)"
+          @dragstart="(e) => startDrag(e, row)"
           @dragend.prevent="stopDrag"
-          @dragover.prevent
-          @dragenter.prevent="(e) => dragEnter(e, treeItem)"
-          @dragleave.prevent="dragOut"
-          @drop.prevent="(e) => drop(e, treeItem)"
-          @click="(e) => selectItem(e, treeItem, filteredItems)"
-          @toggle="toggleItem(treeItem)"
+          @click="(e) => clickRow(e, row, rows)"
+          @dblclick="activate(row)"
         />
-        <div
-          class="uikit_sublist_body_empty"
-        />
+        <div class="uikit_sublist_body_empty" />
       </div>
     </div>
     <div
       v-else
       class="uikit_list_body_empty"
     >
-      <h3>
-        Nothing to display
-      </h3>
-      <!-- <uk-button
-        label="patch fixture"
-      /> -->
+      <h3>Nothing to display</h3>
     </div>
   </div>
 </template>
 <script>
+import { searchWords, matchesWords } from '@/plugins/word_search';
+
 /**
- * This is a MESS. Sure, it does the work, but this should be refactored
+ * A row's key: the id its owner gave it, or its name where it has none. A
+ * child without an id is keyed under its parent, so two folders can each hold
+ * an entry of the same name.
+ *
+ * @param {Object} value the row's item
+ * @param {*} [parentKey] the parent row's key, for a child
+ * @returns {String|Number}
+ */
+function keyOf(value, parentKey) {
+  if (value && value.id !== undefined && value.id !== null) return value.id;
+  const name = value ? value.name : '';
+  return parentKey === undefined ? `/${name}` : `${parentKey}/${name}`;
+}
+
+/**
+ * A list of items, one level of which may unfold.
+ *
+ * The rows are worked out from `items` and never written back: which rows are
+ * selected, highlighted and open is held as keys, and a row is drawn from
+ * whether its key is among them. Rebuilding the rows therefore cannot leave a
+ * mark on the wrong one.
+ *
+ * Selection belongs to the owner when it passes `highlightIds` or
+ * `selectedId`, and the list only reports clicks; otherwise the list keeps the
+ * same keys itself.
  */
 export default {
   name: 'UkList',
   compatConfig: {
-    // or, for full vue 3 compat in this component:
     MODE: 3,
   },
   props: {
     /**
-     * Whether the list is disabled or not
+     * Whether a press beside or below the rows starts a band selection: every
+     * row the drag passes over is highlighted as it goes. Ctrl or Shift adds
+     * to what is already highlighted.
      */
+    bandSelect: {
+      type: Boolean,
+      default: false,
+    },
+    /** Whether the list is disabled */
     disabled: Boolean,
-    /**
-     * Whether the list elements may be deleted or not
-     */
+    /** Whether Delete and Backspace report the selection for deletion */
     deletable: Boolean,
     /**
-     * Whether or not the list is filterable
+     * Whether a search box filters the rows by name: every word, in any
+     * order. A row with `unfiltered` set is shown as given whatever the search.
      */
     filterable: Boolean,
-    /**
-     * Whether or not the list is toggleable
-     */
-    toggleable: Boolean,
-    /**
-     * Whether list items may be dragged or not (non-deep lists only)
-     */
+    /** The search box's text, when the owner wants to read or set it (`v-model:search`). */
+    search: {
+      type: String,
+      default: undefined,
+    },
+    /** Whether rows may be dragged to a new place in the list */
     draggable: Boolean,
     /**
-     * Ids of items to show as highlighted, driven from outside the list (e.g.
-     * a selection made in the 3D view). Null leaves the list in charge of its
-     * own highlighting.
+     * Ids of the rows to show as highlighted, when the owner holds the
+     * selection. Null leaves the list to keep its own.
      */
     highlightIds: {
       type: Array,
       default: null,
     },
     /**
-     * Id of the item to show as selected, driven from outside the list. Left
-     * undefined the list stays in charge of its own selection, which is what
-     * every existing caller relies on; passing it hands that over, so an owner
-     * that can drop a selection on its own account can say so.
+     * Id of the row to show as selected, when the owner holds the selection.
+     * Undefined leaves the list to keep its own; null means none.
      */
     selectedId: {
       type: [String, Number],
       default: undefined,
     },
-    /**
-     * Whether or not item highlighting is disabled
-     */
+    /** Whether several rows can be highlighted at once */
     noHighlight: Boolean,
-    /**
-     * Wether or not selected item styling is applied
-     */
+    /** Whether the selected row is drawn as selected */
     noSelect: Boolean,
-    /**
-     * Items to be displayed onto the list
-     */
+    /** `{ id?, name, unfold?, ... }` per row; `unfold` holds child rows */
     items: {
       type: Array,
       default: () => [],
     },
-    /**
-     * @todo remove this ?
-     */
+    /** Coloured dot styling */
     colored: Boolean,
-    /**
-     * Alternative tall (40px) list item styling
-     */
+    /** Tall (40px) rows */
     tall: Boolean,
-    /**
-     * Automaticaloly select first item on component mount
-     */
+    /** Selects, or opens, the first row once there is one */
     autoSelectFirst: Boolean,
-    /**
-     * Automatically select item at given index
-     */
+    /** Selects the row at this index */
     autoSelect: {
       type: Number,
       default: null,
     },
-    /**
-     * DOM element list which wont be affected by focusout event
-     * useful when seleting multiple items in order to set their value commonly from
-     * another component
-     */
-    preventUnfocus: {
-      type: Array,
-      default: () => [],
-    },
-    /**
-     * Whether unfoldable items should squish over the container's height and behave in an
-     * Accordion fashion (only one item unfolded at once).
-     */
+    /** Only one row open at a time, sharing the height between open rows */
     accordion: Boolean,
   },
-  emits: ['unfold', 'focused', 'highlight', 'toggle', 'select', 'reparent', 'delete'],
+  emits: ['unfold', 'focused', 'highlight', 'select', 'reorder', 'delete', 'update:search', 'activate'],
   data() {
     return {
-      /**
-       * List's filter string
-       */
-      searchString: '',
-      /**
-       * List's tree elements. provided on component mount
-       * though updateTree method.
-       *
-       * @see updateTree
-       */
-      tree: [],
-      /**
-       * List of highlighted list elements
-       */
-      highlightedItems: [],
-      /**
-       * List of toggled list elements
-       */
-      toggledItems: [],
-      /**
-       * Reference to the currently selected list item
-       */
-      selectedItem: null,
-      /**
-       * Delete popup display state flag
-       */
-      /**
-       * DOM element list which wont be affected by focusout event
-       * useful when seleting multiple items in order to set their value commonly from
-       * another component
-       */
-      unfocusElBlacklist: [...this.preventUnfocus],
-      /**
-       * List element focus state
-       */
+      /** The search box's text. */
+      searchString: this.search || '',
+      /** Highlighted keys, when the owner does not hold them. */
+      ownHighlight: [],
+      /** Selected key, when the owner does not hold it. */
+      ownSelected: null,
+      /** The row a shift-click ranges from, when nothing is selected. */
+      anchorKey: null,
+      /** Keys of the rows showing their children. */
+      openKeys: [],
+      /** Whether the list has keyboard focus. */
       hasFocus: false,
-      /**
-       * Dragging event state
-       */
+      /** Whether a drag is under way. */
       dragging: false,
-      /** Item currently being dragged, and the row it is over. */
-      draggedItem: null,
-      dropTarget: null,
+      /** Key of the row being dragged. */
+      draggedKey: null,
+      /**
+       * Gap the dragged item would land in: 0 is above the first row, the
+       * row count is below the last. Null when the drop would change nothing.
+       */
+      dropIndex: null,
+      /**
+       * A band selection under way: where it started, in the body's scrolled
+       * coordinates, the keys it adds to, and where the pointer is. Null when
+       * there is none.
+       */
+      band: null,
     };
   },
-
   computed: {
     /**
-     * Filters tree items/subitems on their name using provided search string
+     * Every row, children included, unfiltered.
      *
-     * @returns {Array} array of filtered tree items and subitems
+     * @returns {Array<Object>} `{ key, value, children }`, children null for a
+     *   row that does not unfold
      */
-    filteredItems() {
-      let items = this.tree;
-      const treeCpy = JSON.parse(JSON.stringify(this.tree));
-      const normalizedSearchString = this.searchString.toLowerCase();
-      if (normalizedSearchString) {
-        items = [];
-        items = treeCpy.filter((treeItem, index) => {
-          if (treeItem.value.unfold) {
-            const subItems = treeItem.value.unfold.filter((unfoldItem) => {
-              const normalizedName = unfoldItem.value.name.toLowerCase().replace('-', ' ');
-              return normalizedName.indexOf(normalizedSearchString) > -1;
-            });
-            if (subItems.length > 0) {
-              treeItem.value.unfold = subItems;
-              treeItem.unfolded = true;
-              return true;
-            }
-            treeItem.value.unfold = treeCpy[index].value.unfold;
-            treeItem.unfolded = false;
-          }
-          const normalizedName = treeItem.value.name.toLowerCase().replace('-', ' ');
-          return normalizedName.indexOf(normalizedSearchString) > -1;
-        });
-      } else {
-        // eslint-disable-next-line no-return-assign
-        treeCpy.forEach((treeItem) => (treeItem.unfolded = false));
-      }
-      return items;
+    allRows() {
+      return (this.items || []).map((value) => {
+        const key = keyOf(value);
+        const children = Array.isArray(value.unfold)
+          ? value.unfold.map((child) => ({ key: keyOf(child, key), value: child, children: null }))
+          : null;
+        return { key, value, children };
+      });
+    },
+    /**
+     * Rows by key, children included, whatever the search is hiding.
+     *
+     * @returns {Map}
+     */
+    rowsByKey() {
+      const byKey = new Map();
+      this.allRows.forEach((row) => {
+        byKey.set(row.key, row);
+        (row.children || []).forEach((child) => byKey.set(child.key, child));
+      });
+      return byKey;
+    },
+    /**
+     * The rows the search leaves. A folder with a matching child shows only
+     * those children, and shows them open.
+     *
+     * @returns {Array<Object>} `{ key, value, children, opened? }`
+     */
+    rows() {
+      const words = searchWords(this.searchString);
+      if (!words.length) return this.allRows;
+      return this.allRows.flatMap((row) => {
+        // A row that answers the search itself, already narrowed by its owner.
+        if (row.value.unfiltered) return [{ ...row, opened: true }];
+        // A folder matched by its own name shows whole, as it is.
+        if (matchesWords(words, row.value.name)) return [row];
+        if (row.children) {
+          // A child is read with its folder's name, so "maker model" finds a
+          // model filed under its maker.
+          const found = row.children
+            .filter((child) => matchesWords(words, row.value.name, child.value.name));
+          if (found.length) return [{ ...row, children: found, opened: true }];
+        }
+        return [];
+      });
+    },
+    /** @returns {Set} highlighted keys, the owner's or the list's own */
+    highlightSet() {
+      return new Set(Array.isArray(this.highlightIds) ? this.highlightIds : this.ownHighlight);
+    },
+    /** @returns {*} the selected key, the owner's or the list's own; null for none */
+    selectedKey() {
+      const key = this.selectedId !== undefined ? this.selectedId : this.ownSelected;
+      return key === undefined ? null : key;
+    },
+    /** @returns {*} the key a shift-click ranges from */
+    rangeFrom() {
+      return this.selectedKey !== null ? this.selectedKey : this.anchorKey;
     },
   },
   watch: {
     items(items, oldItems) {
-      // Listening to every entry changes, which are by design reactive, seems like a
-      // waste of eventloop instructions. There should be a better approach.
-      // Passing in getters does not allow to check for same-reference value though.
-      // This is a quick and dirty hack to guarantee refresh only if actual data has changed
-      if (this.updateTree(items)) {
-        // The rows are new objects, so whatever was highlighted was matched
-        // against rows that no longer exist -- and `highlightIds` will not
-        // necessarily change again to re-trigger its own watcher. Adding
-        // fixtures changes the selection and the list contents in the same
-        // tick, and either may arrive first.
-        this.applyExternalHighlight(this.highlightIds);
-        // And the selected row with it, for an owner that drives one. The
-        // rebuild carries `selected` across by *index*, so inserting rows
-        // above it does not merely keep a stale row picked out -- it moves
-        // the mark to whichever row now sits at that index.
-        this.applyExternalSelection(this.selectedId);
-        if (items && items.length && (!oldItems || !oldItems.length)) {
-          if (this.autoSelectFirst && this.tree[0]) {
-            if (this.tree[0].value.unfold) {
-              this.tree[0].unfolded = true;
-            } else {
-              this.selectItem(undefined, this.tree[0]);
-            }
-          }
-        }
-      }
-    },
-    highlightIds: {
-      handler(ids) {
-        this.applyExternalHighlight(ids);
-      },
-      deep: true,
-    },
-    selectedId(id) {
-      this.applyExternalSelection(id);
-    },
-    preventUnfocus() {
-      this.unfocusElBlacklist.push(...this.preventUnfocus);
+      if (items && items.length && (!oldItems || !oldItems.length)) this.selectFirst();
     },
     autoSelect(index) {
-      const item = this.tree[parseInt(index, 10)];
-      if (item) {
-        this.selectItem(undefined, item);
-      }
+      const row = this.rows[parseInt(index, 10)];
+      if (row) this.selectOnly(row);
+    },
+    search(text) {
+      if (text !== undefined && text !== this.searchString) this.searchString = text;
+    },
+    searchString(text) {
+      this.$emit('update:search', text);
     },
   },
+  mounted() {
+    if (this.rows.length) this.selectFirst();
+  },
   unmounted() {
+    this.endBand();
     window.removeEventListener('keydown', this.keydownListener);
     this.$emit('focused', false);
   },
-  mounted() {
-    this.selectedItem = [];
-    // A list built while something is already selected has to show it: the
-    // watcher only fires on a change, and there is none if the selection was
-    // made before this list existed.
-    this.applyExternalHighlight(this.highlightIds);
-    if (this.updateTree(this.items)) {
-      // The same rule as the highlight above: a list whose owner already has a
-      // selection has to show it on the first paint. The `selectedId` watcher
-      // only fires on a change, and the `items` watcher that also applies it
-      // only fires if the items arrive *after* mount -- so a list handed a
-      // complete list up front would show no selection at all.
-      this.applyExternalSelection(this.selectedId);
-      if (this.autoSelectFirst && this.tree[0]) {
-        if (this.tree[0].value.unfold) {
-          this.tree[0].unfolded = true;
-        } else {
-          this.selectItem(undefined, this.tree[0]);
-        }
-      }
-    }
-    this.preventUnfocus.push(this.$refs.popup);
-  },
   methods: {
     /**
-     * Update the component two level tree list
+     * The key a row is found by from the page, as the attribute holds it.
      *
-     * @param {Array} items items to be displayed within the list
-     * @returns {Boolean} information regarding whether or not an update was made
+     * @param {Object} row
+     * @returns {String}
      */
-    updateTree(items) {
-      const jsonData = JSON.stringify(items);
-      if (this.jsonData !== jsonData) {
-        this.jsonData = jsonData;
-        this._tree = [];
-        items.forEach((item, index) => {
-          if (this._tree[index]) {
-            this._tree[index].value = item;
-          } else {
-            this._tree.push({
-              value: item,
-              unfolded: false, // this.tree[index] ? this.tree[index].value.unfold : false,
-              highlighted: this.tree[index] ? this.tree[index].highlighted : false,
-              toggled: item.active,
-              selected: this.tree[index] ? this.tree[index].selected : false,
-            });
-          }
-          if (item.unfold) {
-            this._tree[index].value.unfold = this._tree[index].value.unfold.map((subItem) => ({
-              value: subItem,
-              highlighted: false,
-              selected: false,
-              toggled: subItem.active,
-            }));
-          }
-        });
-        this.tree = this._tree;
-        return true;
-      }
-      return false;
+    bandKey(row) {
+      return String(row.key);
     },
     /**
-     * Reveal sublist from unfoldable item
+     * Starts a band selection, for a press on the list's own ground -- the
+     * margin or the space below the rows. A press on a row is the row's.
      *
-     * @param {Object} item the tree item to be unfolded
+     * @param {MouseEvent} e
      */
-    unfold(item) {
-      if (this.accordion) {
-        // eslint-disable-next-line no-return-assign
-        this.tree.forEach((i) => i.unfolded = false);
+    startBand(e) {
+      if (!this.bandSelect || this.noHighlight || e.button !== 0) return;
+      const { body } = this.$refs;
+      if (!body || e.target.closest('.uikit_list_item')) return;
+      e.preventDefault();
+      body.focus();
+      const additive = e.ctrlKey || e.shiftKey;
+      this.band = {
+        startY: this.bandY(e.clientY),
+        clientY: e.clientY,
+        moved: false,
+        base: additive ? [...this.highlightSet] : [],
+        applied: null,
+        frame: 0,
+      };
+      window.addEventListener('mousemove', this.moveBand);
+      window.addEventListener('mouseup', this.endBand);
+      this.band.frame = requestAnimationFrame(this.scrollBand);
+    },
+    /**
+     * A pointer height in the body's own coordinates, scroll included, so the
+     * band stays anchored to rows as the list scrolls under it.
+     *
+     * @param {Number} clientY
+     * @returns {Number}
+     */
+    bandY(clientY) {
+      const { body } = this.$refs;
+      return clientY - body.getBoundingClientRect().top + body.scrollTop;
+    },
+    /** @param {MouseEvent} e */
+    moveBand(e) {
+      if (!this.band) return;
+      this.band.clientY = e.clientY;
+      if (Math.abs(this.bandY(e.clientY) - this.band.startY) > 2) this.band.moved = true;
+      this.applyBand();
+    },
+    /**
+     * Highlights every row the band's height covers, on top of what it adds to.
+     * Rows fill the list's width, so the band is only ever a range of heights.
+     */
+    applyBand() {
+      const { band } = this;
+      const { body } = this.$refs;
+      if (!band || !body || !band.moved) return;
+      const y = this.bandY(band.clientY);
+      const top = Math.min(band.startY, y);
+      const bottom = Math.max(band.startY, y);
+      const bodyTop = body.getBoundingClientRect().top - body.scrollTop;
+      const byString = new Map([...this.rowsByKey.keys()].map((key) => [String(key), key]));
+      const covered = [];
+      body.querySelectorAll('[data-band-key]').forEach((el) => {
+        const rect = el.getBoundingClientRect();
+        const rowTop = rect.top - bodyTop;
+        const rowBottom = rect.bottom - bodyTop;
+        if (rowBottom > top && rowTop < bottom) {
+          const key = byString.get(el.getAttribute('data-band-key'));
+          if (key !== undefined) covered.push(key);
+        }
+      });
+      const keys = [...new Set([...band.base, ...covered])];
+      const signature = JSON.stringify(this.inListOrder(keys));
+      if (signature === band.applied) return;
+      band.applied = signature;
+      this.setHighlight(keys);
+    },
+    /**
+     * Scrolls the list while the pointer is held past its top or bottom, and
+     * widens the band with it.
+     */
+    scrollBand() {
+      const { band } = this;
+      const { body } = this.$refs;
+      if (!band || !body) return;
+      const rect = body.getBoundingClientRect();
+      let step = 0;
+      if (band.clientY < rect.top) step = -Math.min(rect.top - band.clientY, 40) / 2;
+      else if (band.clientY > rect.bottom) step = Math.min(band.clientY - rect.bottom, 40) / 2;
+      if (step) {
+        body.scrollTop += step;
+        this.applyBand();
       }
-      item.unfolded = !item.unfolded;
-
+      band.frame = requestAnimationFrame(this.scrollBand);
+    },
+    /**
+     * Ends a band selection. A press that never moved is a click on empty
+     * ground, which clears the highlight unless it was adding.
+     */
+    endBand() {
+      window.removeEventListener('mousemove', this.moveBand);
+      window.removeEventListener('mouseup', this.endBand);
+      const { band } = this;
+      if (!band) return;
+      cancelAnimationFrame(band.frame);
+      this.band = null;
+      if (!band.moved && !band.base.length) this.setHighlight([]);
+    },
+    /** @returns {Boolean} */
+    isHighlighted(row) {
+      return !this.noHighlight && this.highlightSet.has(row.key);
+    },
+    /** @returns {Boolean} */
+    isSelected(row) {
+      return this.selectedKey !== null && row.key === this.selectedKey;
+    },
+    /** @returns {Boolean} */
+    isOpen(row) {
+      return !!row.opened || this.openKeys.includes(row.key);
+    },
+    /**
+     * Keys in the order their rows appear, children after their parent.
+     *
+     * @param {Iterable} keys
+     * @returns {Array}
+     */
+    inListOrder(keys) {
+      const wanted = new Set(keys);
+      return [...this.rowsByKey.keys()].filter((key) => wanted.has(key));
+    },
+    /** Opens or selects the first row, for `autoSelectFirst`. */
+    selectFirst() {
+      if (!this.autoSelectFirst || !this.rows[0]) return;
+      const first = this.rows[0];
+      if (first.children) {
+        if (!this.isOpen(first)) this.openKeys = [...this.openKeys, first.key];
+      } else {
+        this.selectOnly(first);
+      }
+    },
+    /**
+     * Sets the highlighted rows and reports them.
+     *
+     * @param {Array} keys
+     */
+    setHighlight(keys) {
+      const ordered = this.inListOrder(keys);
+      if (!Array.isArray(this.highlightIds)) this.ownHighlight = ordered;
       /**
-       * Item unfold event
+       * The rows highlighted, all of them, in list order
        *
-       * @property {Object} item.value Unfolded/folded item value
+       * @property {Array} values their items
        */
-      this.$emit('unfold', item.value);
+      this.$emit('highlight', ordered.map((key) => this.rowsByKey.get(key).value));
     },
     /**
-     * Handler for list focus-in
+     * Selects a row and reports it.
      *
+     * @param {Object} row
      */
+    setSelected(row) {
+      if (this.selectedId === undefined) this.ownSelected = row.key;
+      this.anchorKey = row.key;
+      /**
+       * Row selected
+       *
+       * @property {Object} value its item
+       */
+      this.$emit('select', row.value);
+    },
+    /**
+     * A plain click: this row and no other.
+     *
+     * @param {Object} row
+     */
+    selectOnly(row) {
+      if (!this.noHighlight) this.setHighlight([]);
+      this.setSelected(row);
+    },
+    /**
+     * Ctrl-click: adds the row to the highlight, or takes it out. A single
+     * selection already made is where the set starts.
+     *
+     * @param {Object} row
+     */
+    toggleHighlight(row) {
+      const keys = [...this.highlightSet];
+      if (!keys.length && this.selectedKey !== null && this.selectedKey !== row.key) {
+        keys.push(this.selectedKey);
+      }
+      const at = keys.indexOf(row.key);
+      if (at === -1) keys.push(row.key);
+      else keys.splice(at, 1);
+      const anchor = this.rowsByKey.get(this.rangeFrom) || this.rowsByKey.get(keys[0]);
+      if (anchor) this.setSelected(anchor);
+      this.setHighlight(keys);
+    },
+    /**
+     * Shift-click: every row from the anchor to this one, among the rows it
+     * sits with.
+     *
+     * @param {Object} row
+     * @param {Array} siblings the rows it sits with -- the top level, or a
+     *   folder's children
+     */
+    selectRange(row, siblings) {
+      const keys = siblings.map((entry) => entry.key);
+      const from = keys.indexOf(this.rangeFrom);
+      const to = keys.indexOf(row.key);
+      if (from === -1) {
+        this.selectOnly(row);
+        return;
+      }
+      if (from === to) return;
+      this.setHighlight(keys.slice(Math.min(from, to), Math.max(from, to) + 1));
+    },
+    /**
+     * A click on a row, with whatever modifier it carried.
+     *
+     * @param {Event} e click event
+     * @param {Object} row
+     * @param {Array} siblings the rows it sits with
+     */
+    clickRow(e, row, siblings) {
+      if (row.value.disabled || this.dragging) return;
+      if (e && e.shiftKey && !this.noHighlight) this.selectRange(row, siblings);
+      else if (e && e.ctrlKey && !this.noHighlight) this.toggleHighlight(row);
+      else this.selectOnly(row);
+    },
+    /**
+     * Opens or closes a row's children. In accordion mode the row opened is
+     * the only one open.
+     *
+     * @param {Object} row
+     */
+    /**
+     * Reports a row double-clicked: opened, as against chosen.
+     *
+     * @public
+     * @param {Object} row
+     */
+    activate(row) {
+      this.$emit('activate', row.value);
+    },
+    unfold(row) {
+      const open = this.openKeys.includes(row.key);
+      if (this.accordion) this.openKeys = [row.key];
+      else if (open) this.openKeys = this.openKeys.filter((key) => key !== row.key);
+      else this.openKeys = [...this.openKeys, row.key];
+      /**
+       * Row opened or closed
+       *
+       * @property {Object} value its item
+       */
+      this.$emit('unfold', row.value);
+    },
+    /** Handler for list focus-in. */
     handleFocusIn() {
       this.hasFocus = true;
       /**
-       * List focus state event
+       * List focus state
        *
-       * @property {Boolean} -List focus state
+       * @property {Boolean} focused
        */
-      this.$emit('focused', this.hasFocus);
+      this.$emit('focused', true);
       window.addEventListener('keydown', this.keydownListener);
     },
-    /**
-     * Handler for list focus-out
-     *
-     * @param {Object} e focusout event
-     */
-    handleFocusOut(e) {
+    /** Handler for list focus-out. */
+    handleFocusOut() {
       this.hasFocus = false;
       this.$emit('focused', false);
-      // let keepFocus = false;
-      // window.removeEventListener('click', this.handleFocusOut);
-      // if (e) {
-      //   keepFocus = this.unfocusElBlacklist.filter(
-      //     (el) => (
-      //       el.contains(e.target)
-      //       || el.contains(e.relatedTarget)
-      //       || el.contains(e.explicitOriginalTarget)
-      //       || this.$el.contains(e.target)
-      //     ),
-      //   ).length >= 1;
-      // }
-      // if (!keepFocus || this.unfocusElBlacklist.length === 0) {
-      //   this.hasFocus = false;
-      //   this.clearHighlighted();
-      //   window.removeEventListener('keydown', this.keydownListener);
-      //   /**
-      //    * List focus state event
-      //    *
-      //    * @property {Boolean} -List focus state
-      //    */
-      //   this.$emit('focused', this.hasFocus);
-      // } else {
-      //   this.$nextTick(() => {
-      //     window.addEventListener('click', this.handleFocusOut);
-      //   });
-      // }
     },
     /**
-     * Clear all highlighted items from the highlightedItems list
-     * and reset item styling to their parent one
+     * Drops the highlight, and optionally the focus with it.
      *
+     * @param {Boolean} [focusOut]
      */
     clearHighlighted(focusOut = false) {
-      if (!this.noHighlight) {
-        this.highlightedItems.forEach((item) => {
-          item.highlighted = false;
-        });
-        this.highlightedItems = [];
-        /**
-         * Item(s) highlighting event
-         *
-         * @property {Array} -List of references to highlighted items values
-         */
-        this.$emit('highlight', []);
-        if (focusOut) {
-          this.$emit('focused', false);
-          this.hasFocus = false;
-        }
+      if (this.noHighlight) return;
+      this.setHighlight([]);
+      if (focusOut) {
+        this.$emit('focused', false);
+        this.hasFocus = false;
       }
     },
     /**
@@ -557,20 +649,24 @@ export default {
      * @public
      */
     handleDeletion() {
-      if (!this.deletable) return;
-      if (!this.hasFocus || (!this.selectedItem && !this.highlightedItems.length)) return;
+      if (!this.deletable || !this.hasFocus) return;
+      let keys = [];
+      if (this.highlightSet.size) keys = this.inListOrder(this.highlightSet);
+      else if (this.selectedKey !== null) keys = [this.selectedKey];
+      const values = keys
+        .map((key) => this.rowsByKey.get(key))
+        .filter(Boolean)
+        .map((row) => row.value);
+      if (!values.length) return;
       /**
-       * Item(s) deletion event
+       * Rows to delete
        *
-       * @property {Array} -List of references to highlighted items values
+       * @property {Array} values their items
        */
-      this.$emit('delete', this.highlightedItems.length
-        ? this.highlightedItems.map((i) => i.value)
-        : [this.selectedItem.value]);
+      this.$emit('delete', values);
       this.clearHighlighted();
     },
     /**
-     *
      * Keydown event listener.
      *
      * @param {Event} e keydown event
@@ -581,280 +677,83 @@ export default {
         this.handleDeletion();
       } else if (key === 'Escape') {
         this.clearHighlighted(true);
-        this.hasFocus = false;
-      }
-    },
-    toggleItem(item) {
-      if (!item.value.disabled && !this.dragging) {
-        item.toggled = !item.toggled;
-        this.toggledItems = this.tree.flatMap((i) => {
-          if (i.toggled) {
-            return i;
-          } if (i.value.unfold) {
-            return i.value.unfold.flatMap((subItem) => (subItem.toggled ? subItem : []));
-          }
-          return [];
-        });
-        /**
-         * Item selection event
-         *
-         * @property {Object} this.selectedItem.value reference to selected tree item object's value
-         */
-        this.$emit(
-          'toggle',
-          this.toggledItems.map((i) => i.value),
-        );
-      }
-    },
-    checkAll(state, item) {
-      if (item) {
-        item.value.unfold?.forEach((i) => {
-          i.toggled = state;
-        });
-      } else {
-        this.tree.forEach((i) => {
-          i.toggled = state;
-        });
-      }
-      this.toggledItems = this.tree.flatMap((i) => {
-        if (i.toggled) {
-          return i;
-        } if (i.value.unfold) {
-          return i.value.unfold.flatMap((subItem) => (subItem.toggled ? subItem : []));
-        }
-        return [];
-      });
-      /**
-         * Item selection event
-         *
-         * @property {Object} this.selectedItem.value reference to selected tree item object's value
-         */
-      this.$emit(
-        'toggle',
-        this.toggledItems.map((i) => i.value),
-      );
-    },
-    handleSingleSelection(item, clearHighlighted = false) {
-      this.tree.forEach((treeItem) => {
-        treeItem.selected = false;
-        if (clearHighlighted) {
-          treeItem.highlighted = false;
-        }
-        if (treeItem.value.unfold) {
-          treeItem.value.unfold.forEach((subTreeItem) => {
-            if (clearHighlighted) {
-              subTreeItem.highlighted = false;
-            }
-            subTreeItem.selected = false;
-          });
-        }
-      });
-      this.selectedItem = item;
-      this.selectedIndex = this.tree.indexOf(item);
-      item.selected = true;
-      if (!this.noHighlight && clearHighlighted) {
-        this.clearHighlighted();
-      }
-      /**
-       * Item selection event
-       *
-       * @property {Object} this.selectedItem.value reference to selected tree item object's value
-       */
-      this.$emit('select', this.selectedItem.value);
-    },
-    /**
-     * Mirrors a selection made elsewhere (the 3D view) onto the list. Emits
-     * nothing: the selection already exists, and echoing it back would loop.
-     *
-     * @param {Array} ids ids of the items to mark highlighted
-     */
-    applyExternalHighlight(ids) {
-      if (this.noHighlight || !Array.isArray(ids)) return;
-      this.highlightedItems.forEach((item) => {
-        item.highlighted = false;
-      });
-      this.highlightedItems = [];
-      if (!ids.length) return;
-      this.tree.forEach((item) => {
-        if (item.value && ids.includes(item.value.id)) {
-          item.highlighted = true;
-          this.highlightedItems.push(item);
-        }
-      });
-    },
-    /**
-     * Mirrors a selection made by the owner onto the list. Emits nothing: the
-     * owner already knows, and echoing it back would loop.
-     *
-     * @param {String|Number|null} id id of the item to mark selected, or null
-     *   for none
-     */
-    applyExternalSelection(id) {
-      if (this.selectedId === undefined) return;
-      let found = null;
-      this.tree.forEach((treeItem) => {
-        const matches = !!treeItem.value && treeItem.value.id === id;
-        treeItem.selected = matches;
-        if (matches) found = treeItem;
-        if (!treeItem.value || !treeItem.value.unfold) return;
-        treeItem.value.unfold.forEach((subItem) => {
-          const subMatches = !!subItem.value && subItem.value.id === id;
-          subItem.selected = subMatches;
-          if (subMatches) found = subItem;
-        });
-      });
-      this.selectedItem = found;
-      this.selectedIndex = found ? this.tree.indexOf(found) : -1;
-    },
-    handleMultiSelection(item) {
-      item.highlighted = !item.highlighted;
-      if (item.highlighted) {
-        this.highlightedItems.push(item);
-      } else {
-        const index = this.highlightedItems.findIndex(
-          (highlightedItem) => highlightedItem.value === item.value,
-        );
-        this.highlightedItems.splice(index, 1);
-      }
-      if (!this.selectedItem && this.highlightedItems.length) {
-        // eslint-disable-next-line prefer-destructuring
-        this.selectedItem = this.highlightedItems[0];
-      }
-      if (this.selectedItem && this.highlightedItems.length === 1) {
-        this.selectedItem.highlighted = true;
-        this.highlightedItems.push(this.selectedItem);
-      }
-      /**
-       * Item selection event
-       *
-       * @property {Array} -List of references to highlighted items values
-       */
-      this.$emit('select', this.selectedItem.value);
-      this.$emit(
-        'highlight',
-        this.highlightedItems.map((i) => i.value),
-      );
-    },
-    handleGroupedSelection(item, childs) {
-      if (!this.selectedItem) {
-        this.handleSingleSelection(item, true);
-      } else if (childs.some((c) => c === item) && item !== this.selectedItem) {
-        const index = childs.findIndex((c) => c === item);
-        const start = Math.min(index, this.selectedIndex);
-        const stop = Math.max(index, this.selectedIndex);
-        this.clearHighlighted();
-        for (let i = start; i <= stop; i++) {
-          const _item = childs[i];
-          _item.highlighted = true;
-          this.highlightedItems.push(_item);
-        }
-        this.$emit(
-          'highlight',
-          this.highlightedItems.map((i) => i.value),
-        );
-      }
-    },
-    /**
-     * Selects active item whenever simple click is involved.
-     * Adds item to highlighted list when ctrl key is pressed.
-     *
-     * @param {Event} e click event
-     * @param {Object} item tree (sub)item involved in the selection
-     */
-    // eslint-disable-next-line default-param-last
-    selectItem(e = {}, item, childs) {
-      if (!item.value.disabled && !this.dragging) {
-        // this.hasFocus = true;
-        if (e.shiftKey && !this.noHighlight && !this.toggleable) {
-          this.handleGroupedSelection(item, childs);
-        } else if (e.ctrlKey && !this.noHighlight && !this.toggleable) {
-          this.handleMultiSelection(item);
-        } else if (!this.toggleable) {
-          this.handleSingleSelection(item, true);
-        } else {
-          this.toggleItem(item);
-        }
       }
     },
     /**
      * Begins a drag.
      *
      * The list reports where things were dropped and lets its owner decide what
-     * that means; it does not reorder itself. Reparenting is the owner's model
-     * to change, and a list that rearranged itself first would fight whatever
-     * the owner then did.
+     * that means; it does not reorder anything itself. Its items come from the
+     * owner, who is the one that can change their order.
      *
      * @param {Event} e dragstart event
-     * @param {Object} treeItem item being dragged
+     * @param {Object} row row being dragged
      */
-    startDrag(e, treeItem) {
+    startDrag(e, row) {
       this.dragging = true;
-      this.draggedItem = treeItem;
+      this.draggedKey = row.key;
       if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
     },
     /**
-     * Marks the row under the pointer as the drop target.
+     * Picks the gap under the pointer: above a row over its top half, below it
+     * over the bottom half.
      *
-     * @param {Event} e dragenter event
-     * @param {Object} treeItem item being hovered
+     * @param {Event} e dragover event
+     * @param {Number} index row being hovered
      */
-    dragEnter(e, treeItem) {
-      if (!this.dragging || treeItem === this.draggedItem) return;
-      this.dropTarget = treeItem;
-      const row = e.currentTarget;
-      if (row && row.classList) row.classList.add('dragged_over');
-      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    dragOver(e, index) {
+      if (!this.dragging) return;
+      const rect = e.currentTarget.getBoundingClientRect();
+      let gap = e.clientY > rect.top + rect.height / 2 ? index + 1 : index;
+      // The gaps on either side of the dragged row put it back where it was --
+      // unless it carries other highlighted rows, which a drop there gathers.
+      const from = this.rows.findIndex((row) => row.key === this.draggedKey);
+      const alone = !this.highlightSet.has(this.draggedKey)
+        || ![...this.highlightSet].some((key) => key !== this.draggedKey);
+      if (alone && from !== -1 && (gap === from || gap === from + 1)) gap = null;
+      this.dropIndex = gap;
+      if (e.dataTransfer) e.dataTransfer.dropEffect = gap === null ? 'none' : 'move';
     },
     /**
-     * Clears the drop marker as the pointer leaves a row.
+     * Hides the drop line once the pointer is off the list.
      *
      * @param {Event} e dragleave event
      */
-    dragOut(e) {
-      const row = e.currentTarget;
-      if (row && row.classList) row.classList.remove('dragged_over');
+    dragLeave(e) {
+      if (!e.currentTarget.contains(e.relatedTarget)) this.dropIndex = null;
     },
     /**
-     * Reports the drop. A null target means the root of the list.
-     *
-     * @param {Event} e drop event
-     * @param {Object|null} treeItem item dropped onto, or null for the root
+     * Reports the drop as a row and a side of it, which stays correct while
+     * a search is hiding rows.
      */
-    drop(e, treeItem) {
-      this.clearDropMarkers();
-      const dragged = this.draggedItem;
-      this.dragging = false;
-      this.draggedItem = null;
-      this.dropTarget = null;
-      if (!dragged || dragged === treeItem) return;
+    drop() {
+      const dragged = this.rowsByKey.get(this.draggedKey);
+      const gap = this.dropIndex;
+      this.stopDrag();
+      const { rows } = this;
+      if (!dragged || gap === null || !rows.length) return;
+      const below = gap >= rows.length;
       /**
-       * Reparenting event
+       * Reordering event
        *
        * @property {Object} item the dragged item's value
-       * @property {Object} target the value it was dropped onto, null for root
+       * @property {Object} target the row it was dropped next to
+       * @property {String} position 'before' or 'after' that row
        */
-      this.$emit('reparent', {
+      this.$emit('reorder', {
         item: dragged.value,
-        target: treeItem ? treeItem.value : null,
+        target: rows[below ? rows.length - 1 : gap].value,
+        position: below ? 'after' : 'before',
       });
     },
     /**
-     * Ends a drag that finished anywhere useful or nowhere at all.
-     *
-     * dragend fires after drop, so this only has to clean up; a drag cancelled
-     * with Escape or released off the list reaches here without a drop.
+     * Ends a drag, dropped or not. dragend fires after drop, and a drag
+     * cancelled with Escape or released off the list reaches here alone.
      */
     stopDrag() {
-      this.clearDropMarkers();
       this.dragging = false;
-      this.draggedItem = null;
-      this.dropTarget = null;
-    },
-    /** Removes any leftover drop highlighting. */
-    clearDropMarkers() {
-      const marked = this.$el.getElementsByClassName('dragged_over');
-      // Live collection: removing the class shortens it as we go.
-      while (marked.length) marked[0].classList.remove('dragged_over');
+      this.draggedKey = null;
+      this.dropIndex = null;
     },
   },
 };
@@ -863,6 +762,25 @@ export default {
 </style>
 
 <style scoped>
+.uikit_list_search {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.uikit_list_searchbox {
+  flex: 1;
+  min-width: 0;
+}
+/* Filter buttons stand as tall as the search box beside them. */
+.uikit_list_search :deep(.uikit_button.icon_only) {
+  width: 25px;
+  min-width: 25px;
+  height: 25px;
+}
+.uikit_list_search :deep(.uikit_button.icon_only .uikit_button_icon) {
+  width: 15px !important;
+  height: 15px !important;
+}
 .uikit_list {
   display: flex;
   flex-direction: column;
@@ -884,6 +802,12 @@ export default {
 }
 .uikit_list_item {
   width: 100%;
+}
+/* Ground to start a band selection on: a margin either side of the rows and
+   room below the last one, which a press on a row can never reach. */
+.uikit_list_body.band {
+  padding: 0 8px 32px;
+  box-sizing: border-box;
 }
 .uikit_list_body_empty {
   display: flex;
@@ -942,8 +866,24 @@ export default {
 .dragged {
   border: 1px dashed var(--secondary-light) !important;
 }
-.dragged_over {
-  background: transparent !important;
-  border: 1px dashed var(--secondary-light) !important;
+.uikit_list_item.parent {
+  position: relative;
+}
+.drop_before::before,
+.drop_after::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent-teal);
+  pointer-events: none;
+  z-index: 1;
+}
+.drop_before::before {
+  top: -1px;
+}
+.drop_after::after {
+  bottom: -1px;
 }
 </style>

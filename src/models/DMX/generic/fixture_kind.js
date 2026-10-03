@@ -176,8 +176,7 @@ export const FIXTURE_KINDS = [
   new FixtureKind({
     id: GENERIC_KINDS.LASER,
     label: 'Laser',
-    // Likewise: no laser glyph yet.
-    icon: 'movinghead',
+    icon: 'laser',
     paramsKey: 'laser',
     defaults: DEFAULT_LASER_PARAMS,
     controlDefs: LASER_CONTROL_DEFS,
@@ -188,8 +187,7 @@ export const FIXTURE_KINDS = [
   new FixtureKind({
     id: GENERIC_KINDS.STROBE,
     label: 'Strobe',
-    // No strobe glyph yet; a sun is the nearest thing that says "flash".
-    icon: 'sun',
+    icon: 'strobe',
     paramsKey: 'strobe',
     defaults: DEFAULT_STROBE_PARAMS,
     controlDefs: STROBE_CONTROL_DEFS,
@@ -224,13 +222,39 @@ export function kindOf(profile) {
   return FIXTURE_KINDS.find((kind) => kind.isProfile(profile)) || null;
 }
 
+/** The icon for a library fixture's category, OFL's or GDTF's. */
+const CATEGORY_ICONS = {
+  'Moving Head': 'movinghead',
+  Scanner: 'movinghead',
+  'Barrel Scanner': 'movinghead',
+  Static: 'static',
+  'Color Changer': 'static',
+  Dimmer: 'static',
+  Blinder: 'static',
+  Matrix: 'grid',
+  'Pixel Bar': 'ledbar',
+  Laser: 'laser',
+  Strobe: 'strobe',
+};
+
+/**
+ * The icon for a library fixture's category; a category with none of its
+ * own is a light.
+ *
+ * @public
+ * @param {String} category
+ * @returns {String} an icon name from the uikit set
+ */
+export function categoryIcon(category) {
+  return CATEGORY_ICONS[category] || 'lightbulb';
+}
+
 /**
  * The icon that stands for a fixture in a list or a widget header.
  *
- * One answer for the patch bay and the widget above it, because an icon that
- * disagrees between the two reads as two different fixtures. A library fixture
- * -- anything no kind here made -- is a moving head, which is what the shipped
- * library mostly holds.
+ * One answer for the patch bay, the widget above it and Add to Show, because
+ * an icon that disagrees between them reads as two different fixtures. A
+ * generic fixture takes its kind's, a library fixture its category's.
  *
  * @public
  * @param {Object} fixture
@@ -238,7 +262,22 @@ export function kindOf(profile) {
  */
 export function fixtureIcon(fixture) {
   const kind = fixture ? kindOf(fixture.OFLData) : null;
-  return kind ? kind.icon : 'movinghead';
+  if (kind) return kind.icon;
+  return categoryIcon(fixture && fixture.category);
+}
+
+/**
+ * Where a library fixture's definition comes from: a GDTF file, a profile
+ * one of the kinds here generated, or an Open Fixture Library profile.
+ *
+ * @public
+ * @param {Boolean} gdtf whether it is a GDTF file
+ * @param {Object} [profile] its profile, when it has one
+ * @returns {String} 'GDTF', 'Generic' or 'OFL'
+ */
+export function fixtureOrigin(gdtf, profile) {
+  if (gdtf) return 'GDTF';
+  return kindOf(profile) ? 'Generic' : 'OFL';
 }
 
 export default FIXTURE_KINDS;

@@ -43,7 +43,7 @@ const DEFAULTS = {
    */
   globalFoggingDensity: 50,
   /** Width of one haze feature, in metres. Size, not amount. */
-  globalFoggingScale: 4,
+  globalFoggingScale: 10,
   /**
    * How fast the haze field churns, as a percentage.
    *
@@ -53,7 +53,7 @@ const DEFAULTS = {
    *
    * Only affects a fresh install; a stored setting wins.
    */
-  globalFoggingTurbulences: 70,
+  globalFoggingTurbulences: 33,
   /**
    * Global brightness with the house lights up. The scene keeps two, because
    * looking at a rig and looking at a show want different rooms, and the one
@@ -101,8 +101,23 @@ const DEFAULTS = {
   showAxes: true,
   /** Whether the frame timings and the shader tuning panel are on screen. */
   debug: false,
+  /**
+   * Whether a channel's ranges are shown beside its DMX value while the value
+   * is being changed, where they can also be picked from.
+   */
+  channelRangeGuide: true,
   /** Scene background, as a hex string. Matches SceneManager's own default. */
   backgroundColor: '#0C0D0A',
+  /**
+   * The studio recording settings: frame size, rate, quality and whether the
+   * desktop audio goes in. Kept here rather than in the show because they are
+   * about this machine's output; see `studio.js`.
+   */
+  studioFrameWidth: 1920,
+  studioFrameHeight: 1080,
+  studioFps: 30,
+  studioQuality: 'medium',
+  studioRecordAudio: true,
 };
 
 let values = { ...DEFAULTS };
@@ -190,6 +205,23 @@ async function flush() {
  * @param {String} key
  * @returns {*} the stored value, or its default
  */
+/**
+ * Puts every preference, debug tuning included, back to its default and
+ * writes the empty file at once. Nothing reapplies the defaults here: the
+ * caller reloads, so every module starts from its own constants.
+ *
+ * @returns {Promise}
+ */
+async function reset() {
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  values = { ...DEFAULTS };
+  if (!available()) return;
+  await window.jsonStore.write(STORE_NAME, JSON.stringify({}, null, 2));
+}
+
 function get(key) {
   return key in values ? values[key] : DEFAULTS[key];
 }
@@ -210,5 +242,5 @@ function all() {
 }
 
 export default {
-  load, get, set, all, flush, DEFAULTS,
+  load, get, set, all, flush, reset, DEFAULTS,
 };

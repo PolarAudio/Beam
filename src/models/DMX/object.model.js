@@ -5,6 +5,7 @@ import SceneManager from '../../plugins/visualizer/scene_manager';
 import Controls from '../../plugins/visualizer/controls';
 import withTransform from './scene_item.transform';
 import { SCENE_ITEM_KINDS, rowId } from './scene_item';
+import { itemLabel, splitSavedName } from './item_naming';
 
 /**
  * @file A 3D model standing in the scene.
@@ -66,6 +67,17 @@ class SceneObject extends withTransform(Object) {
      */
     this.primitive = data.primitive ? { ...data.primitive } : null;
     this._name = data.name || data.model || 'object';
+    /**
+     * Beam's number for this item among others of its kind with the same
+     * name; see item_naming.js. Given when the item joins the show.
+     */
+    this.instance = Number.isInteger(data.instance) ? data.instance : null;
+    if (this.instance === null) {
+      // Saved before instances existed: the number was part of the name.
+      const split = splitSavedName(this._name, [data.baseName]);
+      this._name = split.name;
+      this.instance = split.instance;
+    }
     this._position = {
       x: (data.position || {}).x || 0,
       y: (data.position || {}).y || 0,
@@ -83,6 +95,8 @@ class SceneObject extends withTransform(Object) {
      * absolute coordinates, and the structure is what writes them.
      */
     this.structure = null;
+    /** Hidden from the scene: see `hidden`. */
+    this._hidden = !!data.hidden;
 
     /** Handle into the instanced buffer, once the geometry has loaded. */
     this._placement = null;
@@ -208,6 +222,16 @@ class SceneObject extends withTransform(Object) {
   }
 
   /**
+   * How the item is shown and exported: its name and instance, `name N`.
+   *
+   * @readonly
+   * @type {String}
+   */
+  get label() {
+    return itemLabel(this._name, this.instance);
+  }
+
+  /**
    * How the item list shows this.
    *
    * A model that could not be resolved says so here rather than looking like
@@ -219,7 +243,7 @@ class SceneObject extends withTransform(Object) {
    */
   get listable() {
     return {
-      name: this._name,
+      name: this.label,
       icon: 'object',
       // Library reference: a model file rather than a primitive carried in the show.
       overlay: this.isInline ? null : 'link',
@@ -242,6 +266,8 @@ class SceneObject extends withTransform(Object) {
       id: this._id,
       model: this.model,
       name: this._name,
+      instance: this.instance || undefined,
+      hidden: this._hidden || undefined,
       position: { ...this._position },
       rotation: { ...this._rotation },
       scale: this._scale,
@@ -390,6 +416,7 @@ class SceneObject extends withTransform(Object) {
       });
       // So a raycast that lands on the instance can find its way back here.
       this._placement.owner = this;
+      this.applyHidden();
       this.unresolved = false;
       return true;
     } catch (err) {
@@ -564,6 +591,43 @@ class SceneObject extends withTransform(Object) {
       rotation: this._rotation,
       scale: this._scale,
     });
+  }
+
+  /**
+   * Whether this item is hidden from the scene: not drawn, giving no light,
+   * and not picked in the 3D view. Saved with the show.
+   *
+   * @type {Boolean}
+   */
+  set hidden(state) {
+    this._hidden = !!state;
+    this.applyHidden();
+  }
+
+  get hidden() {
+    return !!this._hidden;
+  }
+
+  /**
+   * Hidden by its own flag or by the structure or group holding it.
+   *
+   * @readonly
+   * @type {Boolean}
+   */
+  get isHidden() {
+    return !!(this._hidden
+      || (this.structure && this.structure.hidden)
+      || (this.group && this.group.hidden));
+  }
+
+  /**
+   * Pushes whether this is hidden down to what draws it.
+   *
+   * @public
+   */
+  applyHidden() {
+    // Rewritten where it stands; the renderer draws a hidden owner at nothing.
+    if (this._placement) SceneObjects.move(this._placement, {});
   }
 
   /**

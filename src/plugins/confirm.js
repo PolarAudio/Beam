@@ -1,9 +1,11 @@
 import EventBus from './eventbus';
 
 /**
- * @file Asks the user a yes/no question and waits for the answer.
+ * @file Asks the user a yes/no question, or one with a third answer, and
+ * waits for the answer.
  *
  *     if (!await confirm({ title, message })) return;
+ *     const answer = await choose({ title, message, yes, also, no });
  *
  * The popup lives at the app root (`popup.confirm.vue`, hosted by
  * `app.activity.vue`), so any widget or model can ask without mounting a popup
@@ -31,7 +33,39 @@ export default function confirm({
       return;
     }
     EventBus.emit('confirm', {
-      title, message, detail, yes, no, resolve,
+      title, message, detail, yes, no, resolve: (answer) => resolve(answer === true),
+    });
+  });
+}
+
+/**
+ * A question with three answers: the validate button, a third beside it, and
+ * no. Anything but the first two -- cancel, the close cross, no host to ask --
+ * is 'no'.
+ *
+ * @public
+ * @param {Object} question as `confirm`'s, with `also` the third button's label
+ * @returns {Promise<String>} 'yes', 'also' or 'no'
+ */
+export function choose({
+  title, message, detail = '', yes = 'yes', also, no = 'no',
+}) {
+  return new Promise((resolve) => {
+    if (!EventBus.all.has('confirm')) {
+      resolve('no');
+      return;
+    }
+    EventBus.emit('confirm', {
+      title,
+      message,
+      detail,
+      yes,
+      also,
+      no,
+      resolve: (answer) => {
+        if (answer === true) resolve('yes');
+        else resolve(answer === 'also' ? 'also' : 'no');
+      },
     });
   });
 }

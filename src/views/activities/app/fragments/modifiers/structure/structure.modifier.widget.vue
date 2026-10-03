@@ -82,6 +82,7 @@
 <script>
 import { PROJECTION_LABELS, ISLAND_GROUPING } from '@/models/DMX/generic/madmapper_layout';
 import { isNamedByUser } from '@/models/DMX/show.model';
+import { displayNameOf } from '@/models/DMX/item_naming';
 
 /** How long the save button confirms for, in ms. */
 const SAVE_FEEDBACK_MS = 1500;
@@ -116,7 +117,7 @@ export default {
   },
   computed: {
     header() {
-      return { title: this.structure ? this.structure.name : 'Structure', icon: 'structure' };
+      return { title: this.structure ? displayNameOf(this.structure) : 'Structure', icon: 'structure' };
     },
     /**
      * Structure name, kept unique so two cannot be confused in the list.
@@ -129,7 +130,7 @@ export default {
       },
       set(value) {
         if (!this.structure) return;
-        this.structure.name = this.$show.uniqueStructureName(value, this.structure.id);
+        this.$show.renameItem(this.structure, value);
       },
     },
     /**
@@ -143,7 +144,8 @@ export default {
      */
     members() {
       if (!this.structure) return [];
-      return this.structure.members.map((member) => member.listable);
+      return this.structure.members
+        .map((member) => ({ ...member.listable, name: displayNameOf(member) }));
     },
     saveLabel() {
       return this.saved ? 'saved' : 'save to library';

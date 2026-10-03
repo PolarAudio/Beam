@@ -416,6 +416,12 @@
         "supported": false
       },
       {
+        "file": "lcb144-mkii.json",
+        "name": "LCB144 MKII",
+        "category": "Pixel Bar",
+        "supported": false
+      },
+      {
         "file": "panther-7r.json",
         "name": "Panther 7R",
         "category": "Moving Head",
@@ -2912,6 +2918,12 @@
       {
         "file": "led-flat-par-12x3w-rgbw.json",
         "name": "LED Flat Par 12x3W RGBW",
+        "category": "Color Changer",
+        "supported": false
+      },
+      {
+        "file": "led-flat-par-7x18w-rgbwa-uv-light.json",
+        "name": "LED Flat Par 7x18W RGBWA+UV Light",
         "category": "Color Changer",
         "supported": false
       }

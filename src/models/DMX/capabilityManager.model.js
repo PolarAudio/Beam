@@ -21,7 +21,12 @@ const ENTITY_UNIT_RPM = 'rpm';
  * @constant {String} ENTITY_UNIT_PERC
  */
 const ENTITY_UNIT_PERC = '%';
-// const ENTITY_UNIT_S     = "s";
+/**
+ * Entity second unit
+ *
+ * @constant {String} ENTITY_UNIT_S
+ */
+const ENTITY_UNIT_S = 's';
 /**
  * Entity millisecond unit
  *
@@ -153,12 +158,18 @@ const CAPABILITY_TYPES = {
       min: 0,
       max: 10,
     },
+    // Optional: a strobe range that names no flash length has none of its own,
+    // and the lamp keeps a bare flash -- or whatever a separate duration
+    // channel sets. Read as "all of it", every such range ramped the flash
+    // from 0 to 1000 ms alongside the rate, and the lamp went solid once the
+    // flash outlasted the gap between flashes, a third of the way up.
     duration: {
       alias: 'strobeDuration',
       entity: EntityManager.entities.Time,
       unit: ENTITY_UNIT_MS,
       min: 0,
       max: 1000,
+      optional: true,
     },
     randomTiming: {
       alias: 'strobeRandom',
@@ -283,20 +294,26 @@ const CAPABILITY_TYPES = {
       max: 360,
     },
   },
+  // How fast pan and tilt move. A profile states either a speed, slow to
+  // fast, as a percent of the fixture's own top speed, or a duration, the
+  // time a move takes whatever its size. `short` and `long` durations are a
+  // percent of 0 to 30 seconds.
   PanTiltSpeed: {
     speed: {
       alias: 'panTiltSpeed',
       entity: EntityManager.entities.Speed,
-      unit: ENTITY_UNIT_RPM,
+      unit: ENTITY_UNIT_PERC,
       min: 0,
-      max: 360,
+      max: 100,
+      optional: true,
     },
     duration: {
       alias: 'panTiltDuration',
       entity: EntityManager.entities.Time,
-      unit: ENTITY_UNIT_MS,
+      unit: ENTITY_UNIT_S,
       min: 0,
-      max: 1000,
+      max: 30,
+      optional: true,
     },
   },
   WheelSlot: {
@@ -491,6 +508,32 @@ const CAPABILITY_TYPES = {
       max: 100,
     },
   },
+  // A frost filter in the beam, off to high as a percent.
+  Frost: {
+    frostIntensity: {
+      alias: 'frostIntensity',
+      entity: EntityManager.entities.Percent,
+      unit: ENTITY_UNIT_PERC,
+      min: 0,
+      max: 100,
+    },
+  },
+  // The frost moving on its own: a ramp or a pulse, named, at a speed. A
+  // stated rate is taken in Hz; slow to fast is 0.1 to 5 Hz.
+  FrostEffect: {
+    effectName: {
+      alias: 'effectName',
+      default: '',
+    },
+    speed: {
+      alias: 'speed',
+      entity: EntityManager.entities.Speed,
+      unit: ENTITY_UNIT_HZ,
+      min: 0.1,
+      max: 5,
+      optional: true,
+    },
+  },
   Focus: {
     angle: {
       alias: 'focus',
@@ -599,6 +642,17 @@ class Capability {
               setting.min,
               setting.max,
             );
+          }
+          // Whether the profile gave this in the feature's own unit or as a
+          // share of its range. A zoom stated `10deg` to `40deg` arrives in
+          // degrees, one stated `narrow` to `wide` as 1 to 100, and the two
+          // cannot be told apart from the number alone.
+          const stated = entityValue || entityValueStart || entityValueStop;
+          if (stated) {
+            const unit = setting.entity.constructor.parseValueUnit(
+              setting.entity.getValueFromPresets(stated),
+            );
+            this.entities[alias].inUnit = unit === setting.unit;
           }
           if (!entityValue && !entityValueStart && !entityValueStop) {
             // Said nothing, so it means all of it. The bounds are already in

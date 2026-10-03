@@ -80,6 +80,7 @@
 <script>
 import { PROJECTION_LABELS } from '@/models/DMX/generic/madmapper_layout';
 import { isNamedByUser } from '@/models/DMX/show.model';
+import { displayNameOf } from '@/models/DMX/item_naming';
 
 /** How long the save button confirms for, in ms. */
 const SAVE_FEEDBACK_MS = 1500;
@@ -106,7 +107,7 @@ export default {
   },
   computed: {
     header() {
-      return { title: this.group ? this.group.name : 'Group', icon: 'group' };
+      return { title: this.group ? displayNameOf(this.group) : 'Group', icon: 'group' };
     },
     /**
      * Group name, kept unique so two groups cannot be confused in the list.
@@ -119,7 +120,7 @@ export default {
       },
       set(value) {
         if (!this.group) return;
-        this.group.name = this.$show.uniqueGroupName(value, this.group.id);
+        this.$show.renameItem(this.group, value);
       },
     },
     saveLabel() {

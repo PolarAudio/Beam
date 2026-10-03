@@ -77,44 +77,29 @@
         </uk-flex>
       </uk-popup>
 
-      <template v-if="hasHead">
-        <uk-flex :gap="8">
-          <uk-num-input
-            v-model.lazy="panSpeed"
-            style="width: 90px"
-            label="Pan °/s"
-            :min="1"
-            :max="2000"
-            :disabled="!panOverridden"
-          />
-          <uk-checkbox
-            v-model="panOverridden"
-            label="Override"
-          />
-        </uk-flex>
-
-        <uk-flex :gap="8">
-          <uk-num-input
-            v-model.lazy="tiltSpeed"
-            style="width: 90px"
-            label="Tilt °/s"
-            :min="1"
-            :max="2000"
-            :disabled="!tiltOverridden"
-          />
-          <uk-checkbox
-            v-model="tiltOverridden"
-            label="Override"
-          />
-        </uk-flex>
-      </template>
-
       <!-- What the model *is*, above the map of what it answers to. This is
            the profile-scoped widget, and a resolution, a pitch and a throw are
            properties of the model rather than of this placement -- so they
            belong here beside the channel map rather than in Fixture Settings
            with the things you set per unit. It also fills the space a device
            with few channels, or none, otherwise leaves empty. -->
+      <!-- The four facts most asked about a model, always in view; the rest of
+           the spec sheet is collapsed below. See `keyFacts`. -->
+      <div
+        v-if="keyFacts.length"
+        class="device_facts"
+      >
+        <dl>
+          <template
+            v-for="fact in keyFacts"
+            :key="fact.label"
+          >
+            <dt>{{ fact.label }}</dt>
+            <dd>{{ fact.value }}</dd>
+          </template>
+        </dl>
+      </div>
+
       <div
         v-if="deviceFacts.length"
         class="device_facts"
@@ -124,11 +109,31 @@
             v-for="fact in deviceFacts"
             :key="fact.label"
           >
+            <dt :class="{ fact_warning: fact.warning }">
+              {{ fact.label }}
+            </dt>
+            <dd :class="{ fact_warning: fact.warning }">
+              {{ fact.value }}
+            </dd>
+          </template>
+        </dl>
+      </div>
+
+      <details
+        v-if="specFacts.length"
+        class="fixture_guide"
+      >
+        <summary>Specifications</summary>
+        <dl>
+          <template
+            v-for="fact in specFacts"
+            :key="fact.label"
+          >
             <dt>{{ fact.label }}</dt>
             <dd>{{ fact.value }}</dd>
           </template>
         </dl>
-      </div>
+      </details>
 
       <!-- A short manual for the mode in use, written from the profile: what
            to set before there is light, and what each channel's ranges do.
@@ -254,14 +259,37 @@
 </template>
 
 <script>
-import { pixelFill, pixelPitch, displayCurve } from '@/models/DMX/generic/display';
+import {
+  pixelFill, pitchText, displayCurve, emitterSize, unusualEmitter,
+} from '@/models/DMX/generic/display';
 import {
   throwRange, throwAngles, imageSizeAt, illuminanceAt,
 } from '@/models/DMX/generic/projector';
-import { DEFAULT_PAN_SPEED, DEFAULT_TILT_SPEED } from '@/models/DMX/fixture.model';
 import { fixtureIcon } from '@/models/DMX/generic/fixture_kind';
 import { isShowKey } from '@/models/DMX/definition_store';
 import fixtureGuide from '@/models/DMX/fixture_guide';
+import gdtfGuide from '@/models/DMX/gdtf/gdtf_guide';
+import DmxEngine from '@/models/DMX/gdtf/dmx_engine';
+import { headInputs, unfilledBeamFields } from '@/models/DMX/gdtf/fixture_parts';
+import { formatAddress } from '@/models/DMX/address_format';
+import Light from '@/plugins/visualizer/light';
+
+/** A whole number with thousands separators. */
+const grouped = (n) => Math.round(n).toLocaleString('en-GB');
+
+/**
+ * The peak a head renders with at each end of its zoom, and the lux it
+ * puts on a surface 10 m away there.
+ */
+function peakFact(lumens, narrow, wide) {
+  const atNarrow = Light.peakAtZoom(lumens, narrow);
+  const atWide = Light.peakAtZoom(lumens, wide);
+  const lux = (cd) => `${grouped(cd / 100)} lux at 10 m`;
+  const value = narrow === wide
+    ? `${grouped(atWide)} cd · ${lux(atWide)}`
+    : `${grouped(atNarrow)} cd at ${narrow}° (${lux(atNarrow)}) · ${grouped(atWide)} cd at ${wide}°`;
+  return { label: 'Peak', value };
+}
 
 /** How long the copy button confirms for, in ms. */
 const COPY_FEEDBACK_MS = 1500;
@@ -285,8 +313,8 @@ export default {
     return {
       copied: false,
       /**
-       * Bumped whenever an override is written. The show is a plain class, not
-       * a reactive object, so a computed reading its overrides would cache
+       * Bumped whenever the library is written. The show is a plain class, not
+       * a reactive object, so a computed reading its store would cache
        * forever; this gives those computeds something reactive to depend on.
        */
       revision: 0,
@@ -340,6 +368,156 @@ export default {
       return !!maker && !!model && !maker.includes('/') && !model.includes('/') && !this.saveTaken;
     },
     /**
+     * Make, model, lumens and power: what is asked about a model first.
+     *
+     * @type {Array}
+     */
+    keyFacts() {
+      if (!this.fixture) return [];
+      if (this.gdtf) return this.gdtfFacts.key;
+      const { physical } = this;
+      const facts = [
+        { label: 'Make', value: this.$show.manufacturerName(this.fixture.manufacturer) },
+        { label: 'Model', value: this.fixture.model },
+        { label: 'Lumens', value: this.lumensText() },
+      ];
+      if (Number(physical.power) > 0) facts.push({ label: 'Power', value: `${grouped(physical.power)} W` });
+      return facts.filter((fact) => fact.value);
+    },
+    /**
+     * The rest of the profile's spec sheet, and for a moving head the peak
+     * intensity Beam renders at each end of the zoom.
+     *
+     * @type {Array}
+     */
+    specFacts() {
+      if (this.gdtf) return this.gdtfFacts.spec;
+      const data = (this.fixture && this.fixture.OFLData) || {};
+      const { physical } = this;
+      const bulb = physical.bulb || {};
+      const facts = [];
+      if (bulb.type) facts.push({ label: 'Lamp', value: bulb.type });
+      if (bulb.colorTemperature) facts.push({ label: 'Colour temp', value: `${grouped(bulb.colorTemperature)} K` });
+      const lens = this.lensRange;
+      if (lens) {
+        const [narrow, wide] = lens;
+        facts.push({ label: 'Zoom', value: narrow === wide ? `${narrow}°` : `${narrow}° – ${wide}°` });
+        const lumens = this.isMover ? Light.lumensOf(physical) : null;
+        if (lumens) facts.push(peakFact(lumens, narrow, wide));
+      }
+      if (physical.weight) facts.push({ label: 'Weight', value: `${physical.weight} kg` });
+      const size = physical.dimensions;
+      if (Array.isArray(size) && size.length === 3) {
+        facts.push({ label: 'Size', value: `${size.join(' x ')} mm (W x H x D)` });
+      }
+      if (physical.DMXconnector) facts.push({ label: 'Connector', value: physical.DMXconnector });
+      if ((data.categories || []).length) facts.push({ label: 'Category', value: data.categories.join(', ') });
+      if ((data.modes || []).length) {
+        facts.push({
+          label: 'Modes',
+          value: data.modes.map((m) => `${m.name} (${(m.channels || []).length} ch)`).join(', '),
+        });
+      }
+      return facts;
+    },
+    /** The fixture's GDTF fixture type, or null for an OFL profile. */
+    gdtf() {
+      return (this.fixture && this.fixture.fixtureType) || null;
+    },
+    /**
+     * A GDTF fixture's facts, from the file as it stands. Output a file left
+     * at GDTF's placeholder values is said to be unmeasured rather than
+     * shown as if it were a measurement, and a beam's values still at the
+     * spec's defaults, in a beam nobody filled in, are left out.
+     *
+     * @type {Object} `{ key, spec }`
+     */
+    gdtfFacts() {
+      const type = this.gdtf;
+      const mode = this.fixture.mode || type.modes[0];
+      const inputs = headInputs(type, mode);
+      const { beam } = inputs;
+      const unmeasured = inputs.unmeasured ? ' · not measured, file defaults' : '';
+      const key = [
+        { label: 'Make', value: type.manufacturer },
+        { label: 'Model', value: type.name },
+      ];
+      if (inputs.lumens) {
+        const per = inputs.beamCount > 1 ? ` (${inputs.beamCount} beams)` : '';
+        key.push({ label: 'Lumens', value: `${grouped(inputs.lumens)} lm${per}${unmeasured}` });
+      }
+      const unfilled = unfilledBeamFields(beam);
+      const stated = (name) => !unfilled.has(name);
+      if (inputs.power && stated('powerConsumption')) {
+        key.push({ label: 'Power', value: `${grouped(inputs.power)} W light source` });
+      }
+
+      const spec = [];
+      if (beam) {
+        const line = (label, parts) => {
+          const kept = parts.filter(([name]) => stated(name)).map(([, text]) => text);
+          if (kept.length) spec.push({ label, value: kept.join(' · ') });
+        };
+        line('Lamp', [['lampType', beam.lampType]]);
+        line('Colour temp', [
+          ['colorTemperature', `${grouped(beam.colorTemperature)} K`],
+          ['colorRenderingIndex', `CRI ${beam.colorRenderingIndex}`],
+        ]);
+        line('Beam', [
+          ['beamAngle', `${beam.beamAngle}° beam`],
+          ['fieldAngle', `${beam.fieldAngle}° field`],
+          ['beamType', beam.beamType],
+        ]);
+      }
+      const narrow = inputs.minAngle;
+      const wide = inputs.maxAngle;
+      if (narrow && wide && narrow !== wide) spec.push({ label: 'Zoom', value: `${narrow}° – ${wide}°` });
+      if (inputs.lumens && narrow && wide && ['Moving Head', 'Static'].includes(inputs.category)) {
+        spec.push(peakFact(inputs.lumens, narrow, wide));
+      }
+      if (inputs.panSpan) spec.push({ label: 'Pan / tilt', value: `${inputs.panSpan}° / ${inputs.tiltSpan || 0}°` });
+      if (inputs.panSpeed || inputs.tiltSpeed) {
+        const rate = (speed) => (speed ? `${Math.round(speed)}°/s` : '-');
+        spec.push({ label: 'Pan / tilt speed', value: `${rate(inputs.panSpeed)} / ${rate(inputs.tiltSpeed)}` });
+      }
+      const { weight } = type.physical.properties;
+      if (weight) spec.push({ label: 'Weight', value: `${weight} kg` });
+      spec.push({
+        label: 'Modes',
+        value: type.modes.map((m) => `${m.name} (${new DmxEngine(type, m).footprint} ch)`).join(', '),
+      });
+      const last = type.revisions[type.revisions.length - 1];
+      spec.push({
+        label: 'GDTF',
+        value: `${type.dataVersion || '?'}${last && last.text ? ` · ${last.text}` : ''}`,
+      });
+      return { key, spec: spec.filter((fact) => fact.value) };
+    },
+    /** The profile's physical block, or an empty one. */
+    physical() {
+      return ((this.fixture && this.fixture.OFLData) || {}).physical || {};
+    },
+    /**
+     * Drawn as a moving head: the same test the fixture uses to build one.
+     *
+     * @type {Boolean}
+     */
+    isMover() {
+      const data = (this.fixture && this.fixture.OFLData) || {};
+      return (data.categories || []).includes('Moving Head') && !!data.physical;
+    },
+    /**
+     * Narrowest and widest field in degrees, or null. A head with no lens
+     * block is drawn at 10 to 25 degrees, so it says so.
+     *
+     * @type {Array|null}
+     */
+    lensRange() {
+      const lens = this.physical.lens || {};
+      if (Array.isArray(lens.degreesMinMax)) return lens.degreesMinMax.map(Number);
+      return this.isMover ? [10, 25] : null;
+    },
+    /**
      * What this model is, for a projector or a display.
      *
      * Read off the profile, so it speaks for every one of them in the show --
@@ -375,7 +553,7 @@ export default {
       };
     },
     /**
-     * Key the overrides file is indexed by.
+     * Key the fixture's profile is stored under.
      *
      * @type {String}
      */
@@ -398,60 +576,10 @@ export default {
     guide() {
       const fixture = this.fixture || {};
       if (!fixture.OFLData || !fixture.mode || this.barSummary) return null;
-      const guide = fixtureGuide(fixture.OFLData, fixture.mode);
+      const guide = fixture.fixtureType && fixture._engine
+        ? gdtfGuide(fixture.fixtureType, fixture._engine)
+        : fixtureGuide(fixture.OFLData, fixture.mode);
       return guide.channels.length ? guide : null;
-    },
-    hasHead() {
-      const accessors = (this.fixture || {}).quickChannelsAccessors || {};
-      return !!(accessors.Pan || accessors.Tilt);
-    },
-    /**
-     * Overrides currently stored for this model.
-     *
-     * @type {Object}
-     */
-    overrides() {
-      // eslint-disable-next-line no-unused-expressions
-      this.revision;
-      return this.$show.fixtureOverrides[this.profileKey] || {};
-    },
-    panOverridden: {
-      get() {
-        return this.overrides.panSpeed !== undefined;
-      },
-      set(state) {
-        this.setOverrideState('panSpeed', state, DEFAULT_PAN_SPEED);
-      },
-    },
-    tiltOverridden: {
-      get() {
-        return this.overrides.tiltSpeed !== undefined;
-      },
-      set(state) {
-        this.setOverrideState('tiltSpeed', state, DEFAULT_TILT_SPEED);
-      },
-    },
-    panSpeed: {
-      get() {
-        // eslint-disable-next-line no-unused-expressions
-        this.revision;
-        return this.fixture ? this.fixture.panSpeed : DEFAULT_PAN_SPEED;
-      },
-      set(value) {
-        this.$show.setFixtureOverride(this.profileKey, 'panSpeed', Number(value));
-        this.revision += 1;
-      },
-    },
-    tiltSpeed: {
-      get() {
-        // eslint-disable-next-line no-unused-expressions
-        this.revision;
-        return this.fixture ? this.fixture.tiltSpeed : DEFAULT_TILT_SPEED;
-      },
-      set(value) {
-        this.$show.setFixtureOverride(this.profileKey, 'tiltSpeed', Number(value));
-        this.revision += 1;
-      },
     },
     copyLabel() {
       return this.copied ? 'copied' : 'copy';
@@ -479,7 +607,7 @@ export default {
       // last channel sits further out than the count alone implies.
       const first = fixture.addressOf(0);
       const last = fixture.addressOf(total - 1);
-      const at = (address) => `U${Math.floor(address / 512)}:${(address % 512) + 1}`;
+      const at = formatAddress;
 
       const wiring = [
         bar.scanAxis === 'column' ? 'down columns' : 'along rows',
@@ -582,7 +710,6 @@ export default {
       const wide = Math.round(p.pixelsWide);
       const high = Math.round(p.pixelsHigh);
       const fill = pixelFill(p);
-      const pitch = pixelPitch(p);
       const diagonal = Math.sqrt((p.width * 1000) ** 2 + (p.height * 1000) ** 2) / 25.4;
       const lit = fill.x >= 0.999 && fill.y >= 0.999
         ? 'pixels meet'
@@ -590,7 +717,7 @@ export default {
       const facts = [
         { label: 'Takes', value: `${wide} x ${high} video` },
         { label: 'Panel', value: `${(p.width * 1000).toFixed(0)} x ${(p.height * 1000).toFixed(0)} mm · ${diagonal.toFixed(0)}"` },
-        { label: 'Pitch', value: `${pitch.toFixed(2)} mm · ${(p.pixelSize * 1000).toFixed(1)} mm pixel · ${lit}` },
+        { label: 'Pitch', value: `${pitchText(p)} · ${(emitterSize(p) * 1000).toFixed(1)} mm emitter · ${lit}` },
         { label: 'Brightness', value: `${p.nits} nits` },
       ];
       // Only when it is bent. The arc and the chord are both worth saying: the
@@ -609,6 +736,11 @@ export default {
             + ` · r ${(curve.radius * 1000).toFixed(0)} mm · spans ${(chord * 1000).toFixed(0)} mm`,
         });
       }
+      // Said outright rather than left to the Pitch line: a panel built with
+      // an emitter nobody uses is the explanation for a wall that looks odd,
+      // and a definition cannot be edited, so this is all that can be done.
+      const unusual = unusualEmitter(p);
+      if (unusual) facts.push({ label: 'Unusual', value: unusual, warning: true });
       return facts;
     },
     /**
@@ -618,6 +750,30 @@ export default {
      * @param {Object} p the profile's `asls.projector`
      * @returns {Array}
      */
+    /**
+     * The lumens line. For a moving head it is the figure the head is lit
+     * from, and says so when that is not the profile's own: `lumensOf`
+     * replaces a missing or unbelievable figure with one made from the power.
+     *
+     * @public
+     * @returns {String}
+     */
+    lumensText() {
+      const { physical } = this;
+      const stated = Number((physical.bulb || {}).lumens);
+      if (!this.isMover) {
+        const projector = ((this.fixture.OFLData || {}).asls || {}).projector || {};
+        const lumens = stated > 0 ? stated : Number(projector.lumens);
+        return lumens > 0 ? `${grouped(lumens)} lm` : '';
+      }
+      const used = Light.lumensOf(physical);
+      if (!used) return 'not stated · lit as the reference head';
+      if (used === stated) return `${grouped(used)} lm`;
+      const from = `estimated from ${grouped(physical.power)} W`;
+      return stated > 0
+        ? `${grouped(used)} lm, ${from} (profile says ${grouped(stated)})`
+        : `${grouped(used)} lm, ${from}`;
+    },
     projectorFacts(p) {
       const { min, max } = throwRange(p);
       const wide = throwAngles(min, p);
@@ -639,23 +795,6 @@ export default {
           value: `${p.lumens} lm · ${p.contrast}:1 · ${illuminanceAt(20, min, p).toFixed(0)} lux at 20 m`,
         },
       ];
-    },
-    /**
-     * Ticks or clears one override. Ticking freezes whatever is in effect now,
-     * so checking the box never moves the fixture on its own.
-     *
-     * @public
-     * @param {String} key override name
-     * @param {Boolean} state whether the override should exist
-     * @param {Number} fallback system default to restore when cleared
-     */
-    setOverrideState(key, state, fallback) {
-      if (state) {
-        this.$show.setFixtureOverride(this.profileKey, key, this.fixture[key]);
-      } else {
-        this.$show.clearFixtureOverride(this.profileKey, key, fallback);
-      }
-      this.revision += 1;
     },
     /**
      * Puts the channel map on the clipboard as tab-separated text, for pasting
@@ -759,6 +898,9 @@ export default {
   font-size: 11px;
   color: var(--secondary-lighter);
   margin: 0;
+}
+.device_facts .fact_warning {
+  color: var(--accent-red, #d9534f);
 }
 .fixture_guide {
   font-family: Roboto-Regular, sans-serif;

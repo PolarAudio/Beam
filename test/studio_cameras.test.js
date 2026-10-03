@@ -150,6 +150,39 @@ console.log('\n-- selecting is not going --');
   check('flying asks for one', Studio.state.flyRequested, true);
 }
 
+console.log('\n-- cutting to the live camera brings it back --');
+{
+  // Adding a camera makes it live.
+  const live = Studio.addCamera({ ...view, fov: 30 });
+  Studio.toggleCameraLock(live.id);
+  const before = Studio.state.returns;
+  Studio.cutToCamera(live.id);
+  check('a cut to it is counted as a return', Studio.state.returns, before + 1);
+  check('as a cut', Studio.state.flyRequested, false);
+  check('and it stays live', Studio.state.activeCameraId, live.id);
+  Studio.flyToCamera(live.id);
+  check('a fly to it is counted too', Studio.state.returns, before + 2);
+  check('as a fly', Studio.state.flyRequested, true);
+  Studio.addCamera({ ...view, fov: 40 });
+  Studio.cutToCamera(live.id);
+  check('a cut from another camera is not a return', Studio.state.returns, before + 2);
+  check('it is a change of camera', Studio.state.activeCameraId, live.id);
+}
+
+console.log('\n-- the fly time is saved with the show --');
+{
+  Studio.setTransitionSeconds(4.2);
+  const saved = JSON.parse(JSON.stringify(Studio.showSettings));
+  check('written out', saved.flySeconds, 4.2);
+  Studio.setTransitionSeconds(1);
+  Studio.loadSettings(saved);
+  check('and read back', Studio.state.transition.seconds, 4.2);
+  Studio.loadSettings(undefined);
+  check('a show without it gets the default', Studio.state.transition.seconds, 1.5);
+  Studio.loadSettings({ flySeconds: 'nonsense' });
+  check('and so does a bad value', Studio.state.transition.seconds, 1.5);
+}
+
 console.log('\n-- a show written before cameras existed --');
 {
   Studio.loadCameras(undefined);

@@ -32,7 +32,7 @@
         @keydown.down="decrementValue"
         @keydown.stop
         @blur="updateValue"
-        @keydown.enter="updateValue"
+        @keydown.enter="leaveEdit"
         @input="
           (v) => {
             if (autoUpdate) updateValue(v);
@@ -100,6 +100,9 @@ const WHEEL_RUN_GAP_MS = 180;
  * @constant {Number}
  */
 const WHEEL_RUN_GRACE = 2;
+
+/** What a field shows while its items disagree. */
+const MIXED_TEXT = '*';
 
 /** The most a sustained spin can multiply one notch by. */
 const MAX_WHEEL_RUN = 10;
@@ -191,6 +194,12 @@ export default {
      */
     disabled: Boolean,
     /**
+     * Whether the value differs between the items this field stands for.
+     * Shown as "*", and nothing is written until a value is typed, dragged,
+     * scrolled or stepped; a drag or a step starts from `modelValue`.
+     */
+    mixed: Boolean,
+    /**
      * Apply aleternative color styling
      */
     color: {
@@ -213,7 +222,7 @@ export default {
       /**
        * Numeral input's value (reactive)
        */
-      content: this.modelValue,
+      content: this.mixed ? MIXED_TEXT : this.modelValue,
       /** Whether a drag is under way, for the cursor and the styling. */
       dragging: false,
       /** The wheel spin in progress: how many notches, and when the last was. */
@@ -233,7 +242,19 @@ export default {
   },
   watch: {
     modelValue(value) {
+      if (this.mixed) {
+        this.content = MIXED_TEXT;
+        return;
+      }
       this.content = parseFloat(value);
+      this.updateValue(false);
+    },
+    mixed(state) {
+      if (state) {
+        this.content = MIXED_TEXT;
+        return;
+      }
+      this.content = parseFloat(this.modelValue);
       this.updateValue(false);
     },
   },
@@ -261,7 +282,7 @@ export default {
   beforeUnmount() {
     // A drag that outlived the component would leave a window listener behind
     // and the pointer locked with nothing to write to.
-    if (this.drag) this.dragEnd();
+    this.dragEnd();
   },
   methods: {
     /**
@@ -290,7 +311,7 @@ export default {
       // a suggestion.
       const direction = event.deltaY < 0 ? 1 : -1;
       const scale = this.scaleFor(event) * this.wheelRunScale(direction);
-      this.content = (parseFloat(this.content) || 0) + direction * this.stepSize * scale;
+      this.content = this.baseValue() + direction * this.stepSize * scale;
       this.updateValue(true);
     },
     /**
@@ -341,8 +362,13 @@ export default {
      */
     startDrag(event) {
       if (this.disabled || event.button !== 0) return;
+      // Whatever is still listening goes first. A second press before the
+      // first one's release used to overwrite the handles below, orphaning a
+      // pair nothing could remove -- and the orphaned release ran on every
+      // click anywhere, selecting this field and taking focus back each time.
+      this.releaseListeners();
       this.drag = {
-        value: Number(this.content) || 0,
+        value: this.baseValue(),
         distance: 0,
         started: false,
       };
@@ -350,6 +376,38 @@ export default {
       this.onDragEnd = this.dragEnd.bind(this);
       window.addEventListener('pointermove', this.onDragMove);
       window.addEventListener('pointerup', this.onDragEnd);
+      // The ways a release goes missing: the pointer taken away mid-press, or
+      // the window losing focus with the button still down.
+      window.addEventListener('pointercancel', this.onDragEnd);
+      window.addEventListener('blur', this.onDragEnd);
+    },
+    /**
+     * Enter: commits the typed value and leaves the field.
+     *
+     * Leaving is what commits it -- the blur handler writes the value -- so
+     * this only has to let go of the focus, and the value is written once.
+     *
+     * @public
+     */
+    leaveEdit() {
+      const { field } = this.$refs;
+      if (field) field.blur();
+      else this.updateValue(true);
+    },
+    /**
+     * Takes the drag's window listeners off, whatever state the drag is in.
+     *
+     * @private
+     */
+    releaseListeners() {
+      if (this.onDragMove) window.removeEventListener('pointermove', this.onDragMove);
+      if (this.onDragEnd) {
+        window.removeEventListener('pointerup', this.onDragEnd);
+        window.removeEventListener('pointercancel', this.onDragEnd);
+        window.removeEventListener('blur', this.onDragEnd);
+      }
+      this.onDragMove = null;
+      this.onDragEnd = null;
     },
     /**
      * Turns pointer movement into a value.
@@ -419,25 +477,29 @@ export default {
      *
      * @public
      */
-    dragEnd() {
-      window.removeEventListener('pointermove', this.onDragMove);
-      window.removeEventListener('pointerup', this.onDragEnd);
-      if (this.drag && this.drag.started) {
+    dragEnd(event) {
+      const { drag } = this;
+      this.releaseListeners();
+      this.drag = null;
+      this.dragging = false;
+      // No press in progress: nothing of this field's to finish, and above all
+      // no reason to select it. A release that is not its own must never pull
+      // the focus back here.
+      if (!drag) return;
+      if (drag.started) {
         if (document.pointerLockElement) document.exitPointerLock();
-      } else if (this.$refs.field) {
+      } else if (event && event.type === 'pointerup' && this.$refs.field) {
         // Never moved: this was a click, so put the caret where it was asked
         // for and select the value ready to be typed over.
         this.$refs.field.select();
       }
-      this.drag = null;
-      this.dragging = false;
     },
     /**
      * Increments actual value by one precision unit.
      *
      */
     incrementValue(event) {
-      const increment = parseFloat(this.content) + this.stepSize * this.scaleFor(event);
+      const increment = this.baseValue() + this.stepSize * this.scaleFor(event);
       if (increment <= this.max && !this.disabled) {
         this.content = increment.toFixed(this.precision);
         this.updateValue(true);
@@ -448,7 +510,7 @@ export default {
      *
      */
     decrementValue(event) {
-      const decrement = parseFloat(this.content) - this.stepSize * this.scaleFor(event);
+      const decrement = this.baseValue() - this.stepSize * this.scaleFor(event);
       if (decrement >= this.min && !this.disabled) {
         this.content = decrement.toFixed(this.precision);
         this.updateValue(true);
@@ -459,7 +521,23 @@ export default {
      *
      * @param {Boolean} doEmit whether or not to emit changes back to parent element.
      */
+    /**
+     * The number a step or a drag starts from: what the field shows, or the
+     * first item's value while it shows "*".
+     *
+     * @public
+     * @returns {Number}
+     */
+    baseValue() {
+      if (this.content === MIXED_TEXT) return parseFloat(this.modelValue) || 0;
+      return parseFloat(this.content) || 0;
+    },
     updateValue(doEmit = true) {
+      // A mixed field left as "*", or emptied, says nothing and writes nothing.
+      if (this.mixed && (this.content === MIXED_TEXT || String(this.content).trim() === '')) {
+        this.content = MIXED_TEXT;
+        return;
+      }
       // Parsed as a number and kept as one -- `.toFixed()` returns a *string*,
       // and `Number.isNaN` of a string is never true, so an unparseable field
       // would sail past the guard and emit a real NaN. That reaches fixture

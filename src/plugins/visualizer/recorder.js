@@ -94,16 +94,31 @@ const KEY_FRAME_SECONDS = 2;
 const CHUNK_BYTES = 4 * 1024 * 1024;
 
 /**
- * How many frames may be waiting on the encoder before new ones are dropped.
+ * How many frames may be waiting to be handed to the encoder.
  *
- * The encoder runs behind the render loop, and a frame waits its turn. A
- * hardware encoder keeps up with the display; if one does not, the queue must
- * not grow without limit, so past this many the frame is skipped and counted.
- * The file keeps its timeline: the next frame taken lands on its own slot.
+ * Handing over is quick -- the encoder accepts a frame into its own queue at
+ * once -- so this does not bound what is waiting to be encoded; see
+ * `BACKLOG_BYTES` for that.
  *
  * @constant {Number}
  */
 const MAX_FRAMES_IN_FLIGHT = 6;
+
+/**
+ * How much picture may be queued inside the encoder before frames are dropped.
+ *
+ * Every queued frame is held in GPU memory at full size, and an encoder that
+ * falls behind queues without limit: measured at 4K, a take encoding 10 frames
+ * a second against 30 grew by 670 MB a second and lost the WebGL context when
+ * the 24 GB card was full, taking the audio encoder and the take with it. Past
+ * this the frame is skipped and counted, and the file keeps its timeline -- the
+ * next frame taken lands on its own slot. Two gigabytes is about 60 frames at
+ * 4K and 250 at 1080p: a second or more of slack for an encoder that stalls
+ * briefly, and nowhere near the memory the scene needs.
+ *
+ * @constant {Number}
+ */
+const BACKLOG_BYTES = 2 * 1024 * 1024 * 1024;
 
 /** The recording taking frames from the visualizer, if any. */
 let active = null;
@@ -155,6 +170,54 @@ async function captureDesktopAudio() {
 function bitrateFor(width, height, fps, quality) {
   const { bpp } = QUALITY[quality] || QUALITY.medium;
   return Math.round(width * height * fps * bpp);
+}
+
+/**
+ * Frame rates an encoder may be told in place of the real one, highest first.
+ *
+ * Chromium's hardware H.264 encoder refuses a 4K configuration above 30 fps --
+ * measured on an RTX 4090, at every level and bitrate, while the same encoder
+ * runs 4K at 84 fps when it is simply given the frames. The rate in the config
+ * only sets its bit budget per frame, and the file's timing comes from the
+ * frame timestamps, so the encoder can be told a rate it accepts with the
+ * bitrate scaled to match: told 30 at half the bitrate and fed 60 fps, it
+ * produced 157 Mbps against a 149 Mbps target. Software is the last resort --
+ * at 4K60 it managed 44 fps and ignored the bitrate.
+ *
+ * @constant {Array<Number>}
+ */
+const DECLARED_RATES = [30, 25, 24];
+
+/**
+ * How the encoder is set up for a take: the first configuration this machine
+ * accepts, hardware before software, the real frame rate before a declared
+ * one.
+ *
+ * @param {Number} width pixels
+ * @param {Number} height pixels
+ * @param {Number} fps the take's frame rate
+ * @param {Number} bitrate bits per second wanted in the file
+ * @returns {Promise<Object|null>} `{ hardwareAcceleration, declaredFps, bitrate }`
+ *   -- the bitrate as the encoder is told it, per its declared rate -- or null
+ *   when nothing will encode this size
+ */
+async function encoderPlan(width, height, fps, bitrate) {
+  const rates = [fps, ...DECLARED_RATES.filter((rate) => rate < fps)];
+  const tries = [
+    ...rates.map((declaredFps) => ({ hardwareAcceleration: 'prefer-hardware', declaredFps })),
+    { hardwareAcceleration: 'no-preference', declaredFps: fps },
+  ];
+  for (let i = 0; i < tries.length; i += 1) {
+    const { hardwareAcceleration, declaredFps } = tries[i];
+    const told = Math.round((bitrate * declaredFps) / fps);
+    // eslint-disable-next-line no-await-in-loop
+    if (await canEncodeVideo(VIDEO_CODEC, {
+      width, height, bitrate: told, frameRate: declaredFps, hardwareAcceleration,
+    })) {
+      return { hardwareAcceleration, declaredFps, bitrate: told };
+    }
+  }
+  return null;
 }
 
 /**
@@ -296,15 +359,17 @@ class Recording {
     // busy, and a software encoder at 1080p runs at a third of real time:
     // measured as 372 of 618 frames still queued when a take stopped, and
     // thirty seconds to flush them. Software is the fallback, not the default.
-    let hardwareAcceleration = 'prefer-hardware';
-    if (!(await canEncodeVideo(VIDEO_CODEC, {
-      width, height, bitrate, hardwareAcceleration,
-    }))) {
-      hardwareAcceleration = 'no-preference';
-      if (!(await canEncodeVideo(VIDEO_CODEC, { width, height, bitrate }))) {
-        return { ok: false, error: 'This machine cannot encode H.264 video at this size' };
-      }
+    // Checked with the frame rate, as the encoder will be configured: without
+    // it a 4K60 take passed here and then failed on every frame.
+    const plan = await encoderPlan(width, height, this.fps, bitrate);
+    if (!plan) {
+      return { ok: false, error: `This machine cannot encode H.264 video at ${width}x${height}, ${this.fps} fps` };
     }
+    const { hardwareAcceleration } = plan;
+    // Software is the last resort, and at large sizes it cannot keep up: said
+    // before the take rather than discovered in the file.
+    this.encoderNote = hardwareAcceleration === 'prefer-hardware' ? null
+      : `No hardware encoder takes ${width}x${height} at ${this.fps} fps; encoding in software, which may drop frames`;
 
     // Ask for the sound BEFORE opening the file, so a refused capture does not
     // leave an empty take on disk. A failure here is not fatal: the take still
@@ -356,15 +421,20 @@ class Recording {
 
       this.video = new CanvasSource(this.canvas, {
         codec: VIDEO_CODEC,
-        bitrate,
+        bitrate: plan.bitrate,
         keyFrameInterval: KEY_FRAME_SECONDS,
         // No frame is ever dropped by the encoder itself; the recorder drops
         // them, counted, when the encoder is behind. See `frameDrawn`.
         latencyMode: 'quality',
         hardwareAcceleration,
+        // The config is the one about to be checked and used, so the rate the
+        // plan settled on replaces the track's: see `DECLARED_RATES`.
         onEncoderConfig: (config) => {
+          // eslint-disable-next-line no-param-reassign
+          config.framerate = plan.declaredFps;
           console.log(`[recorder] video encoder ${config.codec}, `
-            + `${config.hardwareAcceleration || 'no-preference'}, ${config.latencyMode}`);
+            + `${config.hardwareAcceleration || 'no-preference'}, ${config.latencyMode}, `
+            + `told ${config.framerate} fps at ${config.bitrate} bps for a ${this.fps} fps take`);
         },
         // Frames handed in against packets out: the difference at stop is the
         // encoder's backlog, and the flush at stop takes as long as it takes to
@@ -398,6 +468,9 @@ class Recording {
       return { ok: false, error: `Could not start the encoder: ${err.message}` };
     }
 
+    // Four bytes a pixel is what a frame taken from the canvas holds.
+    const frameBytes = width * height * 4;
+    this.maxBacklog = Math.max(MAX_FRAMES_IN_FLIGHT, Math.floor(BACKLOG_BYTES / frameBytes));
     this.startedAt = Date.now();
     this.clockStart = performance.now();
     this.currentSlot = 0;
@@ -414,7 +487,10 @@ class Recording {
     console.log(`[recorder] ${width}x${height} @ ${this.fps} fps, H.264`
       + `${audioCodec ? ` + ${audioCodec.toUpperCase()} desktop audio` : ''} -> ${this.path}`);
     return {
-      ok: true, path: this.path, audio: !!audioCodec, note: this.audioNote || null,
+      ok: true,
+      path: this.path,
+      audio: !!audioCodec,
+      note: [this.encoderNote, this.audioNote].filter(Boolean).join('. ') || null,
     };
   }
 
@@ -472,7 +548,11 @@ class Recording {
     }
     this.frameIndex = index;
 
-    if (this.inFlight >= MAX_FRAMES_IN_FLIGHT) {
+    // A failed encoder fails every frame after it; the first error is the one
+    // reported, and the take stops feeding it.
+    if (this.error) return;
+    if (this.inFlight >= MAX_FRAMES_IN_FLIGHT
+      || this.framesAdded - this.encodedPackets >= this.maxBacklog) {
       this.dropped += 1;
       return;
     }
@@ -536,7 +616,10 @@ class Recording {
    * because the frame table is the last thing written and a file without it
    * will not play at all.
    *
-   * @returns {Promise<Object>} `{ ok, path, bytes, dropped }` or `{ ok: false, error }`
+   * @returns {Promise<Object>} `{ ok, path, bytes, frames }` or `{ ok: false, error }`;
+   *   `frames` is `{ slots, recorded, dropped, held }` -- slots on the fps grid,
+   *   frames in the file, frames dropped because the encoder was behind, and
+   *   slots that passed with nothing drawn, where the frame before stands in
    */
   async stop() {
     if (!this.output) return { ok: false, error: 'Not recording' };
@@ -598,7 +681,15 @@ class Recording {
     console.log(`[recorder] ${this.frameIndex + 1} slots, ${this.skippedSlots} passed undrawn,`
       + ` longest interval between drawn frames ${this.longestFrameMs.toFixed(1)} ms`);
     return {
-      ok: true, path: closed.path, bytes: closed.bytes, dropped: this.dropped,
+      ok: true,
+      path: closed.path,
+      bytes: closed.bytes,
+      frames: {
+        slots: this.frameIndex + 1,
+        recorded: this.framesAdded,
+        dropped: this.dropped,
+        held: this.skippedSlots,
+      },
     };
   }
 }

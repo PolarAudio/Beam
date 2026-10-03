@@ -10,7 +10,7 @@ import SceneManager from './scene_manager';
 import AnimationManager from './animation_manager';
 import Controls from './controls';
 import ViewCube from './view_cube';
-import MovingHead from './moving_head';
+import Light from './light';
 import InfiniteGridHelper from './grid';
 import LEDField from './led_field';
 import LightField from './light_field';
@@ -67,6 +67,7 @@ import {
 import AmbientHazeEffect from './ambient_haze';
 import Perf from './perf_overlay';
 import Preferences from './preferences';
+import { refreshAddressFormat } from '../../models/DMX/address_format';
 import Tuning from './tuning';
 import createLEDDebugPanel from './led_debug_panel';
 import VideoFeed from './video_feed';
@@ -81,6 +82,7 @@ import ContactShadows from './contact_shadows';
 import LaserEffect from './laser_pass';
 import Strobe from './strobe';
 import StrobeWashEffect from './strobe_wash';
+import { SelectionOutlineEffect, setSceneDepth as setOutlineDepth } from './selection_outline';
 import Recorder from './recorder';
 import {
   EffectComposer,
@@ -106,6 +108,7 @@ let projectorEffect = null;
 let laserEffect = null;
 /** Whites the frame when a strobe fires at the camera. */
 let strobeWashEffect = null;
+let selectionOutlineEffect = null;
 /** Scratch for the wash summed over every strobe each frame. */
 const strobeWash = new THREE.Color();
 
@@ -264,12 +267,19 @@ const BLOOM_BY_FOG = {
   // threshold washes the whole image before any air is involved. Haze opens
   // it up from there.
   //
+  // The threshold barely moves with haze. Pools land at their real
+  // illuminance on the projector's lux scale, so a mover's pool is several
+  // times the gate, and a low gate fills the dark between a gobo's bars with
+  // glow. Haze adds strength and spread instead, the spread kept narrow: a
+  // pool a metre or two from its lamp runs to tens of thousands of lux, and
+  // a wide spread smears that over the whole frame as a grey veil.
+  //
   // Deliberately NOT a preference. Bloom already answers to haze density, which
   // is a scene control the user sets; a second control over the same quantity
   // would be one the haze slider cannot reach.
-  intensity: { min: 0.70, max: 5.0 },
-  radius: { min: 0.40, max: 1.0 },
-  threshold: { min: 0.45, max: 0.05 },
+  intensity: { min: 0.70, max: 2.1 },
+  radius: { min: 0.30, max: 0.50 },
+  threshold: { min: 0.6, max: 0.4 },
 };
 
 /**
@@ -354,6 +364,8 @@ class Visualizer {
     // Loaded before anything is built, so the scene comes up already dressed
     // rather than flickering through defaults.
     await Preferences.load();
+    // Addresses on screen were drawn in the fallback spelling until now.
+    refreshAddressFormat();
     // Straight onto the room, before a renderer or a debug panel can read it.
     // A panel that reads `SceneEnv` before this shows zeros for the rest of
     // the session while the scene runs on the stored values.
@@ -1029,7 +1041,7 @@ class Visualizer {
     this.globalLightHandle.castShadow = false;
     this.globalLightHandle.position.set(-10, -10, 10);
 
-    MovingHead.prepareInstanciation(this.camera, SceneManager);
+    Light.prepareInstanciation(this.camera, SceneManager);
 
     // The beams have their uniforms from `SceneEnv` as they are built, so
     // there is nothing to push at them here. The bloom is this side's business
@@ -1038,7 +1050,7 @@ class Visualizer {
     SceneEnv.on('changed', () => this.applyFogToBloom());
 
     AnimationManager.add((t) => {
-      MovingHead.update(t);
+      Light.update(t);
       LEDField.update(t);
       // The strobes' flash trains, before the field packs them and before the
       // wash reads what they did to the camera.
@@ -1070,8 +1082,8 @@ class Visualizer {
       // projectors' depth pass above.
       Laser.renderDepth(this.renderer, SceneManager);
       // Each lit mover beam's depth from its lens, the same way, within a
-      // per-frame tile budget; see `MovingHead.renderDepth`.
-      MovingHead.renderDepth(this.renderer, SceneManager);
+      // per-frame tile budget; see `Light.renderDepth`.
+      Light.renderDepth(this.renderer, SceneManager);
       Laser.renderFigures(this.renderer);
       if (laserEffect) {
         laserEffect.setLasers(
@@ -1352,9 +1364,13 @@ class Visualizer {
     // calibrated in lux against a real rig, and a glow would change how every
     // mapping show looks.
     finalComposer.addPass(new EffectPass(this.camera, laserEffect));
+    // Last, after the tone curve: the outline is a mark on the picture, not
+    // light in the scene, and its orange is the orange it is drawn in.
+    selectionOutlineEffect = new SelectionOutlineEffect(this.camera);
     const effects = bloomEffect
       ? [projectorEffect, ambientHazeEffect, strobeWashEffect, bloomEffect, toneMapping]
       : [projectorEffect, ambientHazeEffect, strobeWashEffect, toneMapping];
+    effects.push(selectionOutlineEffect);
     finalComposer.addPass(new EffectPass(this.camera, ...effects));
 
     // A depth-reading effect -- the ambient haze, here -- makes the composer
@@ -1927,7 +1943,8 @@ class Visualizer {
       // Only opaque geometry is in it: beams write no depth, so they never
       // end against each other, which is right. A beam is air, not a wall.
       if (finalComposer && finalComposer.stableDepthTexture) {
-        MovingHead.setSceneDepth(finalComposer.stableDepthTexture, this.camera);
+        Light.setSceneDepth(finalComposer.stableDepthTexture, this.camera);
+        setOutlineDepth(finalComposer.stableDepthTexture, this.camera);
       }
       if (finalComposer) {
         finalComposer.render();
@@ -1941,9 +1958,10 @@ class Visualizer {
     // takes it only when its own clock has reached the next frame slot.
     Recorder.frameDrawn();
 
-    // Over the finished image, and after Perf.end() so the gizmo's own cost is
-    // not counted against the scene it is reporting on. Not while recording:
-    // it is a navigation aid, and it would sit in the corner of the footage.
+    // Over the finished image, and after Perf.end() so their own cost is not
+    // counted against the scene it is reporting on. Not while recording: the
+    // move gizmo and the view cube are aids, and would sit in the footage.
+    if (!helpers.recording) Controls.renderGizmo(this.renderer);
     if (this.viewCube && !helpers.recording) this.viewCube.render(this.renderer);
   }
 }

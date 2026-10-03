@@ -9,6 +9,15 @@
     :cancel-txt="no"
     @submit="answer(true)"
   >
+    <template
+      v-if="also"
+      #actions
+    >
+      <uk-button
+        :label="also"
+        @click="answer('also')"
+      />
+    </template>
     <uk-flex
       col
       :gap="8"
@@ -75,6 +84,11 @@ export default {
       type: String,
       default: 'no',
     },
+    /** A third answer's button, for a question with one; none when empty. */
+    also: {
+      type: String,
+      default: '',
+    },
   },
   emits: ['update:modelValue', 'answer'],
   data() {
@@ -98,7 +112,7 @@ export default {
   methods: {
     /**
      * @public
-     * @param {Boolean} yes
+     * @param {Boolean|String} yes true, false, or 'also' for the third answer
      */
     answer(yes) {
       if (this.answered) return;

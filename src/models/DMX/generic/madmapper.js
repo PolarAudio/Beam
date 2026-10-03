@@ -16,6 +16,7 @@
 
 import { scanOrder, SCAN_AXES, START_CORNERS } from './led_bar';
 import { fixtureIslands, ISLAND_KINDS } from '../fixture_islands';
+import { labelOf } from '../item_naming';
 
 /**
  * Patching mode declared on a fixture whose pixels form a grid.
@@ -649,9 +650,9 @@ function productName(entry, parts) {
  * @returns {Object|null} `{ kind, id, name }`
  */
 function ownerOf(fixture) {
-  if (fixture.group) return { kind: 'g', id: fixture.group.id, name: fixture.group.name };
+  if (fixture.group) return { kind: 'g', id: fixture.group.id, name: labelOf(fixture.group) };
   if (fixture.structure) {
-    return { kind: 's', id: fixture.structure.id, name: fixture.structure.name };
+    return { kind: 's', id: fixture.structure.id, name: labelOf(fixture.structure) };
   }
   return null;
 }

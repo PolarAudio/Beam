@@ -1,6 +1,52 @@
 import * as THREE from 'three';
 
 /**
+ * What one unit of light-field intensity is worth, in candela.
+ *
+ * The field has no physical unit of its own. It is pinned to a discharge
+ * mover of about twenty thousand lumens in a fifteen degree cone, which
+ * writes 100; every fixture puts its candela into these units, so a strobe
+ * and a small LED spot light a floor in proportion to what they really emit.
+ */
+const REFERENCE_INTENSITY = 100;
+const REFERENCE_LUMENS = 20000;
+const REFERENCE_CONE_DEGREES = 15;
+const REFERENCE_HALF_ANGLE = (REFERENCE_CONE_DEGREES / 2) * (Math.PI / 180);
+const REFERENCE_SOLID_ANGLE = 2 * Math.PI * (1 - Math.cos(REFERENCE_HALF_ANGLE));
+const CANDELA_PER_UNIT = (REFERENCE_LUMENS / REFERENCE_SOLID_ANGLE) / REFERENCE_INTENSITY;
+
+/**
+ * Linear scene units per lux. The one calibration constant for light landing
+ * on a surface, and a real one, shared by the projector and every fixture in
+ * the field.
+ *
+ * Everything else about a light's brightness is computed rather than chosen.
+ * A projector's illuminance is lumens over the area the lens makes at that
+ * distance; a fixture's is its candela over the distance squared. Both are
+ * numbers a designer already thinks in -- a dark venue is one to five lux,
+ * street lighting ten to twenty, a mapping rig on a facade fifty to a hundred
+ * and fifty, a mover's pool hundreds.
+ *
+ * Only the last step needs a decision: lux to a value the tone curve can eat.
+ * This is it, the camera's exposure, and it is the only number here set by
+ * looking.
+ *
+ * Anchored on a reference rig, the one to check against if this ever drifts:
+ * a 10000-lumen machine, throw ratio 1.5, 1920x1200, twenty-seven
+ * metres off a church. That is a 17 x 10.5 m image at **about 60 lux**, which
+ * at this value reads as a projection that clearly owns the facade against a
+ * dark venue -- which is what sixty lux on a wall at night looks like.
+ */
+const LUX_SCALE = 0.022;
+
+/**
+ * A light-field unit as a three.js light intensity: candela into scene
+ * units, so that with an inverse-square falloff a surface receives its lux
+ * times `LUX_SCALE`, the same scale a projected picture lands at.
+ */
+const SCENE_INTENSITY_PER_UNIT = CANDELA_PER_UNIT * LUX_SCALE;
+
+/**
  * @file Every fixture's light, in a texture rather than a uniform array.
  *
  * three puts each light into a fixed-size uniform array that is compiled into
@@ -128,8 +174,9 @@ const record = {
 const uniforms = {
   lightField: { value: null },
   lightFieldCount: { value: 0 },
-  lightFieldDecay: { value: 1.0 },
-  // The mover depth atlas, set by `MovingHead.renderDepth` each frame.
+  // Sources write candela on the lux scale; light falls as the inverse square.
+  lightFieldDecay: { value: 2 },
+  // The mover depth atlas, set by `Light.renderDepth` each frame.
   lightFieldDepth: { value: null },
   lightFieldDepthFar: { value: 1 },
   lightFieldDepthBias: { value: 0.05 },
@@ -239,11 +286,21 @@ const FIELD_LIGHT_CHUNK = /* glsl */`
       float texel = 2.0 * along * packedAxisX.w / lightFieldDepthTile;
       vec3 lifted = offset + geometryNormal * ( texel * 1.5 );
       float alongLifted = dot( lifted, tileAxisZ );
+      // Slope allowance. Lifting along the normal is enough where the beam
+      // meets a surface head-on, but at a grazing angle the lift hardly
+      // changes the distance along the beam while the surface's own depth
+      // changes by a texel's width times the tangent of the angle across one
+      // tile texel -- so neighbouring texels passed and failed alternately and
+      // a low pool on the floor was cut into stair-steps. Capped, so a shadow
+      // cast at a grazing angle still starts near what casts it.
+      float facing = abs( dot( geometryNormal, normalize( offset ) ) );
+      float slope = sqrt( max( 1.0 - facing * facing, 0.0 ) ) / max( facing, 0.05 );
+      float allowance = lightFieldDepthBias + min( texel * 1.5 * slope, texel * 8.0 );
       vec2 ndc = vec2( -dot( lifted, tileAxisX ), dot( lifted, tileAxisY ) ) / ( alongLifted * packedAxisX.w );
       if ( all( lessThan( abs( ndc ), vec2( 1.0 ) ) ) ) {
         vec2 tileUv = packedTile.xy + ( ndc * 0.5 + 0.5 ) * packedTile.zw;
         float seen = unpackRGBAToDepth( texture2D( lightFieldDepth, tileUv ) ) * lightFieldDepthFar;
-        if ( alongLifted > seen + lightFieldDepthBias ) continue;
+        if ( alongLifted > seen + allowance ) continue;
       }
     } else {
       attenuation *= getSpotAttenuation( packedDirection.w, packedColor.w, angleCos );
@@ -269,7 +326,7 @@ uniform float lightFieldDepthBias;
 uniform float lightFieldDepthTile;
 uniform sampler2D lightFieldGobo;
 
-// The tile looks wider than the field by this, as in moving_head.js.
+// The tile looks wider than the field by this, as in light.js.
 #define FIELD_DEPTH_FOV_MARGIN 1.2
 // How much of the light a prism lets through, as in the beam shader.
 #define FIELD_PRISM_TRANSMISSION 0.88
@@ -288,7 +345,7 @@ vec2 fieldPrismOffset( int k, int facets, bool linear, float angle, float spread
 // The most facets a prism is drawn with.
 #define FIELD_PRISM_FACETS 8
 // The gobo atlas is a grid of this many patterns across, as gobo_library.js.
-#define FIELD_GOBO_GRID 8.0
+#define FIELD_GOBO_GRID 16.0
 
 // A gobo's stencil at a point of the aperture, (0,0) the axis and 1 the
 // field's radius; 1 where light passes. Pattern 0 is open and skips the
@@ -306,8 +363,18 @@ float fieldGobo( vec2 p, vec2 patternAngle, float defocus ) {
   float index = floor( patternAngle.x + 0.5 );
   vec2 cell = vec2( mod( index, FIELD_GOBO_GRID ), floor( index / FIELD_GOBO_GRID ) );
   vec3 levels = textureLod( lightFieldGobo, ( cell + q ) / FIELD_GOBO_GRID, 0.0 ).rgb;
-  return mix( mix( levels.r, levels.g, clamp( defocus, 0.0, 1.0 ) ), levels.b,
+  float v = mix( mix( levels.r, levels.g, clamp( defocus, 0.0, 1.0 ) ), levels.b,
     clamp( defocus - 1.0, 0.0, 1.0 ) );
+  // Past the softest level, frost: on to the pattern's mean inside the hole,
+  // from the mip at one texel per cell, over the share of the cell the round
+  // aperture covers.
+  float wash = clamp( defocus - 2.0, 0.0, 1.0 );
+  if ( wash > 0.0 ) {
+    float lod = log2( float( textureSize( lightFieldGobo, 0 ).x ) / FIELD_GOBO_GRID );
+    float mean = textureLod( lightFieldGobo, ( cell + 0.5 ) / FIELD_GOBO_GRID, lod ).r / 0.7238;
+    v = mix( v, min( mean, 1.0 ), wash );
+  }
+  return v;
 }
 
 // The pool's shape at a point of the aperture: the falloff from the inner
@@ -511,8 +578,7 @@ const LightField = {
    * Teaches one material to read the field.
    *
    * Idempotent, and safe on a material that already has an `onBeforeCompile`
-   * of its own -- the existing one is kept and run first, which matters
-   * because `MODEL_MATERIAL` uses one for its highlight attribute.
+   * of its own -- the existing one is kept and run first.
    *
    * @public
    * @param {THREE.Material} material
@@ -549,3 +615,10 @@ const LightField = {
 };
 
 export default LightField;
+export {
+  REFERENCE_LUMENS,
+  CANDELA_PER_UNIT,
+  REFERENCE_INTENSITY,
+  LUX_SCALE,
+  SCENE_INTENSITY_PER_UNIT,
+};

@@ -1,11 +1,12 @@
 import * as THREE from 'three';
 import SceneManager from './scene_manager';
 import SceneEnv from './scene_env';
-import LightField from './light_field';
+import LightField, { CANDELA_PER_UNIT, REFERENCE_INTENSITY, SCENE_INTENSITY_PER_UNIT } from './light_field';
 import { castsContactShadow } from './contact_shadows';
 import BodyFinish from './body_finish';
 import Shutter, { SHUTTER_MODES } from './shutter';
 import { GLOW_UNIFORMS, GLOW_FRAGMENT } from './led_field';
+import { setOutlined } from './selection_outline';
 import {
   DEFAULT_STROBE_PARAMS, faceOrigin, faceSize, floodHalfAngles, floodSolidAngle,
   lumens, isXenon, flashLumenSeconds,
@@ -72,9 +73,6 @@ const BODY = new BodyFinish({
   lift: 0.4,
 });
 
-/** Outline shown while a strobe is selected. Matches the projector's. */
-const HIGHLIGHT_MATERIAL = new THREE.LineBasicMaterial({ color: 0x1ca6bd });
-
 /** The flood, drawn only while selected -- see `showAids`. */
 const AID_MATERIAL = new THREE.LineBasicMaterial({
   color: 0x1ca6bd,
@@ -113,22 +111,6 @@ const STROBE_RANGE = 60;
  * A flood has no hard edge; most of the fall-off is in its outer third.
  */
 const FLOOD_INNER_FRACTION = 0.6;
-
-/**
- * What one unit of light-field intensity is worth, in candela.
- *
- * The field has no physical unit of its own: a moving head writes its
- * `SpotLight` intensity, 100 at full, into it. So a strobe's candela is put
- * into the same units by what that head stands for -- a discharge mover of
- * about twenty thousand lumens in a fifteen degree cone -- and the two light a
- * floor in proportion.
- */
-const REFERENCE_INTENSITY = 100;
-const REFERENCE_LUMENS = 20000;
-const REFERENCE_CONE_DEGREES = 15;
-const REFERENCE_HALF_ANGLE = (REFERENCE_CONE_DEGREES / 2) * (Math.PI / 180);
-const REFERENCE_SOLID_ANGLE = 2 * Math.PI * (1 - Math.cos(REFERENCE_HALF_ANGLE));
-const CANDELA_PER_UNIT = (REFERENCE_LUMENS / REFERENCE_SOLID_ANGLE) / REFERENCE_INTENSITY;
 
 /**
  * How far a strobe's glow reaches into the air, as a multiple of its face's
@@ -304,13 +286,6 @@ class Strobe {
     this._glow.visible = false;
     this._dummy.add(this._glow);
 
-    this._outline = new THREE.LineSegments(
-      new THREE.EdgesGeometry(BOX_GEOMETRY),
-      HIGHLIGHT_MATERIAL,
-    );
-    this._outline.visible = false;
-    this._dummy.add(this._outline);
-
     this._aid = new THREE.LineSegments(new THREE.BufferGeometry(), AID_MATERIAL);
     this._aid.visible = false;
     this._dummy.add(this._aid);
@@ -335,7 +310,6 @@ class Strobe {
 
     // Width across, depth front-to-back, height up.
     this._body.scale.set(width, depth, height);
-    this._outline.scale.copy(this._body.scale);
 
     const face = faceSize(params);
     const origin = faceOrigin(params);
@@ -433,7 +407,7 @@ class Strobe {
   update(t) {
     this.syncSettings();
     const level = this._shutter.sample(t);
-    this._lit = level * this._gain;
+    this._lit = this._hidden ? 0 : level * this._gain;
     this._frameIntensity = this.frameIntensity();
 
     const brightness = FACE_DARK + this._lit * FACE_HDR;
@@ -500,7 +474,8 @@ class Strobe {
     forward.set(0, -1, 0).transformDirection(this._dummy.matrixWorld);
     record.direction.copy(forward).negate();
     record.color.copy(this._colour);
-    record.intensity = this._frameIntensity * this._lit;
+    // Candela on the lux scale, as every source in the field.
+    record.intensity = this._frameIntensity * this._lit * SCENE_INTENSITY_PER_UNIT;
     record.range = STROBE_RANGE;
     const { h, v } = floodHalfAngles(this._params || {});
     const half = Math.max(h, v);
@@ -671,8 +646,18 @@ class Strobe {
    * @param {Boolean} state
    */
   showAids(state) {
-    this._outline.visible = !!state;
+    setOutlined(this, !!state, this.outlineMeshes());
     this._aid.visible = !!state;
+  }
+
+  /**
+   * What the selection outline is drawn round: its body and faces.
+   *
+   * @public
+   * @returns {Array<THREE.Mesh>}
+   */
+  outlineMeshes() {
+    return [this._body, this._face, this._faceSecond];
   }
 
   /**
@@ -700,6 +685,23 @@ class Strobe {
   }
 
   /**
+   * Whether the fixture is hidden from the scene: not drawn, and its lamp held
+   * dark in `update()`, which is what the field light and the camera wash
+   * read.
+   * Picking skips it by asking the fixture, not this.
+   *
+   * @type {Boolean}
+   */
+  set hidden(state) {
+    this._hidden = !!state;
+    this._dummy.visible = !this._hidden;
+  }
+
+  get hidden() {
+    return !!this._hidden;
+  }
+
+  /**
    * Drops a strobe and everything it owns.
    *
    * The shared geometries and the body material are left alone. The face and
@@ -713,7 +715,7 @@ class Strobe {
     instances.delete(instance);
     LightField.unregister(instance);
     if (instance._aid && instance._aid.geometry) instance._aid.geometry.dispose();
-    if (instance._outline && instance._outline.geometry) instance._outline.geometry.dispose();
+    setOutlined(instance, false);
     if (instance._faceMaterial) instance._faceMaterial.dispose();
     if (instance._faceSecondMaterial) instance._faceSecondMaterial.dispose();
     if (instance._glowMaterial) instance._glowMaterial.dispose();

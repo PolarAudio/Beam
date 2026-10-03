@@ -219,9 +219,12 @@ const ENTITIES = {
       ENTITY_UNIT_DEG,
       ENTITY_UNIT_PERC,
     ],
+    // A percentage here is a share of the lens's range, narrowest to widest,
+    // so narrow is the bottom of it: OFL's 1% would leave a zoom short of
+    // its stated narrowest angle.
     values: {
       closed: PRESET_VALUE_0,
-      narrow: PRESET_VALUE_1,
+      narrow: PRESET_VALUE_0,
       wide: PRESET_VALUE_100,
     },
   },

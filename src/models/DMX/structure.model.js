@@ -4,7 +4,8 @@ import { Proxify } from '../utils/proxify.utils';
 import GroupHandle from '../../plugins/visualizer/group_handle';
 import Controls from '../../plugins/visualizer/controls';
 import withTransform from './scene_item.transform';
-import { SCENE_ITEM_KINDS, rowId } from './scene_item';
+import { SCENE_ITEM_KINDS, rowId, kindOf } from './scene_item';
+import { itemLabel, splitSavedName } from './item_naming';
 
 /**
  * @file One scene item built out of several, placed and moved as a unit.
@@ -58,6 +59,17 @@ class Structure extends withTransform(Proxify) {
     this._id = data.id !== undefined ? data.id : structureCount;
     structureCount = Math.max(structureCount, this._id + 1);
     this._name = data.name || 'untitled';
+    /**
+     * Beam's number for this item among others of its kind with the same
+     * name; see item_naming.js. Given when the item joins the show.
+     */
+    this.instance = Number.isInteger(data.instance) ? data.instance : null;
+    if (this.instance === null) {
+      // Saved before instances existed: the number was part of the name.
+      const split = splitSavedName(this._name, [data.baseName]);
+      this._name = split.name;
+      this.instance = split.instance;
+    }
     this._position = {
       x: (data.position || {}).x || 0,
       y: (data.position || {}).y || 0,
@@ -68,8 +80,10 @@ class Structure extends withTransform(Proxify) {
       y: (data.rotation || {}).y || 0,
       z: (data.rotation || {}).z || 0,
     };
-    /** Members, in list order. Fixtures today, objects once they exist. */
+    /** Members, in list order: fixtures and objects. */
     this.members = [];
+    /** Hidden from the scene: see `hidden`. */
+    this._hidden = !!data.hidden;
     /**
      * Which flattenings of this structure are wanted when exporting a layout.
      *
@@ -119,6 +133,16 @@ class Structure extends withTransform(Proxify) {
   }
 
   /**
+   * How the item is shown and exported: its name and instance, `name N`.
+   *
+   * @readonly
+   * @type {String}
+   */
+  get label() {
+    return itemLabel(this._name, this.instance);
+  }
+
+  /**
    * The address an ordering treats this as having.
    *
    * A structure has no address of its own, but arranging by address has to put
@@ -156,7 +180,7 @@ class Structure extends withTransform(Proxify) {
    */
   get listable() {
     return {
-      name: this._name,
+      name: this.label,
       icon: 'structure',
       id: rowId(SCENE_ITEM_KINDS.STRUCTURE, this._id),
       kind: this.kind,
@@ -167,8 +191,10 @@ class Structure extends withTransform(Proxify) {
   }
 
   /**
-   * Exportable show data chunk. Members are referenced by id; they serialise
-   * themselves in the fixture list, as ordinary fixtures.
+   * Exportable show data chunk. Members are referenced by id, and serialise
+   * themselves in the fixture and object lists. A fixture is its bare id; an
+   * object is `{ kind: 'object', id }`, because the two kinds number
+   * separately.
    *
    * @readonly
    * @type {Object}
@@ -177,9 +203,13 @@ class Structure extends withTransform(Proxify) {
     return {
       id: this._id,
       name: this._name,
+      instance: this.instance || undefined,
+      hidden: this._hidden || undefined,
       position: { ...this._position },
       rotation: { ...this._rotation },
-      members: this.members.map((member) => member.id),
+      members: this.members.map((member) => (kindOf(member) === SCENE_ITEM_KINDS.OBJECT
+        ? { kind: SCENE_ITEM_KINDS.OBJECT, id: member.id }
+        : member.id)),
       mappings: [...this.mappings],
       grouping: this.grouping,
     };
@@ -302,6 +332,29 @@ class Structure extends withTransform(Proxify) {
     this.members.push(member);
     member.structure = this;
     this.captureLocal(member);
+    if (member.applyHidden) member.applyHidden();
+  }
+
+  /**
+   * Whether the structure is hidden, which hides every member with it.
+   *
+   * Members are told rather than asked each frame: their renderers hold the
+   * state, and a member reads its container's flag when it works out its own.
+   *
+   * @type {Boolean}
+   */
+  set hidden(state) {
+    this._hidden = !!state;
+    this.members.forEach((member) => { if (member.applyHidden) member.applyHidden(); });
+  }
+
+  get hidden() {
+    return !!this._hidden;
+  }
+
+  /** @readonly @type {Boolean} */
+  get isHidden() {
+    return !!this._hidden;
   }
 
   /**
@@ -320,6 +373,9 @@ class Structure extends withTransform(Proxify) {
     this.members.splice(index, 1);
     member.structure = null;
     member.localTransform = null;
+    // Leaving a hidden structure -- exploding it, most often -- must not make
+    // anything appear: what could not be seen stays unseen, now on its own.
+    if (this._hidden && 'hidden' in member) member.hidden = true;
   }
 
   /**
@@ -420,6 +476,10 @@ class Structure extends withTransform(Proxify) {
       z: centre.z / this.members.length,
     };
     this.members.forEach((member) => this.captureLocal(member));
+    // The handle the gizmo holds follows the new centre. Left where it was,
+    // the gizmo writes its old position back when it lets go, and every
+    // member moves by the difference.
+    if (this._3DModel) this._3DModel.sync();
   }
 
   /**

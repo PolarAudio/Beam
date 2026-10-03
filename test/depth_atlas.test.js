@@ -129,6 +129,9 @@ function makeProjections(count) {
   return out;
 }
 
+/** The slots a pass redrew, as text so a check can compare them. */
+const slots = (drawn) => drawn.join(',');
+
 /** Fresh atlas, fresh renderer, and one pass already drawn. */
 function primed(count = 4) {
   const atlas = new DepthAtlas({
@@ -147,7 +150,7 @@ console.log('\n-- the first pass owes every tile --');
 
 {
   const { drawn, renderer } = primed(4);
-  check('every tile drawn', drawn, 4);
+  check('every tile drawn', slots(drawn), '0,1,2,3');
   check('one scene pass each', renderer.calls.renders.length, 4);
 }
 
@@ -159,7 +162,7 @@ console.log('\n-- and a still rig owes none --');
   } = primed(4);
   renderer.calls.renders.length = 0;
   renderer.calls.clears.length = 0;
-  check('nothing redrawn', atlas.render(renderer, scene, projections), 0);
+  check('nothing redrawn', slots(atlas.render(renderer, scene, projections)), '');
   check('no scene pass at all', renderer.calls.renders.length, 0);
   // The clear is the dangerous half: a tile wiped and not redrawn is worse
   // than one redrawn needlessly, because it answers the far plane everywhere.
@@ -187,7 +190,7 @@ console.log('\n-- moving one fixture costs one tile, not the rig --');
   renderer.calls.clears.length = 0;
   projections[2].camera.position.x += 1;
   projections[2].camera.updateMatrixWorld(true);
-  check('one tile redrawn', atlas.render(renderer, scene, projections), 1);
+  check('only its tile redrawn', slots(atlas.render(renderer, scene, projections)), '2');
   check('and it is that fixture', renderer.calls.renders[0].camera, projections[2].camera.uuid);
   check('one clear, on its tile', renderer.calls.clears.length, 1);
   // Slot 2 of a 2x2 atlas of 64 px tiles is the bottom-left of the top row.
@@ -204,7 +207,7 @@ console.log('\n-- a zoom moves no camera and must still redraw --');
   // What `Projector.projection()` does every frame when a console drives zoom
   // or shift: the frustum is rewritten, the lens stays exactly where it is.
   projections[1].camera.projectionMatrix.makePerspective(-0.4, 0.4, 0.25, -0.25, 0.5, 100);
-  check('the zoomed tile redrawn', atlas.render(renderer, scene, projections), 1);
+  check('only the zoomed tile redrawn', slots(atlas.render(renderer, scene, projections)), '1');
   check('and it is that fixture', renderer.calls.renders[0].camera, projections[1].camera.uuid);
 }
 
@@ -217,7 +220,7 @@ console.log('\n-- geometry moving is everybody\'s business --');
   renderer.calls.renders.length = 0;
   wall.position.z += 2;
   wall.updateMatrixWorld(true);
-  check('every tile redrawn', atlas.render(renderer, scene, projections), 4);
+  check('every tile redrawn', slots(atlas.render(renderer, scene, projections)), '0,1,2,3');
 }
 
 console.log('\n-- and the scene is walked once, not once per tile --');
@@ -248,7 +251,7 @@ console.log('\n-- a tile nobody owns is not left answering for the next fixture 
   atlas.render(renderer, scene, projections.slice(0, 3));
   check('keys trimmed to what is owned', atlas.tileKeys.length, 3);
   renderer.calls.renders.length = 0;
-  check('the returning fixture draws', atlas.render(renderer, scene, projections), 1);
+  check('only the returning fixture draws', slots(atlas.render(renderer, scene, projections)), '3');
   check('into its own slot', renderer.calls.renders[0].camera, projections[3].camera.uuid);
 }
 
@@ -260,7 +263,7 @@ console.log('\n-- more fixtures than slots is a cap, not a crash --');
   });
   const { scene } = makeScene();
   const renderer = fakeRenderer();
-  check('drawn up to the cap', atlas.render(renderer, scene, makeProjections(5)), 2);
+  check('drawn up to the cap', slots(atlas.render(renderer, scene, makeProjections(5))), '0,1');
 }
 
 console.log('\n-- a tile survives the shadow pass inside render --');

@@ -45,17 +45,37 @@
           @select="selectItem"
         >
           <template #filters>
+            <!-- Keyed by state: the button keeps its own toggle, and three
+                 states ask more of it than on and off. -->
             <uk-button
               v-if="activeKind === 'fixtures'"
-              icon="hide"
+              :key="`bad-${badFilter}`"
+              :icon="badFilter === 'not' ? 'thumbs_down_off' : 'thumbs_down'"
               icon-only
               square
               toggleable
-              :value="false"
-              :model-value="showBad"
-              color="var(--accent-blue)"
-              :label="showBad ? 'Hide fixtures marked bad' : 'Show fixtures marked bad'"
-              @click="toggleShowBad"
+              :model-value="badFilter !== 'all'"
+              color="var(--accent-orange)"
+              :label="filterLabel('bad', badFilter)"
+              @click="cycleFilter('badFilter')"
+            />
+            <uk-button
+              v-if="activeKind === 'fixtures'"
+              :key="`fav-${favouriteFilter}`"
+              :icon="favouriteFilter === 'not' ? 'heart_off' : 'heart'"
+              icon-only
+              square
+              toggleable
+              :model-value="favouriteFilter !== 'all'"
+              color="var(--accent-pink)"
+              :label="filterLabel('favourite', favouriteFilter)"
+              @click="cycleFilter('favouriteFilter')"
+            />
+            <filter-menu
+              v-if="activeKind === 'fixtures'"
+              v-model="facetFilter"
+              :groups="facetGroups"
+              @update:model-value="items = buildItems('fixtures')"
             />
           </template>
         </uk-list>
@@ -114,12 +134,14 @@
             :fixture="sharePanel === 'library' ? newerOnShare(selectedItem) : fixture.share"
             :entry="sharePanel === 'library' ? selectedItem : null"
             :bad="selectedBad"
+            :favourite="selectedFavourite"
             :busy="loading"
             @log-in="shareLogIn"
             @log-out="shareLogOut"
             @refresh="loadShare(true)"
             @update="updateFromShare"
             @mark-bad="markBad"
+            @favourite="markFavourite"
             @remove="removeFromLibrary"
           />
           <uk-flex
@@ -382,6 +404,7 @@ import Fixture from '@/models/DMX/fixture.model';
 import { normaliseMatrixProfile } from '@/models/DMX/ofl_matrix';
 import importGdtfFiles from '@/plugins/gdtf_import';
 import confirm from '@/plugins/confirm';
+import { kindOf, categoryIcon, fixtureOrigin } from '@/models/DMX/generic/fixture_kind';
 import { searchWords } from '@/plugins/word_search';
 import {
   shareFixtures, searchFixtures, shareFixtureName, uploaderText, modesText,
@@ -391,6 +414,7 @@ import CreateObjectPopup from './popup.create.object.vue';
 import ImportObjectPopup from './popup.import.object.vue';
 import ObjectBrowser from './object.browser.vue';
 import SharePanel from './share.panel.vue';
+import FilterMenu from './filter.menu.vue';
 import { generateMissing } from '@/plugins/visualizer/thumbnailer';
 
 /** How long the export button confirms for, in ms. */
@@ -414,6 +438,57 @@ const DEFAULT_FIXTURE_DATA = {
 /** How many GDTF Share matches the list shows; a longer search narrows the rest. */
 const SHARE_SHOWN = 50;
 
+/** The funnel's types, by the icon that stands for each, in menu order. */
+const TYPE_LABELS = {
+  movinghead: 'Moving head',
+  static: 'Static',
+  grid: 'Matrix',
+  ledbar: 'LED bar',
+  laser: 'Laser',
+  strobe: 'Strobe',
+  projector: 'Projector or display',
+  lightbulb: 'Other',
+  undef: 'Not drawn',
+};
+
+/** The funnel's origins, in menu order. */
+const ORIGIN_LABELS = { GDTF: 'GDTF', OFL: 'OFL', Generic: 'Generic' };
+
+/**
+ * Whether a value passes one funnel group: anything while nothing is ticked.
+ *
+ * @param {Array} [ticked]
+ * @param {String} value
+ * @returns {Boolean}
+ */
+const inFacet = (ticked, value) => !ticked || !ticked.length || ticked.includes(value);
+
+/** A mark filter's next state: every fixture, only the marked, none of them. */
+const NEXT_FILTER = { all: 'only', only: 'not', not: 'all' };
+
+/** What each mark filter lists, as its button's tooltip says it. */
+const FILTER_LABELS = {
+  bad: {
+    all: 'Listing fixtures marked bad and not: click for only those marked bad',
+    only: 'Listing only fixtures marked bad: click to hide them instead',
+    not: 'Hiding fixtures marked bad: click to list them too',
+  },
+  favourite: {
+    all: 'Listing favourites and not: click for favourites only',
+    only: 'Listing favourites only: click to hide them instead',
+    not: 'Hiding favourites: click to list them too',
+  },
+};
+
+/**
+ * Whether a filter lets something through.
+ *
+ * @param {String} filter 'all', 'only' or 'not'
+ * @param {Boolean} marked
+ * @returns {Boolean}
+ */
+const passes = (filter, marked) => filter === 'all' || (filter === 'only') === marked;
+
 /** What the root objects are gathered under once folders exist. */
 const UNSORTED_FOLDER = 'Unsorted';
 
@@ -425,6 +500,7 @@ export default {
     ImportObjectPopup,
     ObjectBrowser,
     SharePanel,
+    FilterMenu,
   },
   mixins: [PopupMixin],
   compatConfig: {
@@ -440,8 +516,10 @@ export default {
       default: null,
     },
     /**
-     * A library fixture to open on, searched for and selected:
-     * `{ key, name }`, as a GDTF import leaves it.
+     * A library entry to open on, selected and loaded: `{ kind, key, name,
+     * mode }`, `kind` fixtures (the default), objects or structures. A
+     * fixture's key is its profile key, an object's its library key, a
+     * structure's its name.
      */
     reveal: {
       type: Object,
@@ -515,10 +593,25 @@ export default {
       },
       /** The library's GDTF fixtures, as the Share list is matched against. */
       libraryGdtf: [],
-      /** GDTF files and Share revisions marked bad: `{ files, revisions }`. */
-      marks: { files: {}, revisions: {} },
-      /** Whether fixtures marked bad are listed. Kept while the dialog is closed. */
-      showBad: false,
+      /**
+       * GDTF files and Share revisions marked bad, and fixtures and Share
+       * revisions marked favourite: `{ files, revisions, favourite }`.
+       */
+      marks: { files: {}, revisions: {}, favourite: { files: {}, revisions: {} } },
+      /**
+       * Which fixtures are listed by their bad mark, and by their favourite
+       * mark: 'all', 'only' the marked or 'not' the marked. Kept while the
+       * dialog is closed.
+       */
+      badFilter: 'all',
+      favouriteFilter: 'all',
+      /**
+       * The funnel's ticked options: `{ type: [...], origin: [...] }`, a
+       * fixture's type being its icon. Kept while the dialog is closed.
+       */
+      facetFilter: {},
+      /** How many library fixtures have each type and origin, for the funnel. */
+      facetCounts: { type: {}, origin: {} },
     };
   },
   computed: {
@@ -540,7 +633,11 @@ export default {
     shareMatches() {
       if (!searchWords(this.search).length) return [];
       return searchFixtures(this.shareAll, this.search)
-        .filter((f) => !f.inLibrary && (this.showBad || !this.marks.revisions[f.latest.rid]));
+        .filter((f) => !f.inLibrary && inFacet(this.facetFilter.origin, 'GDTF')
+          && this.passesFilters(
+            this.marks.revisions[f.latest.rid],
+            this.marks.favourite.revisions[f.latest.rid],
+          ));
     },
     /** The newer Share revision of each library file that has one, by key. */
     newerByKey() {
@@ -552,7 +649,36 @@ export default {
     selectedBad() {
       if (this.fixture.share) return !!this.marks.revisions[this.fixture.share.latest.rid];
       const item = this.selectedItem;
-      return !!(item && item.gdtf && this.marks.files[item.fixture]);
+      return !!(item && item.fixture && this.marks.files[this.rowKey(item)]);
+    },
+    /** The funnel's groups: the types and origins the library has. */
+    facetGroups() {
+      const options = (group, labels) => Object.keys(labels)
+        .filter((id) => this.facetCounts[group][id])
+        .map((id) => ({
+          id,
+          label: labels[id],
+          icon: group === 'type' ? id : null,
+          count: this.facetCounts[group][id],
+        }));
+      return [
+        { id: 'type', title: 'Type', options: options('type', TYPE_LABELS) },
+        { id: 'origin', title: 'Origin', options: options('origin', ORIGIN_LABELS) },
+      ];
+    },
+    /** How many fixtures in the show use the library fixture picked. */
+    selectedInUse() {
+      const item = this.selectedItem;
+      if (!item || !item.fixture || this.fixture.share) return 0;
+      const key = this.rowKey(item);
+      return this.$show.fixturePool.fixtures.filter((f) => f.profileKey === key).length;
+    },
+    /** Whether the row picked, from the library or the Share, is a favourite. */
+    selectedFavourite() {
+      const { favourite } = this.marks;
+      if (this.fixture.share) return !!favourite.revisions[this.fixture.share.latest.rid];
+      const item = this.selectedItem;
+      return !!(item && item.fixture && favourite.files[this.rowKey(item)]);
     },
     shareInfo() {
       return {
@@ -582,12 +708,18 @@ export default {
       } else {
         children = this.shareMatches.slice(0, SHARE_SHOWN).map((f) => {
           const bad = !!this.marks.revisions[f.latest.rid];
-          const more = `${uploaderText(f)} · ${modesText(f.latest)}`;
+          const favourite = !!this.marks.favourite.revisions[f.latest.rid];
+          const more = [
+            bad ? 'marked bad' : null,
+            favourite ? 'favourite' : null,
+            uploaderText(f),
+            modesText(f.latest),
+          ].filter(Boolean).join(' · ');
           return {
             id: `share/${f.key}`,
             name: `${f.manufacturer} ${shareFixtureName(f)}`,
             icon: bad ? 'disabled' : 'fixture',
-            more: bad ? `marked bad · ${more}` : more,
+            more,
             share: f,
           };
         });
@@ -614,7 +746,7 @@ export default {
       if (this.fixture.share) return 'fixture';
       const item = this.selectedItem;
       if (item && item.shareAccount) return 'account';
-      if (item && item.gdtf) return 'library';
+      if (item && item.fixture && item.manufacturer) return 'library';
       return null;
     },
     formEnabled() {
@@ -774,7 +906,7 @@ export default {
     },
     // An import while the dialog is already open.
     reveal(reveal) {
-      if (this.state && reveal) this.revealFixture(reveal);
+      if (this.state && reveal) this.revealItem(reveal);
     },
   },
   mounted() {
@@ -805,7 +937,7 @@ export default {
       this.libraryGdtf = this.$show.gdtfFixtures || [];
       this.loadMarks();
       this.loadShare(false);
-      if (this.reveal) this.revealFixture(this.reveal);
+      if (this.reveal) this.revealItem(this.reveal);
     },
     /**
      * Adds whatever is selected, in as many copies as asked for.
@@ -992,20 +1124,18 @@ export default {
      * @async
      */
     /**
-     * Icon for a list entry: bars read as a different kind of thing from
-     * library profiles, and unrendered ones from both.
-     *
-     * Generated is the test because generating one is how a bar comes to
-     * exist: OFL cannot describe an emitter array, so every generated profile
-     * is a bar and every bar is a generated profile.
+     * Icon for a list entry: its generic kind's, else its category's; an
+     * unrendered one says so instead.
      *
      * @public
      * @param {Object} entry fixture list entry
+     * @param {Object} [profile] its generated profile, when it has one
      * @returns {String} icon name
      */
-    entryIcon(entry) {
-      if (entry.generated) return 'ledbar';
-      return entry.supported ? 'movinghead' : 'undef';
+    entryIcon(entry, profile) {
+      if (!entry.supported) return 'undef';
+      const kind = kindOf(profile);
+      return kind ? kind.icon : categoryIcon(entry.category);
     },
     /**
      * Shows the freshly created profile, selected and ready to patch, rather
@@ -1138,37 +1268,95 @@ export default {
       this.marks = await window.library.gdtfMarks();
       if (this.activeKind === 'fixtures') this.items = this.buildItems('fixtures');
     },
-    toggleShowBad() {
-      this.showBad = !this.showBad;
+    /**
+     * A mark filter's tooltip.
+     *
+     * @public
+     * @param {String} mark 'bad' or 'favourite'
+     * @param {String} filter
+     * @returns {String}
+     */
+    filterLabel(mark, filter) {
+      return FILTER_LABELS[mark][filter];
+    },
+    /**
+     * Steps a mark filter on: all, only the marked, not the marked.
+     *
+     * @public
+     * @param {String} name 'badFilter' or 'favouriteFilter'
+     */
+    cycleFilter(name) {
+      this[name] = NEXT_FILTER[this[name]];
       this.items = this.buildItems('fixtures');
     },
     /**
-     * Marks what is picked bad, or clears the mark: a library file, with the
-     * Share revision it was imported as, or a Share fixture's revision. A
-     * marked one leaves the list while marked ones are hidden, and the form
-     * with it.
+     * Whether something with these marks is listed under both filters.
+     *
+     * @public
+     * @param {*} bad truthy when marked bad
+     * @param {*} favourite truthy when marked favourite
+     * @returns {Boolean}
+     */
+    passesFilters(bad, favourite) {
+      return passes(this.badFilter, !!bad) && passes(this.favouriteFilter, !!favourite);
+    },
+    /**
+     * The mark target for what is picked: a library fixture by its key, a
+     * GDTF one with the Share revision it was imported as, or a Share
+     * fixture's revision; null for anything else.
+     *
+     * @public
+     * @returns {Object|null} `{ key, rid }`
+     */
+    markTarget() {
+      if (this.fixture.share) return { rid: this.fixture.share.latest.rid };
+      const item = this.selectedItem;
+      if (!item || !item.fixture) return null;
+      if (item.gdtf) return { key: item.fixture, rid: this.share.imported[item.fixture] };
+      return { key: this.rowKey(item) };
+    },
+    /**
+     * Relists after a mark changed, and lets go of what is picked if the
+     * filters no longer list it.
+     *
+     * @public
+     */
+    relistAfterMark() {
+      this.items = this.buildItems('fixtures');
+      if (this.passesFilters(this.selectedBad, this.selectedFavourite)) return;
+      this.selectedItem = null;
+      this.selectedRowId = null;
+      this.clearFixture();
+    },
+    /**
+     * Marks what is picked favourite, or clears the mark.
+     *
+     * @public
+     * @async
+     * @param {Boolean} favourite
+     */
+    async markFavourite(favourite) {
+      const what = this.markTarget();
+      if (!what) return;
+      this.marks = await window.library.setFavourite(what, favourite);
+      this.relistAfterMark();
+    },
+    /**
+     * Marks what is picked bad, or clears the mark.
      *
      * @public
      * @async
      * @param {Boolean} bad
      */
     async markBad(bad) {
-      const item = this.selectedItem;
-      if (!this.fixture.share && !(item && item.gdtf)) return;
-      const what = this.fixture.share
-        ? { rid: this.fixture.share.latest.rid }
-        : { key: item.fixture, rid: this.share.imported[item.fixture] };
+      const what = this.markTarget();
+      if (!what) return;
       this.marks = await window.library.setGdtfBad(what, bad);
-      this.items = this.buildItems('fixtures');
-      if (bad && !this.showBad) {
-        this.selectedItem = null;
-        this.selectedRowId = null;
-        this.clearFixture();
-      }
+      this.relistAfterMark();
     },
     /**
-     * Deletes the picked GDTF file from the library, after saying what it
-     * costs: the fixtures of it in this show, and in any saved show.
+     * Removes the picked GDTF file from the library, once asked. The file is
+     * kept where shows still find it, so nothing that uses it changes.
      *
      * @public
      * @async
@@ -1176,8 +1364,7 @@ export default {
     async removeFromLibrary() {
       const item = this.selectedItem;
       if (!item || !item.gdtf) return;
-      const used = this.$show.fixturePool.fixtures
-        .filter((f) => f.profileKey === item.fixture).length;
+      const used = this.selectedInUse;
       let inShow = '';
       if (used === 1) inShow = '1 fixture in this show uses it. ';
       else if (used > 1) inShow = `${used} fixtures in this show use it. `;
@@ -1185,7 +1372,8 @@ export default {
         title: 'Remove from library',
         message: `Remove ${item.name} from your library?`,
         detail: `File: ${item.fixture.split('/').pop()}.gdtf\n${inShow}`
-          + 'Saved shows that use it lose those fixtures when they are opened.',
+          + 'It is no longer offered to add; this show and saved shows that use it keep '
+          + 'working. Importing the file again brings it back.',
         yes: 'Remove',
         no: 'Keep',
       });
@@ -1349,19 +1537,64 @@ export default {
       return rows.find((row) => row.gdtf && row.fixture === key) || null;
     },
     /**
-     * Opens on a library fixture: searched for, so it shows, and selected.
+     * Opens on a library entry: its kind's tab, searched for so it shows,
+     * and selected, a fixture in the mode asked for.
      *
      * @public
      * @async
-     * @param {Object} reveal `{ key, name }`
+     * @param {Object} reveal `{ kind, key, name, mode }`
      */
-    async revealFixture({ key, name }) {
+    async revealItem({
+      kind = 'fixtures', key, name, mode,
+    }) {
+      if (kind === 'objects') {
+        if (this.activeKind !== 'objects') this.selectKind('objects');
+        const model = this.objects.find((entry) => entry.key === key);
+        if (model) this.selectObjectModel(model);
+        return;
+      }
+      if (kind === 'structures') {
+        if (this.activeKind !== 'structures') this.selectKind('structures');
+        const row = this.items.find((entry) => entry.structure === key);
+        this.search = key || '';
+        if (row) await this.selectItem(row);
+        return;
+      }
       if (this.activeKind !== 'fixtures') this.selectKind('fixtures');
       this.libraryGdtf = this.$show.gdtfFixtures || [];
       this.items = this.buildItems('fixtures');
-      const row = this.findGdtfRow(key);
-      this.search = name || '';
-      if (row) await this.selectItem(row);
+      const row = this.findFixtureRow(key);
+      this.search = row ? row.name : (name || '');
+      if (!row) return;
+      await this.selectItem(row);
+      const at = mode ? this.fixture.modeNames.indexOf(mode) : -1;
+      if (at >= 0 && at !== this.fixture.mode) {
+        this.fixture.mode = at;
+        this.autoPatch();
+      }
+    },
+    /**
+     * A fixture's row in the list by its profile key: a GDTF fixture's is its
+     * key, a profile's its manufacturer and file.
+     *
+     * @public
+     * @param {String} key
+     * @returns {Object|null}
+     */
+    findFixtureRow(key) {
+      const rows = this.items.flatMap((folder) => folder.unfold || []);
+      return rows.find((row) => this.rowKey(row) === key) || null;
+    },
+    /**
+     * A fixture row's profile key: a GDTF fixture's is its key, a profile's
+     * its manufacturer and file.
+     *
+     * @public
+     * @param {Object} row
+     * @returns {String}
+     */
+    rowKey(row) {
+      return row.gdtf ? row.fixture : `${row.manufacturer.name}/${row.fixture}`;
     },
     async handleProfileCreated(key) {
       this.items = this.buildItems('fixtures');
@@ -1801,19 +2034,50 @@ export default {
      * @public
      */
     prepareFixtures() {
-      return this.$show.rawOFLFixtures.map((manufacturer) => ({
+      const keyOf = (entry, folder) => this.rowKey({
+        gdtf: entry.gdtf,
+        fixture: entry.file,
+        manufacturer: entry.manufacturer ? { name: entry.manufacturer } : folder,
+      });
+      // Every entry with what the filters ask of it, counted for the funnel
+      // before any are taken out.
+      const counts = { type: {}, origin: {} };
+      const folders = this.$show.rawOFLFixtures.map((manufacturer) => ({
+        manufacturer,
+        entries: manufacturer.fixtures.map((entry) => {
+          const key = keyOf(entry, manufacturer);
+          const profile = entry.generated ? this.$show.generatedProfiles[key] : null;
+          const facts = {
+            entry,
+            profile,
+            type: this.entryIcon(entry, profile),
+            origin: fixtureOrigin(entry.gdtf, profile),
+            bad: !!this.marks.files[key],
+            favourite: !!this.marks.favourite.files[key],
+          };
+          counts.type[facts.type] = (counts.type[facts.type] || 0) + 1;
+          counts.origin[facts.origin] = (counts.origin[facts.origin] || 0) + 1;
+          return facts;
+        }),
+      }));
+      this.facetCounts = counts;
+      return folders.map(({ manufacturer, entries }) => ({
         id: `folder/${manufacturer.name}`,
         name: manufacturer.name,
         icon: 'folder',
-        unfold: manufacturer.fixtures
-          .filter((entry) => this.showBad || !(entry.gdtf && this.marks.files[entry.file]))
-          .map((entry) => {
+        unfold: entries
+          .filter((f) => this.passesFilters(f.bad, f.favourite)
+            && inFacet(this.facetFilter.type, f.type)
+            && inFacet(this.facetFilter.origin, f.origin))
+          .map(({
+            entry, type, origin, bad, favourite,
+          }) => {
             // An entry under "This show" is not filed under a manufacturer
             // folder and carries its own; everything else takes the folder's.
             const maker = entry.manufacturer ? { name: entry.manufacturer } : manufacturer;
-            const bad = entry.gdtf && !!this.marks.files[entry.file];
             const more = [
               bad ? 'marked bad' : null,
+              favourite ? 'favourite' : null,
               entry.supported ? entry.category : `${entry.category} (not rendered)`,
               entry.gdtf && this.newerByKey.has(entry.file) ? 'newer on GDTF Share' : null,
             ].filter(Boolean).join(' · ');
@@ -1823,8 +2087,9 @@ export default {
               name: entry.name,
               // Fixtures the visualizer has no 3D model for still patch and
               // hold addresses, but draw nothing; the icon says which is which.
-              icon: bad ? 'disabled' : this.entryIcon(entry),
+              icon: bad ? 'disabled' : type,
               more,
+              tag: origin,
               manufacturer: maker,
               fixture: entry.file,
               gdtf: !!entry.gdtf,
@@ -1832,11 +2097,14 @@ export default {
               revision: entry.revision || null,
             };
           }),
-        // Whether the folder had fixtures before the marked ones were hidden.
+        // Whether the folder had fixtures before the filters took any out.
         filled: manufacturer.fixtures.length > 0,
       }))
-        // A folder whose fixtures are all marked bad is not listed.
-        .filter((folder) => folder.unfold.length || !folder.filled);
+        // A folder whose fixtures are all filtered out is not listed, nor an
+        // empty one while any filter asks for something.
+        .filter((folder) => folder.unfold.length || (!folder.filled
+          && this.badFilter !== 'only' && this.favouriteFilter !== 'only'
+          && !Object.values(this.facetFilter).some((ids) => ids && ids.length)));
     },
   },
 };

@@ -133,9 +133,10 @@ function libraryFile(kind, key, fromMount = true) {
  */
 function collectProfile(key, entries, fromMount = true) {
   // A GDTF fixture travels as the file it is, untouched, from the open
-  // document or else the user's library.
+  // document, else the user's library, else what was removed from it.
   const mounted = fromMount ? documentstore.mountRoot() : null;
-  const gdtf = (mounted && gdtfstore.pathFor(key, mounted)) || gdtfstore.pathFor(key);
+  const gdtf = (mounted && gdtfstore.pathFor(key, mounted)) || gdtfstore.pathFor(key)
+    || gdtfstore.removedPathFor(key);
   const gdtfBytes = gdtf ? bytesOf(gdtf) : null;
   if (gdtfBytes) {
     entries[`${PREFIX}Profiles/${key}${gdtfstore.EXTENSION}`] = gdtfBytes;

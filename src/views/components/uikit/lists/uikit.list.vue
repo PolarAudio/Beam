@@ -65,6 +65,7 @@
             @dragstart="(e) => startDrag(e, row)"
             @dragend.prevent="stopDrag"
             @click="(e) => clickRow(e, row, rows)"
+            @dblclick="activate(row)"
             @unfold="unfold(row)"
           />
           <Transition name="fadeHeight">
@@ -88,6 +89,7 @@
                 @dragstart="(e) => startDrag(e, child)"
                 @dragend.prevent="stopDrag"
                 @click="(e) => clickRow(e, child, row.children)"
+                @dblclick="activate(child)"
               />
             </span>
           </Transition>
@@ -112,6 +114,7 @@
           @dragstart="(e) => startDrag(e, row)"
           @dragend.prevent="stopDrag"
           @click="(e) => clickRow(e, row, rows)"
+          @dblclick="activate(row)"
         />
         <div class="uikit_sublist_body_empty" />
       </div>
@@ -224,7 +227,7 @@ export default {
     /** Only one row open at a time, sharing the height between open rows */
     accordion: Boolean,
   },
-  emits: ['unfold', 'focused', 'highlight', 'select', 'reorder', 'delete', 'update:search'],
+  emits: ['unfold', 'focused', 'highlight', 'select', 'reorder', 'delete', 'update:search', 'activate'],
   data() {
     return {
       /** The search box's text. */
@@ -586,6 +589,15 @@ export default {
      *
      * @param {Object} row
      */
+    /**
+     * Reports a row double-clicked: opened, as against chosen.
+     *
+     * @public
+     * @param {Object} row
+     */
+    activate(row) {
+      this.$emit('activate', row.value);
+    },
     unfold(row) {
       const open = this.openKeys.includes(row.key);
       if (this.accordion) this.openKeys = [row.key];

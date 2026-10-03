@@ -3,6 +3,7 @@
     col
     :gap="6"
     class="share_panel"
+    :class="{ share_panel_marked: marked }"
   >
     <template v-if="mode === 'library' && entry">
       <uk-flex
@@ -12,17 +13,36 @@
         <p class="share_text share_grow">
           In your library · {{ entryText }}
         </p>
-        <div class="share_buttons">
+        <div class="share_marks">
           <uk-button
-            :label="bad ? 'not bad' : 'mark bad'"
+            icon="heart"
+            icon-only
+            square
+            toggleable
+            :model-value="favourite"
+            color="var(--accent-pink)"
             :disabled="busy"
-            :title="badTitle"
+            :label="favourite ? 'Favourite: click to unmark' : 'Mark as favourite'"
+            @click="$emit('favourite', !favourite)"
+          />
+          <uk-button
+            icon="thumbs_down"
+            icon-only
+            square
+            toggleable
+            :model-value="bad"
+            color="var(--accent-orange)"
+            :disabled="busy"
+            :label="badTitle"
             @click="$emit('mark-bad', !bad)"
           />
           <uk-button
-            label="remove"
+            v-if="entry.gdtf"
+            icon="cross"
+            icon-only
+            square
             :disabled="busy"
-            title="Delete this file from your library"
+            label="Remove this file from your library"
             @click="$emit('remove')"
           />
         </div>
@@ -92,11 +112,27 @@
         <p class="share_heading share_grow">
           On GDTF Share · {{ uploader }}
         </p>
-        <div class="share_buttons">
+        <div class="share_marks">
           <uk-button
-            :label="bad ? 'not bad' : 'mark bad'"
+            icon="heart"
+            icon-only
+            square
+            toggleable
+            :model-value="favourite"
+            color="var(--accent-pink)"
             :disabled="busy"
-            :title="badTitle"
+            :label="favourite ? 'Favourite: click to unmark' : 'Mark as favourite'"
+            @click="$emit('favourite', !favourite)"
+          />
+          <uk-button
+            icon="thumbs_down"
+            icon-only
+            square
+            toggleable
+            :model-value="bad"
+            color="var(--accent-orange)"
+            :disabled="busy"
+            :label="badTitle"
             @click="$emit('mark-bad', !bad)"
           />
         </div>
@@ -152,10 +188,11 @@ import {
 } from '@/models/DMX/gdtf/share_list';
 
 /**
- * The GDTF side of Add to Show: a GDTF fixture in the library, with its
- * newer revision on the Share and the means to mark it bad or remove it; a
- * fixture picked from the Share; and the login while no account is stored,
- * or the account and list once one is.
+ * The library side of Add to Show: a fixture in the library, to mark
+ * favourite or bad, and if it is a GDTF file its newer revision on the Share
+ * and the means to remove it; a fixture picked from the Share;
+ * and the login while no account is stored, or the account and list once one
+ * is.
  */
 export default {
   name: 'SharePanel',
@@ -188,13 +225,20 @@ export default {
     },
     /** Whether what was picked is marked bad. */
     bad: Boolean,
+    /** Whether what was picked is marked favourite. */
+    favourite: Boolean,
     busy: Boolean,
   },
-  emits: ['log-in', 'log-out', 'refresh', 'update', 'mark-bad', 'remove'],
+  emits: ['log-in', 'log-out', 'refresh', 'update', 'mark-bad', 'favourite', 'remove'],
   data() {
     return { user: '', password: '' };
   },
   computed: {
+    /** Whether the mark buttons show, stacked in the top right corner. */
+    marked() {
+      if (this.mode === 'library') return !!this.entry;
+      return this.mode === 'fixture' && !!this.fixture && !!this.share.user;
+    },
     uploader() {
       return uploaderText(this.fixture);
     },
@@ -213,8 +257,8 @@ export default {
       return [r.revision, dateText(r)].filter(Boolean).join(', ');
     },
     badTitle() {
-      return this.bad ? 'Show it in the list again'
-        : 'Hide it from the list while marked fixtures are hidden';
+      return this.bad ? 'Marked bad: click to unmark'
+        : 'Mark as bad';
     },
     entryText() {
       const file = String(this.entry.fixture || '').split('/').pop();
@@ -236,10 +280,34 @@ export default {
 
 <style scoped>
 .share_panel {
+  position: relative;
   margin-bottom: 10px;
   padding: 8px 10px;
   border: 1px solid var(--primary-dark);
   border-radius: 4px;
+}
+/* Room on the right for the mark buttons, and height for all three. */
+.share_panel_marked {
+  padding-right: 30px;
+  min-height: 66px;
+}
+.share_marks {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.share_marks :deep(.uikit_button.icon_only) {
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  min-height: 18px;
+}
+.share_marks :deep(.uikit_button.icon_only .uikit_button_icon) {
+  width: 12px !important;
+  height: 12px !important;
 }
 /* The form's own label size: a paragraph here would otherwise take the page's. */
 .share_heading {

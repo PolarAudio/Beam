@@ -1692,6 +1692,15 @@ class Controls {
         this.boundingBox.expandByPoint(boundsFallback.clone().subScalar(FALLBACK_HALF_EXTENT));
         this.boundingBox.expandByPoint(boundsFallback.clone().addScalar(FALLBACK_HALF_EXTENT));
       });
+      // Nothing reported any space: an empty box would centre the group at
+      // NaN and take every selected item with it.
+      if (this.boundingBox.isEmpty()) {
+        this.pooledInstances.forEach((i) => {
+          boundsFallback.set(i.position.x, i.position.y, i.position.z);
+          this.boundingBox.expandByPoint(boundsFallback.clone().subScalar(FALLBACK_HALF_EXTENT));
+          this.boundingBox.expandByPoint(boundsFallback.clone().addScalar(FALLBACK_HALF_EXTENT));
+        });
+      }
 
       const bbW = (this.boundingBox.max.x - this.boundingBox.min.x);
       const bbH = (this.boundingBox.max.y - this.boundingBox.min.y);

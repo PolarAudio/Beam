@@ -182,6 +182,12 @@ class Show extends EventEmitter {
      */
     this.gdtfFixtures = [];
     /**
+     * GDTF fixtures removed from the library, listed the same way. Not
+     * offered to add, but resolved after the library, so a show that uses one
+     * still opens.
+     */
+    this.removedGdtf = [];
+    /**
      * GDTF fixture types read so far, by key. Read-only once read, so every
      * fixture of a type shares one.
      */
@@ -1358,17 +1364,20 @@ class Show extends EventEmitter {
   }
 
   /**
-   * A GDTF fixture by key: the open document's copy, else the library's.
+   * A GDTF fixture by key: the open document's copy, else the library's,
+   * else one removed from the library.
    *
    * @public
    * @param {String} key `<manufacturer folder>/<file stem>`
-   * @returns {Object|null} `{ entry, carried }`
+   * @returns {Object|null} `{ entry, carried, removed }`
    */
   gdtfEntry(key) {
     const carried = (this.collected.gdtf || []).find((e) => e.key === key);
-    if (carried) return { entry: carried, carried: true };
+    if (carried) return { entry: carried, carried: true, removed: false };
     const own = this.gdtfFixtures.find((e) => e.key === key);
-    return own ? { entry: own, carried: false } : null;
+    if (own) return { entry: own, carried: false, removed: false };
+    const removed = this.removedGdtf.find((e) => e.key === key);
+    return removed ? { entry: removed, carried: false, removed: true } : null;
   }
 
   /**
@@ -1386,7 +1395,9 @@ class Show extends EventEmitter {
     if (this.gdtfTypes.has(key)) return this.gdtfTypes.get(key);
     const found = this.gdtfEntry(key);
     if (!found || typeof fetch === 'undefined' || typeof DOMParser === 'undefined') return null;
-    const host = found.carried ? 'projectprofiles' : 'profiles';
+    let host = 'profiles';
+    if (found.carried) host = 'projectprofiles';
+    else if (found.removed) host = 'removedprofiles';
     const path = found.entry.file.split('/').map(encodeURIComponent).join('/');
     try {
       const response = await fetch(`library://${host}/${path}`);
@@ -1968,6 +1979,7 @@ class Show extends EventEmitter {
   async preloadGdtfFixtures() {
     if (typeof window === 'undefined' || !window.library || !window.library.gdtfList) return;
     this.gdtfFixtures = await window.library.gdtfList();
+    if (window.library.gdtfRemoved) this.removedGdtf = await window.library.gdtfRemoved();
   }
 
   /**

@@ -270,7 +270,7 @@ import { isShowKey } from '@/models/DMX/definition_store';
 import fixtureGuide from '@/models/DMX/fixture_guide';
 import gdtfGuide from '@/models/DMX/gdtf/gdtf_guide';
 import DmxEngine from '@/models/DMX/gdtf/dmx_engine';
-import { headInputs } from '@/models/DMX/gdtf/fixture_parts';
+import { headInputs, unfilledBeamFields } from '@/models/DMX/gdtf/fixture_parts';
 import { formatAddress } from '@/models/DMX/address_format';
 import Light from '@/plugins/visualizer/light';
 
@@ -427,7 +427,8 @@ export default {
     /**
      * A GDTF fixture's facts, from the file as it stands. Output a file left
      * at GDTF's placeholder values is said to be unmeasured rather than
-     * shown as if it were a measurement.
+     * shown as if it were a measurement, and a beam's values still at the
+     * spec's defaults, in a beam nobody filled in, are left out.
      *
      * @type {Object} `{ key, spec }`
      */
@@ -445,13 +446,28 @@ export default {
         const per = inputs.beamCount > 1 ? ` (${inputs.beamCount} beams)` : '';
         key.push({ label: 'Lumens', value: `${grouped(inputs.lumens)} lm${per}${unmeasured}` });
       }
-      if (inputs.power) key.push({ label: 'Power', value: `${grouped(inputs.power)} W light source` });
+      const unfilled = unfilledBeamFields(beam);
+      const stated = (name) => !unfilled.has(name);
+      if (inputs.power && stated('powerConsumption')) {
+        key.push({ label: 'Power', value: `${grouped(inputs.power)} W light source` });
+      }
 
       const spec = [];
       if (beam) {
-        spec.push({ label: 'Lamp', value: beam.lampType });
-        spec.push({ label: 'Colour temp', value: `${grouped(beam.colorTemperature)} K · CRI ${beam.colorRenderingIndex}` });
-        spec.push({ label: 'Beam', value: `${beam.beamAngle}° beam · ${beam.fieldAngle}° field · ${beam.beamType}` });
+        const line = (label, parts) => {
+          const kept = parts.filter(([name]) => stated(name)).map(([, text]) => text);
+          if (kept.length) spec.push({ label, value: kept.join(' · ') });
+        };
+        line('Lamp', [['lampType', beam.lampType]]);
+        line('Colour temp', [
+          ['colorTemperature', `${grouped(beam.colorTemperature)} K`],
+          ['colorRenderingIndex', `CRI ${beam.colorRenderingIndex}`],
+        ]);
+        line('Beam', [
+          ['beamAngle', `${beam.beamAngle}° beam`],
+          ['fieldAngle', `${beam.fieldAngle}° field`],
+          ['beamType', beam.beamType],
+        ]);
       }
       const narrow = inputs.minAngle;
       const wide = inputs.maxAngle;

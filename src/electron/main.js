@@ -521,6 +521,7 @@ function setupLibrary() {
   // GDTF fixtures, kept as downloaded. The list is metadata only; the bytes
   // are served as `library://profiles/<file>`.
   ipcMain.handle('library:gdtfList', () => gdtfstore.list());
+  ipcMain.handle('library:gdtfRemoved', () => gdtfstore.listRemoved());
   ipcMain.handle('library:pickGdtf', async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
       title: 'Import GDTF fixtures',
@@ -539,6 +540,7 @@ function setupLibrary() {
   });
   ipcMain.handle('library:gdtfMarks', () => gdtfstore.marks());
   ipcMain.handle('library:setGdtfBad', (event, what, bad) => gdtfstore.setBad(what, !!bad));
+  ipcMain.handle('library:setFavourite', (event, what, on) => gdtfstore.setFavourite(what, !!on));
 
   // GDTF Share. The account goes in and never comes back out: the renderer
   // only learns whether one is stored and whose it is.

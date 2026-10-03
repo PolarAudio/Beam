@@ -236,6 +236,42 @@ export function isPlaceholderBeam(beam) {
   return Number(beam.luminousFlux) === 10000 && Number(beam.powerConsumption) === 1000;
 }
 
+/** The spec's value for each Beam attribute a file leaves out, by parsed name. */
+const BEAM_SPEC_DEFAULTS = {
+  lampType: 'Discharge',
+  powerConsumption: 1000,
+  luminousFlux: 10000,
+  colorTemperature: 6000,
+  beamAngle: 25,
+  fieldAngle: 25,
+  beamType: 'Wash',
+  colorRenderingIndex: 100,
+};
+
+/** How many attributes at the spec's value mark a beam nobody filled in. */
+const UNFILLED_AT = 4;
+
+/**
+ * The attributes of a beam still at the spec's value, when enough of them
+ * are that the beam was never filled in: GDTF Builder writes every default
+ * into the file, so a written value is no sign of a stated one. A real
+ * fixture can match a default or two; one matching most of them was left as
+ * the Builder made it.
+ *
+ * @param {Object} beam a Beam geometry's beam
+ * @returns {Set<String>} parsed attribute names, empty for a beam filled in
+ */
+export function unfilledBeamFields(beam) {
+  if (!beam) return new Set();
+  const same = Object.keys(BEAM_SPEC_DEFAULTS).filter((name) => {
+    const stated = BEAM_SPEC_DEFAULTS[name];
+    return typeof stated === 'number'
+      ? Number(beam[name]) === stated
+      : String(beam[name]) === stated;
+  });
+  return same.length >= UNFILLED_AT ? new Set(same) : new Set();
+}
+
 /**
  * Whether a fixture type pans or tilts: a Pan or Tilt function in any of its
  * modes, or an Axis anywhere in its geometry. Not every file models the yoke

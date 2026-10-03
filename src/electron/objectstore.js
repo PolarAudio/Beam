@@ -84,6 +84,8 @@ const SERVED_DIRS = {
   // GDTF fixtures, and nothing else from the Profiles folder: the JSON
   // profiles beside them reach the renderer through the library's own calls.
   profiles: { dir: 'Profiles', extensions: ['.gdtf'] },
+  // GDTF fixtures removed from the library, which shows still open with.
+  removedprofiles: { dir: 'Removed/Profiles', extensions: ['.gdtf'] },
   projectprofiles: {
     base: () => {
       const mounted = documentstore.mountRoot();

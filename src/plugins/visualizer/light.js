@@ -2085,15 +2085,17 @@ class Light {
     const white = this.whitePoint;
     const mix = [0, 0, 0];
 
-    // What the head *makes*: the sum of its own emitters.
+    // What the head *makes*: the sum of its own emitters. A head with
+    // emitters is additive whatever their levels: all at zero is dark, not
+    // the lamp's white.
     let additive = false;
     Object.keys(this._emitters).forEach((name) => {
       if (SUBTRACTIVE_EMITTERS[name] !== undefined) return;
-      const level = this._emitters[name];
-      if (!level) return;
       const tint = WHITE_EMITTERS.includes(name) ? white : EMITTER_TINTS[name];
       if (!tint) return;
       additive = true;
+      const level = this._emitters[name];
+      if (!level) return;
       mix[0] += tint[0] * level;
       mix[1] += tint[1] * level;
       mix[2] += tint[2] * level;
@@ -2431,6 +2433,13 @@ class Light {
       if (!geometry.boundingBox) geometry.computeBoundingBox();
       bounds.union(geometry.boundingBox.clone().applyMatrix4(root.clone().multiply(matrix)));
     });
+    // A light whose file gives it nothing to draw is still its lens: the box
+    // is the lens disc, so it can be picked and selected.
+    if (bounds.isEmpty()) {
+      const lens = new THREE.Vector3().setFromMatrixPosition(root.clone().multiply(body.lensFrame));
+      const reach = Math.max(body.lensRadius || 0, 0.05);
+      bounds.setFromCenterAndSize(lens, new THREE.Vector3(reach * 2, reach * 2, reach * 2));
+    }
     this._baseDepth = Math.max(-bounds.min.z, 0);
     /** The body at rest in the fixture's frame, for the selection box. */
     this._restBounds = bounds.clone();

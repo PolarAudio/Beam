@@ -61,6 +61,7 @@
       :highlight-ids="highlightedIds"
       :selected-id="selectedRowId"
       @select="displayFixture"
+      @activate="openInAddToShow"
       @highlight="highlightFixtures"
       @delete="deleteFixtures"
       @reorder="reorderItem"
@@ -120,7 +121,10 @@ export default {
       pool: this.$show.fixturePool,
       show: this.$show,
       patchPopupDisplayState: false,
-      /** A fixture just imported, for Add to Show to open on: `{ key, name }`. */
+      /**
+       * What Add to Show opens on: a fixture just imported, or the library
+       * entry of an item double-clicked; `{ kind, key, name, mode }`.
+       */
       revealFixture: null,
       /**
        * Ids of items selected in the 3D view, mirrored into the list. Mixed:
@@ -876,6 +880,32 @@ export default {
     showImported(reveal) {
       this.revealFixture = reveal;
       this.patchPopupDisplayState = true;
+    },
+    /**
+     * Opens Add to Show on the library entry an item was placed from, loaded
+     * and ready to place another: a fixture's profile in its mode, an
+     * object's model, a structure. A group, or an object made in the show,
+     * has no entry, and nothing opens.
+     *
+     * @public
+     * @param {Object} row the item list's row
+     */
+    openInAddToShow(row) {
+      const item = this.itemFromRow(row);
+      if (!item) return;
+      const kind = kindOf(row);
+      let reveal = null;
+      if (kind === SCENE_ITEM_KINDS.FIXTURE && item.profileKey) {
+        reveal = {
+          kind: 'fixtures', key: item.profileKey, name: item.name, mode: item.modeName,
+        };
+      } else if (kind === SCENE_ITEM_KINDS.OBJECT && item.model) {
+        reveal = { kind: 'objects', key: item.model, name: item.name };
+      } else if (kind === SCENE_ITEM_KINDS.STRUCTURE && item.name) {
+        reveal = { kind: 'structures', key: item.name, name: item.name };
+      }
+      if (!reveal) return;
+      this.showImported(reveal);
     },
   },
 };

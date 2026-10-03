@@ -48,6 +48,13 @@
     >
       {{ value.more }}
     </h4>
+    <!-- A short label in a column of its own, the same width on every row. -->
+    <h4
+      v-if="value.tag"
+      class="uikit_list_item_more uikit_list_item_tag"
+    >
+      {{ value.tag }}
+    </h4>
     <uk-button
       v-if="value.action"
       :icon="value.action.icon"
@@ -100,8 +107,8 @@ export default {
   },
   props: {
     /**
-     * What the row shows: `name`, and optionally `icon`, `more`, `color`,
-     * `unfold` and the rest.
+     * What the row shows: `name`, and optionally `icon`, `more`, `tag`,
+     * `color`, `unfold` and the rest.
      */
     value: {
       type: Object,
@@ -383,6 +390,12 @@ export default {
   /* width: 62px; */
   color: var(--secondary-light-alt);
   font-family: roboto-regular!important;
+}
+.uikit_list_item_tag {
+  flex: none;
+  width: 52px;
+  margin-left: 10px;
+  text-align: left;
 }
 .selected.focused .uikit_list_item_more{
   color: var(--secondary-lighter)!important

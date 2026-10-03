@@ -258,6 +258,7 @@ contextBridge.exposeInMainWorld('library', {
    * @returns {Promise<Array>} `{ key, file, name, manufacturer, fixtureTypeId, dataVersion }`
    */
   gdtfList: () => ipcRenderer.invoke('library:gdtfList'),
+  gdtfRemoved: () => ipcRenderer.invoke('library:gdtfRemoved'),
   /** Asks for .gdtf files. @returns {Promise<Array<String>>} absolute paths */
   pickGdtf: () => ipcRenderer.invoke('library:pickGdtf'),
   /**
@@ -273,6 +274,7 @@ contextBridge.exposeInMainWorld('library', {
   removeGdtf: (key) => ipcRenderer.invoke('library:removeGdtf', key),
   gdtfMarks: () => ipcRenderer.invoke('library:gdtfMarks'),
   setGdtfBad: (what, bad) => ipcRenderer.invoke('library:setGdtfBad', what, bad),
+  setFavourite: (what, on) => ipcRenderer.invoke('library:setFavourite', what, on),
   /**
    * The path of a file dropped on the window. The page cannot see paths; the
    * preload can, and hands over only this one.

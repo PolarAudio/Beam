@@ -749,6 +749,9 @@ function claimBodySlot(set) {
  * yoke, see `moving_head.js`.
  *
  * Every light is one slot in the instanced meshes and buffers below, its `id`.
+ * A fixture with several lenses is a light for each: the first carries the
+ * body, and each other is a lamp, a light without a body hung from the
+ * first's lens joint, so it goes where the first goes.
  *
  * @class Light
  */
@@ -805,6 +808,19 @@ class Light {
      * say is the light field's reference light.
      */
     this._lumens = Number(data.lumens) > 0 ? Number(data.lumens) : REFERENCE_LUMENS;
+    /**
+     * This lens's share of the fixture's light, 1 for a fixture with one:
+     * what a mode's output is multiplied by.
+     */
+    this._share = Number(data.share) > 0 ? Number(data.share) : 1;
+    /**
+     * Whether this is a lamp: a further lens of a fixture, with no body and
+     * no pick box of its own, at `data.lens` in the first light's lens joint.
+     */
+    this._lamp = !!data.lamp;
+    this._lens = data.lens || null;
+    /** The lamps hung from this light, which follow what is done to it. */
+    this._lamps = [];
     /** What the shutter let through this frame, 0..1. */
     this._shutter = 1.0;
     /**
@@ -1022,6 +1038,7 @@ class Light {
    */
   set hidden(state) {
     this._hidden = !!state;
+    (this._lamps || []).forEach((lamp) => { lamp.hidden = state; });
     if (this._spotLight) this._spotLight.visible = this._castsShadow && !this._hidden;
     // Written on the next frame's updateMatrix, either way.
     this._matrixNeedsUpdate = true;
@@ -1174,6 +1191,7 @@ class Light {
    */
   set highlighted(state) {
     this._highlighted = state;
+    (this._lamps || []).forEach((lamp) => { lamp.highlighted = state; });
     emissive_buffer_attribute.setX(this._id, this._highlighted ? 1.0 : 0.0);
     emissive_buffer_attribute.needsUpdate = true;
     if (this._bodySet) {
@@ -1216,9 +1234,10 @@ class Light {
       this._minAngle = inputs.minAngle;
       this._maxAngle = inputs.maxAngle;
     }
-    if (inputs.lumens > 0) this._lumens = inputs.lumens;
+    if (inputs.lumens > 0) this._lumens = inputs.lumens * this._share;
     this.angle = this._maxAngle;
     this.writeLight();
+    this._lamps.forEach((lamp) => lamp.setModeInputs(inputs));
   }
 
   /**
@@ -2215,12 +2234,15 @@ class Light {
     this._spotLight.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 0, 0.9));
 
     this._dummy.add(this._bodyRoot);
-    this.buildJoints().add(this._beamDummy);
+    /** What the lens hangs from, and any lamps with it. */
+    this._lensJoint = this.buildJoints();
+    this._lensJoint.add(this._beamDummy);
     this._beamDummy.attach(this._targetDummy);
     this._beamDummy.attach(this._spotLight);
 
     this._spotLight.target = this._targetDummy;
     if (this._body) this.mountBody();
+    else if (this._lens) this.mountLens(this._lens);
 
     // On the root, so the yoke pivot, the head, the lens and the selection box
     // all shrink or grow together. The beam is taken back out: see
@@ -2295,6 +2317,75 @@ class Light {
    */
   posedParts() {
     return { base: this._bodyRoot, yoke: null, head: null };
+  }
+
+  /**
+   * This lens's share of the fixture's light: its output is the fixture's
+   * times this, now and in every mode.
+   *
+   * @type {Number}
+   */
+  set share(share) {
+    const fixture = this._lumens / this._share;
+    this._share = Number(share) > 0 ? Number(share) : 1;
+    this._lumens = fixture * this._share;
+    this.writeLight();
+  }
+
+  get share() {
+    return this._share;
+  }
+
+  /**
+   * Puts a lamp's lens where its file puts it, in its first light's lens
+   * joint, the frame `gdtf_body.js` gives every lens in.
+   *
+   * @private
+   * @param {Object} lens `{ frame, radius }`
+   */
+  mountLens(lens) {
+    this.placeLens(lens);
+    this._baseDepth = 0;
+  }
+
+  /**
+   * Puts the lens, and the beam leaving it, at `lens` in the lens joint and
+   * as wide as it is: a lamp's, or a light's own where the mode describes
+   * the fixture with a geometry of its own.
+   *
+   * @public
+   * @param {Object} lens `{ frame, radius }`
+   */
+  placeLens(lens) {
+    setLocal(this._beamDummy, lens.frame.clone()
+      .multiply(UPRIGHT)
+      .multiply(new THREE.Matrix4().makeTranslation(0, 0, -BEAM_START)));
+    if (lens.radius > 0) this._lensScale = lens.radius / BEAM_TOP_RADIUS;
+    this._targetDummy.scale.set(this._lensScale, this._lensScale, 1);
+    this._matrixNeedsUpdate = true;
+  }
+
+  /**
+   * Takes the lamps down, each its own slot.
+   *
+   * @public
+   */
+  removeLamps() {
+    this._lamps.forEach((lamp) => Light.deleteInstance(lamp));
+    this._lamps = [];
+  }
+
+  /**
+   * Hangs a lamp from this light's lens joint: it moves, hides and
+   * highlights with this light, and goes when it goes.
+   *
+   * @public
+   * @param {Light} lamp built with `lamp: true` and its `lens`
+   */
+  attachLamp(lamp) {
+    this._lensJoint.add(lamp._dummy);
+    lamp.hidden = this.hidden;
+    this._lamps.push(lamp);
   }
 
   /**
@@ -2421,6 +2512,11 @@ class Light {
           this._id,
           pickScratch.multiplyMatrices(this._dummy.matrixWorld, this._pickMatrix),
         );
+      } else if (this._lamp) {
+        baseMesh.setMatrixAt(this._id, COLLAPSED);
+        yokeMesh.setMatrixAt(this._id, COLLAPSED);
+        headMesh.setMatrixAt(this._id, COLLAPSED);
+        boundingBoxMesh.setMatrixAt(this._id, COLLAPSED);
       } else {
         baseMesh.setMatrixAt(this._id, this._bodyRoot.matrixWorld);
         yokeMesh.setMatrixAt(this._id, yoke);
@@ -3178,6 +3274,8 @@ class Light {
   }
 
   static deleteInstance(instance) {
+    // Its lamps first, each its own slot.
+    instance.removeLamps();
     // Its slot in its type's body meshes is emptied and given to the next.
     if (instance._bodySet) {
       instance.writeBodySlot(COLLAPSED, COLLAPSED, COLLAPSED);
@@ -3186,7 +3284,8 @@ class Light {
     }
     scene_handle.remove(instance._beamDummy);
     scene_handle.remove(instance._spotLight);
-    scene_handle.remove(instance._dummy);
+    // A lamp hangs from its first light, not from the scene.
+    instance._dummy.removeFromParent();
 
     LightField.unregister(instance);
     instances.splice(instance.id, 1);
@@ -3244,7 +3343,10 @@ class Light {
       mesh.getMatrixAt(i, selectionMatrix);
       selectionOrigin.setFromMatrixPosition(selectionMatrix);
       const instance = instances[i];
-      if (instance && instance.fixtureHandle) visit(instance.fixtureHandle, selectionOrigin);
+      // A lamp is selected with its first light, from that light's place.
+      if (instance && instance.fixtureHandle && !instance._lamp) {
+        visit(instance.fixtureHandle, selectionOrigin);
+      }
     }
   }
 

@@ -12,6 +12,12 @@
  * a prism, a pan/tilt speed and frost. Any other channel may be unrelated
  * and, with changed-only DMX input, never written again, so the release
  * belongs to the channel that set it.
+ *
+ * A fixture with several lenses has a light for each. A channel acts on the
+ * lenses its geometry holds, as GDTF has it: a dimmer on the fixture's root
+ * reaches every lens, a pixel's colour only that pixel's. A channel on a
+ * geometry that holds no lens acts on the first light, as a fixture with one
+ * lens has every channel do.
  */
 
 import { nameOf, namesClosed, namesOpen } from './name_rules';
@@ -158,10 +164,15 @@ export default class HeadDispatch {
   /**
    * @param {Object} head the light it drives: a `Light`, or a `MovingHead`
    * @param {Object} engine a DmxEngine for the same fixture
+   * @param {Array<Object>} [lenses] for a fixture with several, each lens's
+   *   light and the names of the geometries that hold it: `{ head, path }`
    */
-  constructor(head, engine) {
+  constructor(head, engine, lenses = null) {
     this.head = head;
     this.engine = engine;
+    this.lenses = lenses && lenses.length > 1 ? lenses : null;
+    /** The lights each geometry's channels act on, by geometry name. */
+    this.targets = new Map();
     this.preset = null;
     this.prism = null;
     this.panTiltSpeed = null;
@@ -199,12 +210,64 @@ export default class HeadDispatch {
   }
 
   /**
-   * Acts on one channel's state.
+   * The lights a channel acts on: the lenses its geometry holds, or the
+   * first light where it holds none.
+   *
+   * @param {Object} c a channel instance
+   * @returns {Array<Object>}
+   */
+  targetsOf(c) {
+    if (!this.lenses) return [this.head];
+    const geometry = c.geometry || '';
+    let heads = this.targets.get(geometry);
+    if (!heads) {
+      heads = this.lenses.filter((lens) => lens.path.includes(geometry)).map((lens) => lens.head);
+      if (!heads.length) heads = [this.head];
+      this.targets.set(geometry, heads);
+    }
+    return heads;
+  }
+
+  /**
+   * Acts on one channel's state, on every light it reaches.
    *
    * @param {Object} c a channel instance
    */
   applyChannel(c) {
-    const { head } = this;
+    const heads = this.targetsOf(c);
+    if (heads.length === 1) {
+      this.applyTo(heads[0], c);
+      return;
+    }
+    // What the channel holds is released or taken on every light it reaches,
+    // so each starts from how it stood before this write.
+    const before = {
+      preset: this.preset,
+      prism: this.prism,
+      panTiltSpeed: this.panTiltSpeed,
+      frost: this.frost,
+      wheel: this.wheelOf.get(c),
+    };
+    for (let i = 0; i < heads.length; i += 1) {
+      if (i > 0) {
+        this.preset = before.preset;
+        this.prism = before.prism;
+        this.panTiltSpeed = before.panTiltSpeed;
+        this.frost = before.frost;
+        if (before.wheel === undefined) this.wheelOf.delete(c);
+        else this.wheelOf.set(c, before.wheel);
+      }
+      this.applyTo(heads[i], c);
+    }
+  }
+
+  /**
+   * Acts on one channel's state, on one light.
+   *
+   * @param {Object} head
+   * @param {Object} c a channel instance
+   */
+  applyTo(head, c) {
     const { state } = c;
     let action = null;
     if (state) {

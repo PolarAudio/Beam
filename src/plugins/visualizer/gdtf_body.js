@@ -121,11 +121,24 @@ function axesOf(type) {
  *
  * @param {Object} type a GDTF fixture type
  * @param {Object} files the archive's files, from `readGdtf`
+ * Every beam in the part that carries the light is a lens: all of a static
+ * light's, the head's for a moving head. A geometry reference places an
+ * instance of the geometry it names at its own position, its Model, if it
+ * has one, standing for the referenced geometry's -- which is how a file
+ * repeats one pixel or one lens across a fixture.
+ *
+ * @param {Object} type a GDTF fixture type
+ * @param {Object} files the archive's files, from `readGdtf`
  * @returns {Promise<Object|null>} `{ base, yoke, head, yokeFrame, headFrame,
- *   lensFrame, lensRadius }`: three geometries, each in its own part's frame
- *   (null when the part has nothing to draw), the yoke's frame in the base's,
- *   the head's in the yoke's and the lens's in the head's, all in the file's
- *   hanging frame; null for a moving head whose file has no mesh of its own
+ *   lensFrame, lensRadius, lenses }`: three geometries, each in its own part's
+ *   frame (null when the part has nothing to draw), the yoke's frame in the
+ *   base's, the head's in the yoke's and the first lens's in the head's, all
+ *   in the file's hanging frame; `lenses` every lens, first first, as
+ *   `{ frame, radius, beam, path }`, `frame` in the head's frame and `path`
+ *   the names of every geometry from the root to it; for a static light,
+ *   `lensSets`, the lenses of each top-level geometry by its name, since a
+ *   file may describe the fixture once per set of modes and a mode names the
+ *   one it uses; null for a moving head whose file has no mesh of its own
  */
 export default async function buildBody(type, files) {
   const root = type.geometries[0];
@@ -134,31 +147,33 @@ export default async function buildBody(type, files) {
   // A light that neither pans nor tilts: its lens is wherever its first beam is.
   const still = !axes.pan && !axes.tilt;
   const placed = { base: [], yoke: [], head: [] };
-  const worldOf = { pan: null, tilt: null, lens: null };
-  let lensBeam = null;
-  let lensModel = null;
+  const worldOf = { pan: null, tilt: null };
+  const found = [];
 
-  // Where every model sits and which part it moves with, walking the tree
-  // once; the meshes are read after, each model once.
-  const visit = (g, parentWorld, part) => {
-    const world = parentWorld.clone().multiply(matrixOf(g.position));
-    let here = part;
-    if (g.name === axes.pan) { here = 'yoke'; worldOf.pan = world.clone(); }
-    if (g.name === axes.tilt) { here = 'head'; worldOf.tilt = world.clone(); }
-    if (g.beam && !worldOf.lens && (here === 'head' || still)) {
-      worldOf.lens = world.clone();
-      lensBeam = g.beam;
-      lensModel = g.model ? type.index.model.get(g.model) : null;
+  // Where every model and lens sits and which part it moves with, walking
+  // the tree once; the meshes are read after, each model once. A referenced
+  // geometry is visited at the reference's place, `at`, with its model.
+  const visit = (g, parentWorld, part, path, at = null, modelName = null, referenced = false) => {
+    const world = at ? at.clone() : parentWorld.clone().multiply(matrixOf(g.position));
+    const here = [...path, g.name];
+    let moves = part;
+    if (g.name === axes.pan) { moves = 'yoke'; worldOf.pan = world.clone(); }
+    if (g.name === axes.tilt) { moves = 'head'; worldOf.tilt = world.clone(); }
+    const name = modelName || g.model;
+    const model = name ? type.index.model.get(name) : null;
+    if (g.beam && (moves === 'head' || still)) {
+      found.push({
+        world: world.clone(), beam: g.beam, model, path: here, referenced,
+      });
     }
-    const model = g.model ? type.index.model.get(g.model) : null;
-    if (model && !EMITTERS.has(g.type)) placed[here].push({ model, world });
+    if (model && !EMITTERS.has(g.type)) placed[moves].push({ model, world });
     if (g.type === 'GeometryReference') {
       const template = type.index.geometry.get(g.geometry);
-      if (template) template.children.forEach((kid) => visit(kid, world, here));
+      if (template) visit(template, world, moves, here, world, g.model, true);
     }
-    g.children.forEach((kid) => visit(kid, world, here));
+    g.children.forEach((kid) => visit(kid, world, moves, here, null, null, referenced));
   };
-  visit(root, new THREE.Matrix4(), 'base');
+  visit(root, new THREE.Matrix4(), 'base', []);
 
   const models = [...new Set(Object.values(placed).flat().map((p) => p.model))];
   const loaded = await Promise.all(models.map((model) => meshOf(model, files)));
@@ -177,7 +192,11 @@ export default async function buildBody(type, files) {
   const identity = new THREE.Matrix4();
   const panWorld = worldOf.pan || identity;
   const tiltWorld = worldOf.tilt || panWorld;
-  const lensWorld = worldOf.lens || tiltWorld;
+  // The lens the light's own beam leaves: a static light's first; a moving
+  // head's first that is not a referenced instance, the one it has always
+  // drawn its single beam from.
+  const main = still ? found[0] : found.find((lens) => !lens.referenced);
+  const lensWorld = main ? main.world : tiltWorld;
   const frameOf = { base: identity, yoke: panWorld, head: tiltWorld };
   const merged = {};
   Object.keys(pieces).forEach((part) => {
@@ -186,18 +205,51 @@ export default async function buildBody(type, files) {
       .applyMatrix4(inverse.clone().multiply(world)));
     merged[part] = inPart.length ? mergeGeometries(inPart) : null;
   });
-  // The lens is as wide as its model, else the beam's stated radius.
-  let lensRadius = null;
-  if (lensModel && lensModel.length > 0) {
-    lensRadius = Math.max(lensModel.length, lensModel.width) / 2;
-  } else if (lensBeam && lensBeam.beamRadius > 0) {
-    lensRadius = lensBeam.beamRadius;
-  }
+  // A lens is as wide as its model, else its beam's stated radius.
+  const radiusOf = ({ model, beam }) => {
+    if (model && model.length > 0) return Math.max(model.length, model.width) / 2;
+    if (beam && beam.beamRadius > 0) return beam.beamRadius;
+    return null;
+  };
+  const toHead = tiltWorld.clone().invert();
+  const asLens = (lens) => ({
+    frame: toHead.clone().multiply(lens.world),
+    radius: radiusOf(lens),
+    beam: lens.beam,
+    path: lens.path,
+  });
+  const lenses = found.map(asLens);
+  // Every beam under a top-level geometry, where the walk above finds them.
+  const lensesIn = (top) => {
+    const out = [];
+    const walk = (g, parentWorld, path, at = null, modelName = null) => {
+      const world = at ? at.clone() : parentWorld.clone().multiply(matrixOf(g.position));
+      const here = [...path, g.name];
+      const name = modelName || g.model;
+      if (g.beam) {
+        out.push({
+          world, beam: g.beam, model: name ? type.index.model.get(name) : null, path: here,
+        });
+      }
+      if (g.type === 'GeometryReference') {
+        const template = type.index.geometry.get(g.geometry);
+        if (template) walk(template, world, here, world, g.model);
+      }
+      g.children.forEach((kid) => walk(kid, world, here));
+    };
+    walk(top, new THREE.Matrix4(), []);
+    return out.map(asLens);
+  };
+  const lensSets = still
+    ? Object.fromEntries(type.geometries.map((top) => [top.name, lensesIn(top)]))
+    : null;
   return {
     ...merged,
     yokeFrame: panWorld.clone(),
     headFrame: panWorld.clone().invert().multiply(tiltWorld),
-    lensFrame: tiltWorld.clone().invert().multiply(lensWorld),
-    lensRadius,
+    lensFrame: toHead.clone().multiply(lensWorld),
+    lensRadius: main ? radiusOf(main) : null,
+    lenses,
+    lensSets,
   };
 }

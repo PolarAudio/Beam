@@ -545,6 +545,10 @@ class Fixture extends withTransform(Proxify) {
     if (this.fixtureType) {
       const inputs = this.applyGdtfMode();
       if (this._dispatch) {
+        // A static light's lenses are its mode's: built again for this one.
+        if (this._lightSpec) {
+          this.createLamps({ ...this._lightSpec, lumens: inputs.lumens }, this.fixtureType.body);
+        }
         this._3DModel.setModeInputs({
           maxPan: inputs.panSpan,
           maxTilt: inputs.tiltSpan,
@@ -552,7 +556,7 @@ class Fixture extends withTransform(Proxify) {
           maxAngle: inputs.maxAngle,
           lumens: inputs.lumens,
         });
-        this._dispatch = markRaw(new HeadDispatch(this._3DModel, this._engine));
+        this._dispatch = this.dispatchFor();
       }
     } else {
       this.prepareChannels();
@@ -566,7 +570,7 @@ class Fixture extends withTransform(Proxify) {
         const inputs = headInputs(type, mode);
         this._3DModel.setModeInputs({ maxPan: inputs.panSpan, maxTilt: inputs.tiltSpan });
         this._engine = markRaw(new DmxEngine(type, mode));
-        this._dispatch = markRaw(new HeadDispatch(this._3DModel, this._engine));
+        this._dispatch = this.dispatchFor();
       }
     }
     // As a new fixture starts: every channel at nought, then what was set
@@ -1150,7 +1154,8 @@ class Fixture extends withTransform(Proxify) {
     this.category = inputs.category;
     this.wheels = wheelsForHead(type);
     if (HEAD_CATEGORIES.includes(inputs.category)) {
-      this.createLight({
+      const moving = inputs.category === FIXTURE_TYPES.MOVING_HEAD;
+      const spec = {
         minAngle: inputs.minAngle || 10,
         maxAngle: inputs.maxAngle || 25,
         minTilt: 0,
@@ -1167,8 +1172,11 @@ class Fixture extends withTransform(Proxify) {
         // The file's own body, read when the type was loaded; the shipped
         // one where a moving head's file has no meshes.
         body: type.body || null,
-      }, inputs.category === FIXTURE_TYPES.MOVING_HEAD);
-      this._dispatch = markRaw(new HeadDispatch(this._3DModel, this._engine));
+      };
+      this.createLight(spec, moving);
+      this._lightSpec = moving ? null : spec;
+      if (!moving) this.createLamps(spec, type.body);
+      this._dispatch = this.dispatchFor();
     } else {
       // No renderer for this type yet: patch it, address it, draw nothing.
       this._3DModel = markRaw(unsupportedModel());
@@ -1229,6 +1237,62 @@ class Fixture extends withTransform(Proxify) {
     // own answer, and the renderer starts every light with shadows off.
     light.castsShadow = this._castsShadow;
     if (this.hasManualFocus) light.focus = this._focus;
+  }
+
+  /**
+   * A light for each further lens of a static light in its mode: lamps, hung
+   * from the first, each lit with its own beam's share of the fixture's
+   * output. The lenses are those of the geometry the mode names, the first
+   * light's lens moved to the first of them. A fixture with one lens has
+   * none.
+   *
+   * @public
+   * @param {Object} spec what the first light was built from
+   * @param {Object|null} body the fixture type's body
+   */
+  createLamps(spec, body) {
+    const first = this._3DModel;
+    first.removeLamps();
+    this._lenses = null;
+    const sets = (body && body.lensSets) || {};
+    const lenses = sets[this.mode && this.mode.geometry] || (body && body.lenses) || [];
+    if (lenses.length) first.placeLens(lenses[0]);
+    if (lenses.length < 2) {
+      first.share = 1;
+      return;
+    }
+    const flux = lenses.map((lens) => Number(lens.beam && lens.beam.luminousFlux) || 0);
+    const total = flux.reduce((sum, f) => sum + f, 0);
+    const shareOf = (i) => (total > 0 ? flux[i] / total : 1 / lenses.length);
+    first.share = shareOf(0);
+    this._lenses = [{ head: first, path: lenses[0].path }];
+    lenses.slice(1).forEach((lens, k) => {
+      const lamp = new Light({
+        ...spec,
+        colorWheel: spec.wheels && spec.wheels['Color Wheel'] ? spec.wheels['Color Wheel'].slots : [],
+        intensity: 0.0,
+        body: null,
+        bodyHeight: null,
+        lamp: true,
+        lens: { frame: lens.frame, radius: lens.radius },
+        share: shareOf(k + 1),
+        lumens: spec.lumens * shareOf(k + 1),
+      });
+      lamp.fixtureHandle = this;
+      first.attachLamp(markRaw(lamp));
+      this._lenses.push({ head: lamp, path: lens.path });
+    });
+  }
+
+  /**
+   * The dispatch that drives this fixture's light from its engine, through
+   * every lens it has.
+   *
+   * @private
+   * @returns {HeadDispatch}
+   */
+  dispatchFor() {
+    return markRaw(new HeadDispatch(this._3DModel, this._engine, this._lenses || null));
   }
 
   /**
@@ -1411,7 +1475,7 @@ class Fixture extends withTransform(Proxify) {
           wheels: this.OFLData.wheels || {},
         }, true);
         this._engine = markRaw(new DmxEngine(type, mode));
-        this._dispatch = markRaw(new HeadDispatch(this._3DModel, this._engine));
+        this._dispatch = this.dispatchFor();
         break;
       }
       default: {

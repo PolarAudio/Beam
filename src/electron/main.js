@@ -5,6 +5,7 @@ import {
   BrowserWindow,
   MessageChannelMain,
   desktopCapturer,
+  dialog,
   net,
   protocol,
   ipcMain,
@@ -29,6 +30,8 @@ import documentstore from './documentstore';
 import projectexport from './projectexport';
 import videorecorder from './videorecorder';
 import environmentstore from './environmentstore';
+import gdtfstore from './gdtfstore';
+import gdtfshare from './gdtfshare';
 import fileexport from './fileexport';
 
 // GPU timer queries are disabled by default because precise timing is a
@@ -38,6 +41,20 @@ import fileexport from './fileexport';
 if (is.dev) {
   app.commandLine.appendSwitch('enable-webgl-draft-extensions');
 }
+
+// Present through the Windows compositor rather than a DirectComposition swap
+// chain. With the swap chain, every present blocked the GPU process's main
+// thread until the next vsync -- measured at 14.7 ms of every 16.7 -- and the
+// recorder's frames reach the encoder through that same thread, one readback
+// step per turn. A 4K take then encoded 10 frames a second against 30, queued
+// the rest in GPU memory and lost the context. Without it the present costs
+// 0.15 ms and a 4K30 take encodes every frame.
+app.commandLine.appendSwitch('disable-direct-composition');
+
+// Draw on the discrete GPU. A laptop with two hands an app the power-saving
+// one unless the app asks otherwise, and on integrated graphics a hazy rig
+// runs at a few frames a second.
+app.commandLine.appendSwitch('force_high_performance_gpu');
 
 // Where show files live, pinned by hand rather than inherited from the app
 // name. Electron derives userData from `name` in package.json during
@@ -476,6 +493,23 @@ function setupLibrary() {
     'library:writeThumbnail',
     (event, key, dataUrl) => objectstore.writeThumbnail(key, dataUrl),
   );
+  // Importing a model: pick a file, copy it in, then describe it or take it
+  // back out. The copy comes first because the renderer can only load, and so
+  // measure, what the library serves.
+  ipcMain.handle('library:importObject', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Import object',
+      properties: ['openFile'],
+      // No "All files": anything else would only be refused after picking it.
+      filters: [
+        { name: '3D models', extensions: objectstore.IMPORTABLE_EXTENSIONS.map((ext) => ext.slice(1)) },
+      ],
+    });
+    if (result.canceled || !result.filePaths.length) return { ok: false, reason: 'cancelled' };
+    return objectstore.importModel(result.filePaths[0]);
+  });
+  ipcMain.handle('library:finishImport', (event, id, settings) => objectstore.finishImport(id, settings));
+  ipcMain.handle('library:cancelImport', (event, id) => objectstore.cancelImport(id));
 
   // Environment images. Listed rather than browsed: the renderer picks a name
   // out of the library, and `objectstore.resolve` turns that name into a file.
@@ -483,6 +517,40 @@ function setupLibrary() {
   // The dialog is attached to the window so it is modal to Beam rather than
   // floating loose, which is how every other file prompt here behaves.
   ipcMain.handle('library:addEnvironment', () => environmentstore.add(mainWindow));
+
+  // GDTF fixtures, kept as downloaded. The list is metadata only; the bytes
+  // are served as `library://profiles/<file>`.
+  ipcMain.handle('library:gdtfList', () => gdtfstore.list());
+  ipcMain.handle('library:gdtfRemoved', () => gdtfstore.listRemoved());
+  ipcMain.handle('library:pickGdtf', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Import GDTF fixtures',
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'GDTF fixtures', extensions: ['gdtf'] }],
+    });
+    return result.canceled ? [] : result.filePaths;
+  });
+  // Takes a path, so a file dropped on the window imports the same way as a
+  // picked one.
+  ipcMain.handle('library:importGdtf', (event, source, options) => gdtfstore.importFile(source, options));
+  ipcMain.handle('library:removeGdtf', (event, key) => {
+    const result = gdtfstore.removeFile(key);
+    if (result.ok) gdtfshare.recordImport(key, null);
+    return result;
+  });
+  ipcMain.handle('library:gdtfMarks', () => gdtfstore.marks());
+  ipcMain.handle('library:setGdtfBad', (event, what, bad) => gdtfstore.setBad(what, !!bad));
+  ipcMain.handle('library:setFavourite', (event, what, on) => gdtfstore.setFavourite(what, !!on));
+
+  // GDTF Share. The account goes in and never comes back out: the renderer
+  // only learns whether one is stored and whose it is.
+  ipcMain.handle('gdtfShare:status', () => gdtfshare.status());
+  ipcMain.handle('gdtfShare:saveAccount', (event, user, password) => gdtfshare.saveAccount(user, password));
+  ipcMain.handle('gdtfShare:forgetAccount', () => gdtfshare.forgetAccount());
+  ipcMain.handle('gdtfShare:list', (event, refresh) => gdtfshare.list(!!refresh));
+  ipcMain.handle('gdtfShare:download', (event, rid, hint) => gdtfshare.download(rid, hint));
+  ipcMain.handle('gdtfShare:imported', () => gdtfshare.imported());
+  ipcMain.handle('gdtfShare:recordImport', (event, id, rid) => gdtfshare.recordImport(id, rid));
 }
 
 /**
@@ -511,10 +579,11 @@ function setupDocumentStore() {
   // ahead of the library until another document, or none, takes its place.
   ipcMain.handle('document:mount', (_event, target) => documentstore.mount(target));
   ipcMain.handle('document:unmount', () => documentstore.unmount());
-  ipcMain.handle('document:write', (_event, target, json, resources) => documentstore.write(target, json, resources));
+  ipcMain.handle('document:write', (_event, target, json, wanted) => projectexport.saveTo(target, json, wanted));
   // The renderer names what the show references; the files are found here,
   // where the library and the shipped assets are, so no model crosses IPC.
   ipcMain.handle('document:export', (_event, target, json, wanted) => projectexport.exportTo(target, json, wanted));
+  ipcMain.handle('document:refresh', (_event, wanted) => projectexport.refresh(wanted));
   ipcMain.handle('document:open', () => documentstore.openDialog());
   ipcMain.handle('document:saveAs', (_event, name, title) => documentstore.saveDialog(name, title));
   ipcMain.handle('document:projectName', (_event, target) => documentstore.projectNameFor(target));

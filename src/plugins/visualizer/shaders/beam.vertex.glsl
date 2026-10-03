@@ -3,7 +3,7 @@
 attribute vec3 direction;   //beam direction
 attribute vec3 color;       //beam color
 attribute float intensity;  //beam intensity
-attribute vec3 angle;       //x half-angle of the field, y brightness normaliser, z inner cone over the field
+attribute vec3 angle;       //x half-angle of the field, y unused, z inner cone over the field
 attribute vec3 wpos;        //beam position
 attribute vec2 depthSlot;   //x atlas slot of this beam's depth tile, -1 for none; y how far the iris is open, 1 fully
 attribute vec4 gobo;        //two gobos as (texture layer, angle); layer 0 open
@@ -25,7 +25,6 @@ varying vec3 vColor;            //Beam color
 varying float vIntensity;       //Beam intensity
 varying float vAngle;           //Half-angle of the beam's field, degrees
 varying float vInner;           //Inner cone radius over the field's, where the falloff starts
-varying float vGain;            //Brightness normaliser, 1 being the reference cone's light
 varying float vSlope;           //Cone slope, dRadius/dz, of the cone drawn
 varying float vLensRadius;      //Radius of the cone at the lens, in metres
 varying float vZFar;            //Local z of the cone's far rim
@@ -78,9 +77,8 @@ void main() {
 
   // The falloff: full inside the inner cone, smoothstep to nothing at the
   // field. Both come from the same penumbra the floor pool's SpotLight
-  // gets, see `writeBeamProfile`. The normaliser is computed there too.
+  // gets, see `writeBeamProfile`.
   vInner = clamp(angle.z, 0.0, 0.99);
-  vGain = angle.y;
   vGobo = gobo;
   vPrism = prism;
   vColorB = colorB;
@@ -107,7 +105,7 @@ void main() {
   float radialScale = sqrt(dot(xBasis, xBasis));
 
   // The frame the depth tile was drawn in: the tile camera sits at the
-  // beam's origin looking down its z, with its up along the beam's y, so the
+  // lens looking down the beam's z, with its up along the beam's y, so the
   // fragment shader can project a point into the tile from these two axes
   // and the direction alone, and no matrix has to travel per instance.
   vAxisX = normalize(xBasis);

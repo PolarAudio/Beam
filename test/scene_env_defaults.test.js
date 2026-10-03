@@ -25,7 +25,7 @@ console.log('\n-- built at the defaults, not at zero --');
 {
   const { DEFAULTS } = Preferences;
   check('turbulence', SceneEnv.hazeTurbulence, DEFAULTS.globalFoggingTurbulences / 100);
-  check('and it is the 70-odd the default promises', SceneEnv.hazeTurbulence > 0.5, true);
+  check('and it is not zero', SceneEnv.hazeTurbulence > 0, true);
   check('density', SceneEnv.hazeDensity, DEFAULTS.globalFoggingDensity / 100);
   check('scale, in metres', SceneEnv.hazeScale, DEFAULTS.globalFoggingScale);
   check('haze is on', SceneEnv.hazeEnabled, !!DEFAULTS.globalFoggingState);

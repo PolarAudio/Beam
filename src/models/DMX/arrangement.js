@@ -340,15 +340,24 @@ function lineTransforms(count, options = {}) {
  * and fixtures land on both ends. Getting this backwards is the classic way to
  * end up with two fixtures in the same place.
  *
+ * An end radius different from the start makes it a spiral. The radius steps
+ * by fixture index, not by angle, so the last fixture lands on the end radius
+ * whether the sweep is closed or open. Angles stay equal, so on a spiral the
+ * outer fixtures stand further apart along the curve than the inner ones.
+ *
  * @param {Number} count how many fixtures
  * @param {Object} options
- * @param {Number} options.radius ring radius in metres
+ * @param {Number} options.radius ring radius in metres, or the first fixture's
+ * @param {Number} [options.endRadius] the last fixture's radius; absent is a ring
  * @param {Number} [options.sweep] degrees covered, 360 for a full ring
  * @param {Object} [options.aim] `{ angle, from }`; absent leaves facings alone
  * @return {Array} one `{ position, aimZ }` per fixture
  */
 function circleTransforms(count, options = {}) {
   const radius = Number(options.radius) || 0;
+  // Anything that is not a number means a ring, never a spiral into the centre.
+  const end = Number(options.endRadius);
+  const endRadius = options.endRadius === null || !Number.isFinite(end) ? radius : end;
   const sweep = options.sweep === undefined ? 360 : Number(options.sweep) || 0;
 
   const closed = sweep !== 0 && Math.abs(sweep) % 360 === 0;
@@ -366,11 +375,12 @@ function circleTransforms(count, options = {}) {
     // The outward radius at this point is what the angle is measured from, so
     // zero is outward, 180 inward, and 90 tangential.
     const aimZ = aimHeading(options.aim, angle);
+    const r = count > 1 ? radius + ((endRadius - radius) * i) / (count - 1) : radius;
 
     out.push({
       position: {
-        x: radius * Math.cos(rad),
-        y: radius * Math.sin(rad),
+        x: r * Math.cos(rad),
+        y: r * Math.sin(rad),
         z: 0,
       },
       aimZ,

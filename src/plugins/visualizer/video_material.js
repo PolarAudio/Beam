@@ -154,6 +154,18 @@ const GRID_PRELUDE = /* glsl */`
   const float GAP_FADE_FROM = 2.5;
 
   /**
+   * The narrowest an **emitter** is drawn, in screen pixels.
+   *
+   * The same limit from the other side: a speck of an emitter in a coarse
+   * pitch is one that each fragment either hits or misses, long before its
+   * gaps get thin. It is grown to this width rather than faded out, with its
+   * gain lowered to match, so it stays a dot carrying the same light. Fading
+   * it towards its average along each axis instead smeared it into a bright
+   * line per row and per column.
+   */
+  const float EMITTER_MIN = 2.5;
+
+  /**
    * How few screen pixels a **cell** may cover before the panel stops being
    * sampled per pixel and simply draws the picture.
    *
@@ -176,13 +188,17 @@ const GRID_PRELUDE = /* glsl */`
     return (floor(panelUv * panelPixels) + 0.5) / panelPixels;
   }
 
-  /** How much each axis has given up on drawing the grid, and on the cells. */
-  void panelFades(vec2 panelUv, out vec2 gapGive, out vec2 cellGive) {
+  /**
+   * How wide each axis draws its emitter, as a fraction of the cell, and how
+   * much each has given up on drawing the gaps and the cells.
+   */
+  void panelFades(vec2 panelUv, out vec2 drawn, out vec2 gapGive, out vec2 cellGive) {
     // Taken on the un-wrapped coordinate: fract() has a discontinuity every
     // cell, and a derivative across it spikes to the full period.
     vec2 step = fwidth(panelUv * panelPixels);
     vec2 cellPixels = 1.0 / max(step, vec2(1e-6));
-    vec2 gapPixels = (1.0 - fill) * cellPixels;
+    drawn = min(max(fill, EMITTER_MIN / cellPixels), vec2(1.0));
+    vec2 gapPixels = (1.0 - drawn) * cellPixels;
     gapGive = vec2(1.0) - smoothstep(vec2(GAP_FADE_TO), vec2(GAP_FADE_FROM), gapPixels);
     cellGive = vec2(1.0) - smoothstep(vec2(CELL_FADE_TO), vec2(CELL_FADE_FROM), cellPixels);
   }
@@ -200,13 +216,21 @@ const GRID_PRELUDE = /* glsl */`
     return mix(snapped, pictureUv, cellGive);
   }
 
-  /** 1 inside the emitter, 0 in the dark ground between them. */
-  float panelMask(vec2 panelUv, vec2 gapGive) {
+  /**
+   * The emitter's gain over the picture: 1 / drawn inside it, 0 in the dark
+   * ground between them, averaging 1 over a cell.
+   *
+   * A panel's brightness is its average over the whole surface, dark ground
+   * included, so an emitter lighting a small part of its cell has to be that
+   * much brighter than the picture. Drawn at the picture's own level instead,
+   * a wall of small emitters in a coarse pitch comes out nearly black.
+   */
+  float panelMask(vec2 panelUv, vec2 drawn, vec2 gapGive) {
     if (fill.x >= 0.999 && fill.y >= 0.999) return 1.0;
 
     vec2 texel = panelUv * panelPixels;
     vec2 cell = fract(texel) - 0.5;
-    vec2 edge = fill * 0.5;
+    vec2 edge = drawn * 0.5;
     vec2 blur = fwidth(texel) * 0.5 + 1e-5;
     vec2 inside = smoothstep(edge + blur, edge - blur, abs(cell));
 
@@ -216,11 +240,10 @@ const GRID_PRELUDE = /* glsl */`
     // one would throw away gaps that are perfectly drawable. This keeps the columns
     // and dissolves the rows, which is what the thing actually looks like.
     //
-    // Faded towards each axis's own duty cycle, not towards solid. That is what
-    // the eye integrates once the gap stops resolving, so brightness is
-    // preserved: fading to 1 would make a wall get *brighter* as it receded,
-    // which is very visible when one wall spans two distances.
-    vec2 blended = mix(inside, fill, gapGive);
+    // Faded towards 1, the cell's average, which is what the eye integrates
+    // once the grid stops resolving -- so a wall keeps its brightness whether
+    // one part of it shows the grid and another does not.
+    vec2 blended = mix(inside / max(drawn, vec2(1e-4)), vec2(1.0), gapGive);
     return blended.x * blended.y;
   }
 `;
@@ -261,11 +284,12 @@ export function createPanelMaterial(picture, panel) {
       // grid is drawn over a smooth image and fools nobody. Once they are not,
       // the picture is read at the fragment instead, and the texture's own mip
       // chain does the averaging. See panelFades().
+      vec2 drawn;
       vec2 gapGive;
       vec2 cellGive;
-      panelFades(vPanelUv, gapGive, cellGive);
+      panelFades(vPanelUv, drawn, gapGive, cellGive);
       vec3 colour = texture2D(picture, panelSample(vPanelUv, vUv, cellGive)).rgb;
-      gl_FragColor = vec4(colour * gain * panelMask(vPanelUv, gapGive), 1.0);
+      gl_FragColor = vec4(colour * gain * panelMask(vPanelUv, drawn, gapGive), 1.0);
       #include <colorspace_fragment>
     }
   `;

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { Effect, EffectAttribute, BlendFunction } from 'postprocessing';
 import SceneEnv from './scene_env';
 import { hazeShaderPrelude, hazeUniforms } from './haze_noise';
+import { blueNoiseTexture, BLUE_NOISE_SIZE } from './blue_noise';
 
 /**
  * @file Ambient light scattering in the room's air.
@@ -114,6 +115,10 @@ const FRAGMENT = /* glsl */`
   uniform float maxDistance;
   uniform float strength;
   uniform float fieldDepth;
+  uniform sampler2D blueNoise;
+  uniform float noiseSize;
+  uniform vec2 noiseOffset;
+  uniform float noisePhase;
 
   /**
    * The base octave of the shared field, in world metres.
@@ -135,8 +140,18 @@ const FRAGMENT = /* glsl */`
     //
     // Weights normalised by their sum so adding the octave changes how the air
     // moves without changing how bright it is.
-    float field = abs(noiseAt(coord + vec3(drift, 0.0, 0.0)));
-    field += abs(noiseAt(coord * 2.0 + vec3(drift * 1.9, 0.0, 0.0)
+    //
+    // Each octave travels on a heading that turns, the same headings the beams'
+    // field uses and driven by the same heading-sweep setting, so the room's
+    // air turns over with the beams' rather than sliding along one axis. Two
+    // headings a quarter turn apart, from one sine and cosine. The warp the
+    // beams add is left out: three more fetches per step over a whole screen.
+    float turnPhase = drift * HAZE_TURN_RATE * hazeTurn;
+    vec2 tc = vec2(cos(turnPhase), sin(turnPhase));
+    vec3 head0 = vec3(tc.x, tc.y, 0.06);
+    vec3 head1 = vec3(-tc.y, tc.x, -0.05);
+    float field = abs(noiseAt(coord + head0 * drift));
+    field += abs(noiseAt(coord * 2.0 + head1 * (drift * 1.9)
       + vec3(17.3, 5.1, 29.7))) * 0.5;
     field *= HAZE_FIELD_GAIN / 1.5;
     // Part uniform, part field. Grain is the variance of an 8-sample estimate,
@@ -145,22 +160,22 @@ const FRAGMENT = /* glsl */`
     return mix(1.0, field, fieldDepth);
   }
 
-  /** 2x2 ordered dither, the building block of the 4x4 below. */
-  float bayer2(vec2 a) {
-    a = floor(a);
-    return fract(a.x / 2.0 + a.y * a.y * 0.75);
-  }
-
   /**
-   * 4x4 ordered dither over screen pixels.
+   * Where along its first step this pixel's ray starts, 0..1.
    *
-   * Not a white-noise hash. Both break up the 8 sampling shells, but white
-   * noise spreads its error randomly -- neighbouring pixels land anywhere, which
-   * is precisely what the eye reads as grain. An ordered pattern spreads the
-   * same error evenly and reads as texture rather than noise.
+   * Blue noise, so the error that breaks up the sampling shells is spread as
+   * evenly as an ordered dither's -- neighbours never land together -- but has
+   * no period. The 4x4 Bayer pattern this replaced showed as a fine regular
+   * grid on dark air.
+   *
+   * And moved every frame: the tile is read from a new place and its values
+   * are advanced by the golden ratio, so each pixel walks through the whole
+   * range over successive frames and the eye averages what is left, instead
+   * of seeing one fixed dither.
    */
-  float bayer4(vec2 a) {
-    return bayer2(0.5 * a) * 0.25 + bayer2(a);
+  float stepJitter(vec2 pixel) {
+    float rank = texture(blueNoise, (floor(pixel) + noiseOffset + 0.5) / noiseSize).r;
+    return fract(rank + noisePhase);
   }
 
   void mainImage(const in vec4 inputColor, const in vec2 uv, const in float depth, out vec4 outputColor) {
@@ -182,8 +197,8 @@ const FRAGMENT = /* glsl */`
     vec3 dir = toFragment / travelled;
 
     // Offsets the start so the steps do not band into shells around the
-    // camera. Ordered rather than random -- see bayer4.
-    float jitter = bayer4(gl_FragCoord.xy);
+    // camera. See stepJitter.
+    float jitter = stepJitter(gl_FragCoord.xy);
 
     float accumulated = 0.0;
     for (int i = 0; i < ${AMBIENT_HAZE_STEPS}; i++) {
@@ -232,6 +247,10 @@ export default class AmbientHazeEffect extends Effect {
         ['tint', new THREE.Uniform(new THREE.Color(AMBIENT_HAZE_TINT))],
         ['maxDistance', new THREE.Uniform(AMBIENT_HAZE_MAX_DISTANCE)],
         ['strength', new THREE.Uniform(0)],
+        ['blueNoise', new THREE.Uniform(blueNoiseTexture())],
+        ['noiseSize', new THREE.Uniform(BLUE_NOISE_SIZE)],
+        ['noiseOffset', new THREE.Uniform(new THREE.Vector2())],
+        ['noisePhase', new THREE.Uniform(0)],
         // Shared by reference with every other renderer: one volume, one
         // cycling amount, so the debug slider reaches this pass too.
         ...Object.entries(shared).map(([name, uniform]) => [name, uniform]),
@@ -240,6 +259,8 @@ export default class AmbientHazeEffect extends Effect {
 
     this.camera = camera;
     this.elapsed = 0;
+    /** Frames drawn, which move the dither on; see `stepJitter`. */
+    this.frame = 0;
     /** Ceiling on the mix, scaled by house lights. */
     this.ceiling = AMBIENT_HAZE_STRENGTH;
     /** House-lights brightness, 0..1. */
@@ -266,6 +287,16 @@ export default class AmbientHazeEffect extends Effect {
       uniforms.get('camWorld').value.copy(camera.matrixWorld);
       uniforms.get('camPos').value.setFromMatrixPosition(camera.matrixWorld);
     }
+
+    // A new place in the tile and a new turn of its values every frame. The
+    // offset is a whole number of pixels, so every read stays on a texel.
+    this.frame = (this.frame + 1) % 65536;
+    const step = this.frame * 0.618033988749895;
+    uniforms.get('noisePhase').value = step % 1;
+    uniforms.get('noiseOffset').value.set(
+      (this.frame * 37) % BLUE_NOISE_SIZE,
+      (this.frame * 23) % BLUE_NOISE_SIZE,
+    );
 
     uniforms.get('hazeMetres').value = SceneEnv.hazeScale * this.scaleMultiplier;
     // The same drift convention the LED glows use, so the air moves as one.

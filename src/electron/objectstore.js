@@ -81,6 +81,18 @@ const SERVED_DIRS = {
     },
     extensions: null,
   },
+  // GDTF fixtures, and nothing else from the Profiles folder: the JSON
+  // profiles beside them reach the renderer through the library's own calls.
+  profiles: { dir: 'Profiles', extensions: ['.gdtf'] },
+  // GDTF fixtures removed from the library, which shows still open with.
+  removedprofiles: { dir: 'Removed/Profiles', extensions: ['.gdtf'] },
+  projectprofiles: {
+    base: () => {
+      const mounted = documentstore.mountRoot();
+      return mounted ? path.join(mounted, 'Profiles') : null;
+    },
+    extensions: ['.gdtf'],
+  },
 };
 
 /**
@@ -88,11 +100,23 @@ const SERVED_DIRS = {
  *
  * `.glb` is the packed one and what anyone exporting for a game engine
  * produces; `.gltf` is the same data as JSON with its buffers beside it, which
- * works over this protocol because relative URLs resolve against it.
+ * works over this protocol because relative URLs resolve against it. `.obj`,
+ * `.fbx` and `.stl` are what CAD tools, DCC tools and vendors' downloads
+ * produce. Only glTF states its units and up axis, so the others depend on
+ * their sidecar for both.
  *
  * @constant {Array<String>}
  */
-const MODEL_EXTENSIONS = ['.glb', '.gltf'];
+const MODEL_EXTENSIONS = ['.glb', '.gltf', '.obj', '.fbx', '.stl'];
+
+/**
+ * What the import button accepts. `.gltf` is left out because its buffers and
+ * textures are separate files that a single pick cannot bring along; it still
+ * loads when copied into the folder by hand.
+ *
+ * @constant {Array<String>}
+ */
+const IMPORTABLE_EXTENSIONS = ['.glb', '.obj', '.fbx', '.stl'];
 
 /**
  * What a created object's file says it is.
@@ -109,7 +133,7 @@ const MODEL_EXTENSIONS = ['.glb', '.gltf'];
 const PRIMITIVE_KIND = 'primitive';
 
 /** Shapes the create dialog can write. Anything else is refused. */
-const PRIMITIVE_TYPES = ['cube', 'cylinder', 'sphere', 'plane'];
+const PRIMITIVE_TYPES = ['cube', 'cylinder', 'tube', 'sphere', 'plane'];
 
 // eslint-disable-next-line no-control-regex
 const FORBIDDEN_NAME = /[<>:"/\\|?*\u0000-\u001F]/g;
@@ -142,8 +166,82 @@ function safeName(raw) {
   return safe;
 }
 
-/** Anything the loader may fetch alongside a `.gltf`: its buffers and textures. */
-const COMPANION_EXTENSIONS = ['.bin', '.png', '.jpg', '.jpeg', '.webp', '.ktx2', '.basis'];
+/**
+ * Anything a loader may fetch alongside a model: a `.gltf`'s buffers and
+ * textures, an `.obj`'s material library and the images that names.
+ */
+const COMPANION_EXTENSIONS = ['.bin', '.png', '.jpg', '.jpeg', '.webp', '.bmp', '.ktx2', '.basis', '.mtl'];
+
+/**
+ * A relative reference that stays inside the model's folder, normalised to
+ * forward slashes, or null for one that does not.
+ *
+ * @param {String} reference as written in the file
+ * @returns {String|null}
+ */
+function localReference(reference) {
+  const cleaned = String(reference || '').trim().replace(/\\/g, '/');
+  if (!cleaned || /^(data:|[a-z]+:\/\/)/i.test(cleaned) || path.isAbsolute(cleaned)) return null;
+  if (/^[a-z]:/i.test(cleaned) || cleaned.split('/').includes('..')) return null;
+  return cleaned;
+}
+
+/**
+ * Files a model refers to by relative path, which have to travel with it.
+ *
+ * A `.gltf` names its buffers and images. An `.obj` names its material
+ * libraries on `mtllib` lines, and each of those names its textures on `map_`
+ * lines -- the file is the last word, after any options. A `.glb` carries
+ * everything, an `.stl` refers to nothing, and an `.fbx` keeps its references
+ * in a binary format read only by the loader, so those give none.
+ *
+ * References that leave the model's folder, and absolute paths, are left out:
+ * nothing outside the folder can be copied to a place it would be found.
+ *
+ * @public
+ * @param {String} file absolute path of the model
+ * @returns {Array<String>} paths relative to the model's folder
+ */
+function companionsOf(file) {
+  const extension = path.extname(file).toLowerCase();
+  const read = (target) => {
+    try {
+      return fs.readFileSync(target, 'utf8');
+    } catch (err) {
+      return null;
+    }
+  };
+  if (extension === '.gltf') {
+    let parsed;
+    try {
+      parsed = JSON.parse(read(file));
+    } catch (err) {
+      return [];
+    }
+    return [...((parsed && parsed.buffers) || []), ...((parsed && parsed.images) || [])]
+      .map((item) => localReference(item && item.uri && decodeURIComponent(item.uri)))
+      .filter(Boolean);
+  }
+  if (extension !== '.obj') return [];
+  const text = read(file);
+  if (!text) return [];
+  const dir = path.dirname(file);
+  const found = new Set();
+  [...text.matchAll(/^\s*mtllib\s+(.+?)\s*$/gm)].forEach(([, named]) => {
+    const mtl = localReference(named);
+    if (!mtl) return;
+    found.add(mtl);
+    const materials = read(path.join(dir, mtl));
+    if (!materials) return;
+    const mtlDir = path.posix.dirname(mtl);
+    [...materials.matchAll(/^\s*(?:map_\w+|bump|disp|decal|norm)\s+(.+?)\s*$/gim)].forEach(([, rest]) => {
+      const words = rest.split(/\s+/);
+      const texture = localReference(words[words.length - 1]);
+      if (texture) found.add(mtlDir === '.' ? texture : path.posix.join(mtlDir, texture));
+    });
+  });
+  return [...found];
+}
 
 /**
  * What a model is taken to mean when nothing says otherwise.
@@ -429,7 +527,16 @@ function catalogue(root, origin) {
   return all;
 }
 
-function list() {
+/**
+ * The object catalogue, merged across its roots.
+ *
+ * @public
+ * @param {Object} [options]
+ * @param {Boolean} [options.project] include what the open document carries;
+ *   left out, a refresh can ask what this machine alone would supply
+ * @returns {Array<Object>} catalogue entries
+ */
+function list({ project = true } = {}) {
   // Shipped first, then the user's over the top of it, then what the open
   // document carries over both. A key present twice resolves to the later --
   // the same order profiles follow, project-local then user library then
@@ -446,7 +553,7 @@ function list() {
   const fold = (key) => String(key).toLowerCase();
   catalogue(shippedRoot(), 'shipped').forEach((entry) => merged.set(fold(entry.key), entry));
   catalogue(objectsRoot(), 'library').forEach((entry) => merged.set(fold(entry.key), entry));
-  const mountedObjects = SERVED_DIRS.project.base();
+  const mountedObjects = project ? SERVED_DIRS.project.base() : null;
   if (mountedObjects) {
     catalogue(mountedObjects, 'project').forEach((entry) => merged.set(fold(entry.key), entry));
   }
@@ -618,6 +725,180 @@ function writeThumbnail(key, dataUrl) {
 }
 
 /**
+ * Imports under way: copied into the library, not yet described. By id, each
+ * `{ dir, file, copied }` -- the model's file name and every file the copy
+ * added, so a cancel removes exactly those.
+ */
+const pendingImports = new Map();
+
+/** Next pending import id. */
+let nextImportId = 1;
+
+/**
+ * Whether a base name is free in a folder: no model, sidecar, descriptor or
+ * preview uses it. A preview counts because `list` pairs `<name>.png` with the
+ * model of that name.
+ *
+ * @param {String} dir absolute folder
+ * @param {String} base name without extension
+ * @returns {Boolean}
+ */
+function baseNameFree(dir, base) {
+  const taken = [...MODEL_EXTENSIONS, '.json', '.png', '.jpg', '.webp'];
+  return !taken.some((extension) => fs.existsSync(path.join(dir, `${base}${extension}`)));
+}
+
+/**
+ * Copies a model the user picked, and the files it refers to, into the root of
+ * `Library/Objects`.
+ *
+ * Copied because the library is the catalogue: a reference to a file outside
+ * it would stop working the day that file moved. The model gets a name nothing
+ * in the folder uses; a companion keeps its own name, because the model refers
+ * to it by that name. A companion already present with the same bytes is
+ * shared, and one present with different bytes is left alone and reported --
+ * overwriting it would change a model already in the library.
+ *
+ * Nothing describes the model yet. `finishImport` writes its sidecar and
+ * `cancelImport` takes the copy back out.
+ *
+ * @public
+ * @param {String} source absolute path of the picked file
+ * @returns {Object} `{ ok, id, entry, skipped }` or `{ ok: false, reason }`
+ */
+function importModel(source) {
+  const extension = path.extname(source || '').toLowerCase();
+  if (!IMPORTABLE_EXTENSIONS.includes(extension)) {
+    return { ok: false, reason: `${extension || 'That file'} is not a model Beam can import.` };
+  }
+  const dir = objectsRoot();
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+  } catch (err) {
+    return { ok: false, reason: `Could not create ${dir}: ${err.message}` };
+  }
+
+  const stem = safeName(path.basename(source, path.extname(source))) || 'object';
+  let base = stem;
+  for (let n = 2; !baseNameFree(dir, base); n += 1) base = `${stem} ${n}`;
+  const file = `${base}${extension}`;
+
+  const copied = [];
+  const skipped = [];
+  const undo = () => copied.forEach((name) => {
+    try { fs.unlinkSync(path.join(dir, name)); } catch (err) { /* already gone */ }
+  });
+  try {
+    fs.copyFileSync(source, path.join(dir, file));
+    copied.push(file);
+    const from = path.dirname(source);
+    companionsOf(source).forEach((relative) => {
+      const origin = path.join(from, relative);
+      const target = path.join(dir, relative);
+      if (!fs.existsSync(origin)) {
+        skipped.push(`${relative} (not found beside the model)`);
+        return;
+      }
+      if (fs.existsSync(target)) {
+        if (!fs.readFileSync(target).equals(fs.readFileSync(origin))) {
+          skipped.push(`${relative} (a different file of that name is already in the library)`);
+        }
+        return;
+      }
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.copyFileSync(origin, target);
+      copied.push(relative);
+    });
+  } catch (err) {
+    undo();
+    return { ok: false, reason: `Could not copy the model: ${err.message}` };
+  }
+
+  const id = nextImportId;
+  nextImportId += 1;
+  pendingImports.set(id, { dir, file, copied });
+  return {
+    ok: true,
+    id,
+    skipped,
+    entry: {
+      name: base,
+      file,
+      key: base,
+      kind: 'model',
+      url: `library://objects/${encodeURIComponent(file)}`,
+    },
+  };
+}
+
+/**
+ * Describes an imported model and makes it a library object.
+ *
+ * Writes the sidecar with the units and up axis the user chose, and renames
+ * the model when they changed its name. Only the model is renamed: its
+ * companions are referred to by their own names from inside it.
+ *
+ * @public
+ * @param {Number} id from `importModel`
+ * @param {Object} settings `{ name, scale, upAxis }`
+ * @returns {Object} `{ ok, key }` or `{ ok: false, reason }`
+ */
+function finishImport(id, { name, scale, upAxis } = {}) {
+  const pending = pendingImports.get(id);
+  if (!pending) return { ok: false, reason: 'That import is no longer open.' };
+  const { dir } = pending;
+  const extension = path.extname(pending.file);
+  const current = path.basename(pending.file, extension);
+
+  let base = current;
+  const wanted = safeName(name);
+  if (!wanted) return { ok: false, reason: 'That name cannot be used as a file name.' };
+  if (wanted !== current) {
+    if (!baseNameFree(dir, wanted)) {
+      return { ok: false, reason: `${wanted} is already in the object library.` };
+    }
+    try {
+      fs.renameSync(path.join(dir, pending.file), path.join(dir, `${wanted}${extension}`));
+    } catch (err) {
+      return { ok: false, reason: `Could not rename the model: ${err.message}` };
+    }
+    base = wanted;
+  }
+
+  const factor = Number(scale);
+  const sidecar = {
+    ...DEFAULT_METADATA,
+    scale: Number.isFinite(factor) && factor > 0 ? factor : 1,
+    upAxis: String(upAxis).toLowerCase() === 'z' ? 'z' : 'y',
+  };
+  try {
+    fs.writeFileSync(path.join(dir, `${base}.json`), `${JSON.stringify(sidecar, null, 2)}\n`, 'utf8');
+  } catch (err) {
+    return { ok: false, reason: `Could not write ${base}.json: ${err.message}` };
+  }
+  pendingImports.delete(id);
+  return { ok: true, key: keyFor(null, base) };
+}
+
+/**
+ * Takes a cancelled import back out of the library: every file its copy
+ * added, and nothing that was there before it.
+ *
+ * @public
+ * @param {Number} id from `importModel`
+ * @returns {Object} `{ ok }`
+ */
+function cancelImport(id) {
+  const pending = pendingImports.get(id);
+  if (!pending) return { ok: true };
+  pending.copied.forEach((name) => {
+    try { fs.unlinkSync(path.join(pending.dir, name)); } catch (err) { /* already gone */ }
+  });
+  pendingImports.delete(id);
+  return { ok: true };
+}
+
+/**
  * Resolves a `library://` request to a file, or refuses it.
  *
  * Refusing is most of the job. The renderer is not trusted to name a path:
@@ -691,8 +972,13 @@ export default {
   shippedRoot,
   writePrimitive,
   writeThumbnail,
+  importModel,
+  finishImport,
+  cancelImport,
+  companionsOf,
   safeName,
   MODEL_EXTENSIONS,
+  IMPORTABLE_EXTENSIONS,
   OBJECTS_DIR,
   ENVIRONMENTS_DIR,
   ENVIRONMENT_EXTENSIONS,

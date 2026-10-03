@@ -9,13 +9,15 @@
  * no effect, so nobody goes looking for them.
  */
 
+import { goboThumbnail } from '@/plugins/visualizer/gobo_pick';
+
 /** Capability types Beam acts on. Anything else is shown but marked. */
 const DRAWN = new Set([
   'Intensity', 'ColorIntensity', 'ColorPreset', 'ColorTemperature',
   'ShutterStrobe', 'StrobeSpeed', 'StrobeDuration',
-  'Pan', 'PanFine', 'Tilt', 'TiltFine', 'PanContinuous', 'TiltContinuous',
+  'Pan', 'PanFine', 'Tilt', 'TiltFine', 'PanContinuous', 'TiltContinuous', 'PanTiltSpeed',
   'WheelSlot', 'WheelShake', 'WheelSlotRotation', 'WheelRotation',
-  'Prism', 'PrismRotation', 'Focus', 'Zoom', 'BeamAngle', 'Iris', 'NoFunction',
+  'Prism', 'PrismRotation', 'Frost', 'FrostEffect', 'Focus', 'Zoom', 'BeamAngle', 'Iris', 'NoFunction',
 ]);
 
 /** "slow CW" to "fast CW" as "slow→fast CW", and so on. */
@@ -44,6 +46,13 @@ function ranged(cap, field) {
 
 /** A slot's name, from the wheel the capability belongs to. */
 function slotName(cap, wheels, wheelName) {
+  // A range that scrolls the wheel from one slot to the next is both of them,
+  // the colour turning into the next as the value rises.
+  if (cap.slotNumber === undefined && cap.slotNumberStart !== undefined) {
+    const from = slotName({ ...cap, slotNumber: cap.slotNumberStart }, wheels, wheelName);
+    const to = slotName({ ...cap, slotNumber: cap.slotNumberEnd }, wheels, wheelName);
+    return from === to ? from : `${from} → ${to}`;
+  }
   const wheel = wheels[cap.wheel || wheelName];
   const n = Number(cap.slotNumber);
   if (!wheel || !Number.isFinite(n)) return `slot ${cap.slotNumber}`;
@@ -59,6 +68,47 @@ function slotName(cap, wheels, wheelName) {
   if (slot.type === 'Prism') return 'prism';
   if (slot.type === 'Iris') return `iris ${slot.openPercent || ''}`.trim();
   return slot.type.toLowerCase();
+}
+
+/** A range's colour as the profile states it, or null. */
+function colourOf(cap, wheels, wheelName) {
+  if (cap.type === 'ColorPreset') return (cap.colors || [])[0] || null;
+  if (cap.type !== 'WheelSlot') return null;
+  const wheel = wheels[cap.wheel || wheelName];
+  const n = Number(cap.slotNumber);
+  if (!wheel || !Number.isInteger(n)) return null;
+  const slot = (wheel.slots || [])[n - 1];
+  return slot && slot.type === 'Color' ? (slot.colors || [])[0] || null : null;
+}
+
+/**
+ * The two colours of a split -- a slot number between two slots, the beam
+ * half on each -- lower slot first. Open is white. Null unless both sides are
+ * colour or open.
+ */
+function splitOf(cap, wheels, wheelName) {
+  if (cap.type !== 'WheelSlot') return null;
+  const wheel = wheels[cap.wheel || wheelName];
+  if (!wheel) return null;
+  const side = (slot) => {
+    if (!slot) return null;
+    if (slot.type === 'Open') return '#ffffff';
+    return slot.type === 'Color' ? (slot.colors || [])[0] || null : null;
+  };
+  const slots = wheel.slots || [];
+  // A scroll from one slot to another shows the two it runs between.
+  if (cap.slotNumber === undefined && cap.slotNumberStart !== undefined) {
+    const at = (s) => slots[Math.round(Number(s)) - 1] || slots[0];
+    const lower = side(at(cap.slotNumberStart));
+    const upper = side(at(cap.slotNumberEnd));
+    return lower && upper ? [lower, upper] : null;
+  }
+  const n = Number(cap.slotNumber);
+  if (!Number.isFinite(n) || Number.isInteger(n)) return null;
+  const lower = side(slots[Math.floor(n) - 1]);
+  // Past the last slot a wheel comes round to its first.
+  const upper = side(slots[Math.floor(n)] || slots[0]);
+  return lower && upper ? [lower, upper] : null;
 }
 
 /** One range in words. */
@@ -81,6 +131,10 @@ function describe(cap, wheels, wheelName) {
     case 'Tilt': return `tilt ${ranged(cap, 'angle')}`;
     case 'PanContinuous': return `pan spin ${ranged(cap, 'speed')}`;
     case 'TiltContinuous': return `tilt spin ${ranged(cap, 'speed')}`;
+    case 'PanTiltSpeed': {
+      const time = ranged(cap, 'duration');
+      return `${time ? `move in ${time}` : `move speed ${ranged(cap, 'speed')}`}${note}`;
+    }
     case 'WheelSlot': return slotName(cap, wheels, wheelName);
     case 'WheelShake': return `shake ${slotName(cap, wheels, wheelName)} ${ranged(cap, 'shakeSpeed')}`.trim();
     case 'WheelSlotRotation': {
@@ -98,6 +152,8 @@ function describe(cap, wheels, wheelName) {
     }
     case 'Focus': return `focus ${ranged(cap, 'distance') || 'near→far'}`;
     case 'Zoom': case 'BeamAngle': return `zoom ${ranged(cap, 'angle') || 'narrow→wide'}`;
+    case 'Frost': return `frost ${ranged(cap, 'frostIntensity') || 'off→high'}`;
+    case 'FrostEffect': return `frost ${String(cap.effectName || 'effect').toLowerCase()} ${ranged(cap, 'speed')}`.trim();
     case 'Iris': return `iris ${ranged(cap, 'openPercent') || 'open→closed'}`;
     case 'Effect': return cap.effectName || cap.effectPreset || `effect${note}`;
     case 'Maintenance': return cap.comment || 'maintenance';
@@ -113,10 +169,14 @@ function describe(cap, wheels, wheelName) {
  * Folds consecutive ranges that read the same but for one number -- "gobo 1",
  * "gobo 2" -- into one, "gobo 1–7".
  *
- * @returns {Array} `{ range, text }` per folded range; range is empty for a
- *   channel that does one thing across all of 0–255
+ * @returns {Array} `{ range, text, lo, hi, type, colour, steps }` per folded range;
+ *   range is empty for a channel that does one thing across all of 0–255, and
+ *   colour is the profile's hex for a colour slot or preset, split the two
+ *   hexes of a slot between two colours, gobo the `goboThumbnail` of a gobo
+ *   slot, and steps holds the `{ lo, hi, text, colour, split, gobo }` of each
+ *   range folded in, empty when none was
  */
-function fold(parts) {
+export function fold(parts) {
   const out = [];
   parts.forEach((part) => {
     const last = out[out.length - 1];
@@ -125,6 +185,7 @@ function fold(parts) {
       last.hi = part.hi;
       last.text = `shake each slot ${part.speed}`.trim();
       last.from = NaN;
+      last.members.push(part);
       return;
     }
     // Folded only when the numbers are the slot and at most the next one:
@@ -138,6 +199,7 @@ function fold(parts) {
       last.to = Number(number);
       last.hi = part.hi;
       last.lastText = part.text;
+      last.members.push(part);
       return;
     }
     out.push({
@@ -149,6 +211,7 @@ function fold(parts) {
       shape,
       from: Number(number),
       to: Number(number),
+      members: [part],
     });
   });
   return out.map((p) => {
@@ -160,8 +223,21 @@ function fold(parts) {
       const tail = p.lastText.slice(at);
       text = /\)$/.test(p.text) ? `${p.text.slice(0, -1)}–${tail}` : `${p.text}–${tail}`;
     }
-    if (p.lo === 0 && p.hi === 255) return { range: '', text };
-    return { range: p.lo === p.hi ? `${p.lo}` : `${p.lo}–${p.hi}`, text };
+    const bounds = {
+      lo: p.lo,
+      hi: p.hi,
+      type: p.type,
+      colour: p.members.length === 1 ? p.members[0].colour : null,
+      split: p.members.length === 1 ? p.members[0].split : null,
+      gobo: p.members.length === 1 ? p.members[0].gobo : null,
+      steps: p.members.length > 1
+        ? p.members.map((m) => ({
+          lo: m.lo, hi: m.hi, text: m.text, colour: m.colour, split: m.split, gobo: m.gobo,
+        }))
+        : [],
+    };
+    if (p.lo === 0 && p.hi === 255) return { range: '', text, ...bounds };
+    return { range: p.lo === p.hi ? `${p.lo}` : `${p.lo}–${p.hi}`, text, ...bounds };
   });
 }
 
@@ -211,6 +287,11 @@ export default function fixtureGuide(ofl, mode) {
       hi: (cap.dmxRange || [0, 255])[1],
       type: cap.type,
       speed: ranged(cap, 'shakeSpeed'),
+      colour: colourOf(cap, wheels, name),
+      split: splitOf(cap, wheels, name),
+      gobo: (cap.type === 'WheelSlot' || cap.type === 'WheelShake')
+        ? goboThumbnail(wheels[cap.wheel || name], cap.slotNumber)
+        : null,
       text: describe(cap, wheels, name),
     }));
     const drawn = caps.some((cap) => DRAWN.has(cap.type) && cap.type !== 'NoFunction');

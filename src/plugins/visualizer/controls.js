@@ -8,7 +8,7 @@ import closestEuler from '@/models/DMX/closest_euler';
 import { SCENE_ITEM_KINDS, kindOf } from '@/models/DMX/scene_item';
 import Selection from '@/models/DMX/selection';
 import SceneManager from './scene_manager';
-import MovingHead from './moving_head';
+import Light from './light';
 import LedBar from './led_bar';
 import Projector from './projector';
 import Display from './display';
@@ -50,7 +50,7 @@ import GroupHandle from './group_handle';
  * @constant {Array}
  */
 const SCENE_RENDERERS = [
-  MovingHead, LedBar, Projector, Display, Laser, Strobe, SceneObjects, GroupHandle,
+  Light, LedBar, Projector, Display, Laser, Strobe, SceneObjects, GroupHandle,
 ];
 
 function selectionKey(item) {
@@ -81,6 +81,39 @@ function selectionKey(item) {
  * @param {Boolean} [drill] reach inside a structure rather than resolving up
  * @return {Object} the item that hit selects, or null
  */
+/**
+ * Whatever a raycast hit belongs to, or null for a hit on nothing selectable.
+ *
+ * @param {Object} hit a three.js intersection
+ * @return {Object} a fixture or an object, or null
+ */
+function ownerOfHit(hit) {
+  if (!hit || !hit.object) return null;
+  // `pickOwner` is the general form: any renderer whose pick target is a
+  // plain mesh can say who owns it without this method learning its name.
+  // The special cases below predate it and could migrate to it; the
+  // instanced renderers cannot, since one mesh stands for every instance.
+  const { userData } = hit.object;
+  if (userData.pickOwner) return userData.pickOwner.fixtureHandle || null;
+  if (userData.ledBar) return userData.ledBar.fixtureHandle || null;
+  if (userData.sceneObjectModel) return SceneObjects.ownerAt(hit.object, hit.instanceId);
+  if (hit.instanceId === undefined) return null;
+  const instance = Light.getInstance(hit.instanceId);
+  return (instance && instance.fixtureHandle) || null;
+}
+
+/**
+ * Whether an item is in the scene to be pointed at. A hidden one is not drawn,
+ * and invisible meshes still raycast, so every way of reaching an item from
+ * the 3D view asks this.
+ *
+ * @param {Object} item
+ * @return {Boolean}
+ */
+function shown(item) {
+  return !!item && !item.isHidden;
+}
+
 function itemFor(fixture, drill = false) {
   if (!fixture) return null;
   if (drill) return fixture;
@@ -196,6 +229,15 @@ const CONTROL_MODES = {
 };
 
 /**
+ * The gizmo's own scene, drawn over the finished picture rather than in it:
+ * a handle is no part of the show, so no light, haze, bloom or tone curve
+ * touches it and no beam is drawn over it.
+ *
+ * @constant {Object}
+ */
+const GIZMO_SCENE = new THREE.Scene();
+
+/**
  * Bounding box material
  *
  * @constant {Object} boundingBoxMaterial
@@ -203,25 +245,11 @@ const CONTROL_MODES = {
 const boundingBoxMaterial = new THREE.MeshBasicMaterial({
   color: 'rgb(162, 45, 88)',
   transparent: true,
-  // Invisible: the corner brackets carry the selection. The mesh itself is
-  // kept because the gizmo and the transform maths attach to it.
+  // Invisible: the selection outline shows what is selected. The box is kept
+  // because the gizmo and the transform maths attach to it, and framing a
+  // selection fits the camera to it.
   opacity: 0,
   depthWrite: false,
-  side: THREE.DoubleSide,
-});
-/**
- * Bounding box edges material
- *
- * @constant {Object} boundingBoxEdgesMaterial
- */
-const boundingBoxEdgesMaterial = new THREE.LineBasicMaterial({
-  color: 0xffffff,
-  // WebGL ignores linewidth, so a line is one pixel whatever this says. Thin
-  // suits it anyway.
-  linewidth: 1,
-  transparent: true,
-  opacity: 0.85,
-  depthTest: false,
   side: THREE.DoubleSide,
 });
 /**
@@ -230,55 +258,6 @@ const boundingBoxEdgesMaterial = new THREE.LineBasicMaterial({
  * @constant {Object} boundingBoxGeometry
  */
 const boundingBoxGeometry = new THREE.BoxGeometry();
-
-/**
- * How far along each edge a corner bracket runs, as a fraction of that edge.
- *
- * @constant {Number}
- */
-const CORNER_BRACKET = 0.18;
-
-/**
- * Corner brackets for a unit cube: three short segments meeting at each of the
- * eight corners, rather than twelve full edges.
- *
- * Marking only the corners says where the selection reaches without drawing a
- * cage around what is inside it.
- *
- * @returns {Object} THREE.BufferGeometry of line segments
- */
-function buildCornerBrackets() {
-  const half = 0.5;
-  const run = CORNER_BRACKET;
-  const points = [];
-
-  [-half, half].forEach((x) => {
-    [-half, half].forEach((y) => {
-      [-half, half].forEach((z) => {
-        // Each arm heads back towards the middle of its own axis.
-        points.push(x, y, z, x - Math.sign(x) * run, y, z);
-        points.push(x, y, z, x, y - Math.sign(y) * run, z);
-        points.push(x, y, z, x, y, z - Math.sign(z) * run);
-      });
-    });
-  });
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(points, 3));
-  return geometry;
-}
-/**
- * Bounding box edges geometry
- *
- * @constant {Object} boundingBoxEdgesGeometry
- */
-const boundingBoxEdgesGeometry = buildCornerBrackets();
-/**
- * Bounding box edges 3D instance
- *
- * @constant {Object} boundingBoxEdges
- */
-const boundingBoxEdges = new THREE.LineSegments(boundingBoxEdgesGeometry, boundingBoxEdgesMaterial);
 /**
  * Default focus out camera position
  *
@@ -450,7 +429,6 @@ class Controls {
       // Instanciating bounding box mesh
       this.boundingBoxMesh = new THREE.Mesh(boundingBoxGeometry, boundingBoxMaterial);
       // Adding bounding box edges to bounding box mesh
-      this.boundingBoxMesh.add(boundingBoxEdges);
       this.animationId = null;
       this.focusTransitionDuration = 1000;
       this.autoFocus = null;
@@ -502,6 +480,22 @@ class Controls {
   }
 
   /**
+   * Draws the gizmo over the finished picture, unlit and in its own colours.
+   * Depth is cleared first, so it is always on top, as a handle should be.
+   *
+   * @public
+   * @param {Object} renderer THREE.WebGLRenderer
+   */
+  renderGizmo(renderer) {
+    if (!this.handle || !this.handle.object || !this.cameraHandle) return;
+    const { autoClear } = renderer;
+    renderer.autoClear = false;
+    renderer.clearDepth();
+    renderer.render(GIZMO_SCENE, this.cameraHandle);
+    renderer.autoClear = autoClear;
+  }
+
+  /**
    * Initialises controls
    *
    * @param {Object} camera Handle to camera instance
@@ -521,13 +515,6 @@ class Controls {
     const helper = this.handle.getHelper();
 
     helper.traverse((child) => {
-      // The gizmo is an overlay, not scenery. Anything that renders it into a
-      // shadow map or into a projector's depth atlas has it blocking light and
-      // printing its own arrows across whatever is behind it -- which is
-      // nonsense for a handle that is not part of the show. Set on every child
-      // rather than the helper, because it is the meshes that get gathered.
-      child.castShadow = false;
-      child.receiveShadow = false;
       if (child.material) {
         // X axis
         if (child.name.includes('X')) {
@@ -557,7 +544,9 @@ class Controls {
       }
     });
 
-    SceneManager.add(this.groupedInstances, helper); // Adding instances to scene
+    SceneManager.add(this.groupedInstances);
+    // Not in the show's scene: see `renderGizmo`.
+    GIZMO_SCENE.add(helper);
     // Picking: a click on a fixture selects it, a click on empty scene clears.
     el.addEventListener('pointerdown', this.handlePointerDown.bind(this));
     el.addEventListener('pointermove', this.handlePointerMove.bind(this));
@@ -842,7 +831,7 @@ class Controls {
     // here -- so adding a renderer needs no change to selection code.
     SCENE_RENDERERS.forEach((renderer) => {
       renderer.eachSelectable((item, worldPosition, worldRadius) => {
-        if (inBand(worldPosition, worldRadius)) picked.push(item);
+        if (shown(item) && inBand(worldPosition, worldRadius)) picked.push(item);
       });
     });
 
@@ -950,7 +939,8 @@ class Controls {
     const targets = SCENE_RENDERERS
       .flatMap((renderer) => renderer.pickObjects())
       .filter(Boolean);
-    const hit = raycaster.intersectObjects(targets, false)[0];
+    const hit = raycaster.intersectObjects(targets, false)
+      .find((candidate) => shown(ownerOfHit(candidate)));
     if (hit) {
       pivotPoint.copy(hit.point);
     } else if (!raycaster.ray.intersectPlane(pivotGround, pivotPoint)) {
@@ -997,25 +987,10 @@ class Controls {
     const targets = SCENE_RENDERERS
       .flatMap((renderer) => renderer.pickObjects())
       .filter(Boolean);
-    const hits = raycaster.intersectObjects(targets, false);
-    const hit = hits.find((h) => h.instanceId !== undefined
-      || (h.object && (h.object.userData.ledBar || h.object.userData.pickOwner)));
-    if (!hit) return null;
-    // `pickOwner` is the general form: any renderer whose pick target is a
-    // plain mesh can say who owns it without this method learning its name.
-    // The two special cases below predate it and could migrate to it; the
-    // instanced renderers cannot, since one mesh stands for every instance.
-    if (hit.object && hit.object.userData.pickOwner) {
-      return hit.object.userData.pickOwner.fixtureHandle || null;
-    }
-    if (hit.object && hit.object.userData.ledBar) {
-      return hit.object.userData.ledBar.fixtureHandle || null;
-    }
-    if (hit.object && hit.object.userData.sceneObjectModel) {
-      return SceneObjects.ownerAt(hit.object, hit.instanceId);
-    }
-    const instance = MovingHead.getInstance(hit.instanceId);
-    return (instance && instance.fixtureHandle) || null;
+    // The nearest hit on something shown: a hidden item is not drawn, but its
+    // meshes still raycast, and a click would otherwise land on it.
+    const owners = raycaster.intersectObjects(targets, false).map(ownerOfHit);
+    return owners.find(shown) || null;
   }
 
   /**
@@ -1045,12 +1020,16 @@ class Controls {
     dummy.getWorldPosition(position);
     dummy.getWorldQuaternion(quaternion);
     euler.setFromQuaternion(quaternion);
+    // The triple nearest the stored one, or the fields show Y 100 as X 180,
+    // Y 80, Z 180 -- and an edit to one of those is written onto the other two
+    // as stored, turning the item somewhere else.
+    const angles = closestEuler(euler, item.rotationRad);
     return {
       position: { x: position.x, y: position.y, z: position.z },
       rotation: {
-        x: THREE.MathUtils.radToDeg(euler.x),
-        y: THREE.MathUtils.radToDeg(euler.y),
-        z: THREE.MathUtils.radToDeg(euler.z),
+        x: THREE.MathUtils.radToDeg(angles.x),
+        y: THREE.MathUtils.radToDeg(angles.y),
+        z: THREE.MathUtils.radToDeg(angles.z),
       },
     };
   }
@@ -1321,6 +1300,7 @@ class Controls {
     // being one list of renderers rather than three hand-written loops.
     SCENE_RENDERERS.forEach((renderer) => {
       renderer.eachSelectable((item) => {
+        if (!shown(item)) return;
         const model = item._3DModel;
         if (model && model.expandBounds) model.expandBounds(box);
       });
@@ -1631,10 +1611,14 @@ class Controls {
         // orientation turns a 180 about Y into X 180, Z 180, which a mover
         // reads as hung and flips its body.
         const angles = closestEuler(euler, instanceHandle.rotationRad);
+        // Tenths, the rotation fields' precision. This runs before every field
+        // write, not only after a drag, so whole degrees took the decimals off
+        // anything typed.
+        const tenths = (rad) => Math.round(THREE.MathUtils.radToDeg(rad) * 10) / 10;
         instanceHandle.rotation = {
-          x: Math.round(THREE.MathUtils.radToDeg(angles.x)),
-          y: Math.round(THREE.MathUtils.radToDeg(angles.y)),
-          z: Math.round(THREE.MathUtils.radToDeg(angles.z)),
+          x: tenths(angles.x),
+          y: tenths(angles.y),
+          z: tenths(angles.z),
         };
       }
     }
@@ -1685,7 +1669,6 @@ class Controls {
 
       this.groupedInstances = new THREE.Group();
       this.boundingBoxMesh = new THREE.Mesh(boundingBoxGeometry, boundingBoxMaterial);
-      this.boundingBoxMesh.add(boundingBoxEdges); // Adding bounding box edges to bounding box mesh
 
       SceneManager.add(this.groupedInstances, this.boundingBoxMesh);
 
@@ -1693,8 +1676,8 @@ class Controls {
         this.groupedInstances.add(i._3DModel._dummy);
       });
 
-      // Each renderer reports the space it occupies: a head is a nominal cube,
-      // a bar is its actual body. A fixed half-metre around the origin drew a
+      // Each renderer reports the space it occupies: a light its body at rest,
+      // a bar its actual body. A fixed half-metre around the origin drew a
       // box far smaller than a metre-long bar, and made the already-framed test
       // in setFocus() ask about the wrong volume.
       this.boundingBox.makeEmpty();
@@ -1709,6 +1692,15 @@ class Controls {
         this.boundingBox.expandByPoint(boundsFallback.clone().subScalar(FALLBACK_HALF_EXTENT));
         this.boundingBox.expandByPoint(boundsFallback.clone().addScalar(FALLBACK_HALF_EXTENT));
       });
+      // Nothing reported any space: an empty box would centre the group at
+      // NaN and take every selected item with it.
+      if (this.boundingBox.isEmpty()) {
+        this.pooledInstances.forEach((i) => {
+          boundsFallback.set(i.position.x, i.position.y, i.position.z);
+          this.boundingBox.expandByPoint(boundsFallback.clone().subScalar(FALLBACK_HALF_EXTENT));
+          this.boundingBox.expandByPoint(boundsFallback.clone().addScalar(FALLBACK_HALF_EXTENT));
+        });
+      }
 
       const bbW = (this.boundingBox.max.x - this.boundingBox.min.x);
       const bbH = (this.boundingBox.max.y - this.boundingBox.min.y);

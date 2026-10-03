@@ -101,18 +101,21 @@ export const DEFAULT_DISPLAY_PARAMS = {
    */
   nits: 600,
   /**
-   * How big the lit part of each pixel is, in metres.
+   * How wide the lit part of each pixel is, as a fraction of the pitch -- 0 to
+   * 1, linear, not an area.
    *
-   * The same quantity the LED bar creator calls emitter size, and asked the
-   * same way -- a number off a data sheet rather than a ratio to work out. A
-   * real panel is mostly dark ground: a 1.5 mm emitter in a 2.6 mm cell is a
-   * typical fine-pitch wall, and drawing pixels edge to edge is why a naive LED
-   * wall looks like plastic sheet.
+   * A ratio rather than millimetres so that it survives resizing: an emitter
+   * given in millimetres stays that size when the panel grows, and a 0.6 mm
+   * emitter left in a 10 mm pitch is a wall that is 99.7% dark ground. A real
+   * panel is mostly dark ground all the same -- a 1.5 mm emitter in a 2.6 mm
+   * cell is a typical fine-pitch wall, and drawing pixels edge to edge is why a
+   * naive LED wall looks like plastic sheet.
    *
-   * At or above the pitch the pixels meet and the grid disappears, which is
-   * right for an LCD.
+   * `null` means the emitter a panel of this pitch is most likely built with;
+   * see {@link likelyEmitter}. At 1 the pixels meet and the grid disappears,
+   * which is right for an LCD.
    */
-  pixelSize: 0.0006,
+  emitterFill: null,
   /**
    * How far the panel bends, in degrees: 0 flat, positive convex, negative
    * concave.
@@ -180,6 +183,173 @@ export function pixelAspect(params) {
 }
 
 /**
+ * Millimetres per pixel across the panel -- the number a video wall is sold by.
+ *
+ * @public
+ * @param {Object} params display parameters
+ * @returns {Number}
+ */
+export function pixelPitch(params) {
+  const wide = Number(params.pixelsWide) || DEFAULT_DISPLAY_PARAMS.pixelsWide;
+  const width = Number(params.width) || DEFAULT_DISPLAY_PARAMS.width;
+  return wide > 0 ? (width * 1000) / wide : 0;
+}
+
+/**
+ * Millimetres per pixel on each axis.
+ *
+ * The two differ whenever the panel's shape and its pixel grid disagree, and
+ * then the cells are oblongs: a square emitter has to fit the narrow side and
+ * leaves the most dark ground along the long one.
+ *
+ * @public
+ * @param {Object} params display parameters
+ * @returns {Object} `{ x, y, finer, coarser }`
+ */
+export function cellPitch(params) {
+  const high = Number(params.pixelsHigh) || DEFAULT_DISPLAY_PARAMS.pixelsHigh;
+  const height = Number(params.height) || DEFAULT_DISPLAY_PARAMS.height;
+  const x = pixelPitch(params);
+  const y = high > 0 ? (height * 1000) / high : 0;
+  return {
+    x, y, finer: Math.min(x, y), coarser: Math.max(x, y),
+  };
+}
+
+/**
+ * The pitch in words: one number for square cells, both when they are not.
+ *
+ * @public
+ * @param {Object} params display parameters
+ * @returns {String} e.g. `10.42 mm` or `10.42 × 11.11 mm`
+ */
+export function pitchText(params) {
+  const { x, y } = cellPitch(params);
+  return x.toFixed(2) === y.toFixed(2) ? `${x.toFixed(2)} mm` : `${x.toFixed(2)} × ${y.toFixed(2)} mm`;
+}
+
+/**
+ * The LED packages video walls are built with, each at the pitch it is
+ * typically used for.
+ *
+ * `size` is the package's side in millimetres, which is what its name says:
+ * an SMD 2121 is 2.1 mm square. Real walls pair them this way because the
+ * package is chosen for the pitch -- nobody puts a 3535 in a 2.5 mm cell or a
+ * 0808 in a 10 mm one.
+ *
+ * @constant {Array}
+ */
+export const EMITTER_PACKAGES = [
+  { name: 'SMD 0808', size: 0.8, pitch: 1.2 },
+  { name: 'SMD 1010', size: 1.0, pitch: 1.5 },
+  { name: 'SMD 1515', size: 1.5, pitch: 2.5 },
+  { name: 'SMD 2121', size: 2.1, pitch: 3.9 },
+  { name: 'SMD 2727', size: 2.7, pitch: 5 },
+  { name: 'SMD 3535', size: 3.5, pitch: 8 },
+  { name: 'SMD 5050', size: 5.0, pitch: 16 },
+];
+
+/**
+ * Below this pitch, in millimetres, a panel is taken to be an LCD or OLED:
+ * finer than any LED package, and a screen whose pixels meet.
+ *
+ * @constant {Number}
+ */
+export const LCD_PITCH = 0.8;
+
+/**
+ * An emitter narrower than this fraction of the pitch is not something panels
+ * are built with. Real walls run from about a third to a half.
+ *
+ * @constant {Number}
+ */
+export const UNUSUAL_EMITTER_FILL = 0.25;
+
+/**
+ * The emitter a panel of this pitch is most likely built with.
+ *
+ * The nearest package by ratio rather than by difference, because pitches are
+ * spaced geometrically: 10 mm is nearer 8 than 16 in the way that matters.
+ *
+ * @public
+ * @param {Number} pitch millimetres
+ * @returns {Object} `{ name, size, fill }` -- size in millimetres, fill 0-1
+ */
+export function likelyEmitter(pitch) {
+  if (!(pitch >= LCD_PITCH)) return { name: 'LCD', size: pitch, fill: 1 };
+  let best = EMITTER_PACKAGES[0];
+  EMITTER_PACKAGES.forEach((pkg) => {
+    if (Math.abs(Math.log(pitch / pkg.pitch)) < Math.abs(Math.log(pitch / best.pitch))) best = pkg;
+  });
+  return { name: best.name, size: best.size, fill: Math.min(best.size / pitch, 1) };
+}
+
+/**
+ * How wide the lit part of each pixel is, in metres.
+ *
+ * Read from the fraction when a profile has one, from millimetres when it was
+ * saved that way, and from the likely package when it says neither.
+ *
+ * @public
+ * @param {Object} params display parameters
+ * @returns {Number}
+ */
+export function emitterSize(params) {
+  const pitch = cellPitch(params).finer / 1000;
+  if (typeof params.emitterFill === 'number') return Math.max(params.emitterFill, 0) * pitch;
+  if (Number(params.pixelSize) > 0) return Number(params.pixelSize);
+  if (typeof params.pixelFill === 'number') return Math.max(params.pixelFill, 0) * pitch;
+  return likelyEmitter(pitch * 1000).fill * pitch;
+}
+
+/**
+ * The emitter's width as a fraction of the finer pitch, 0-1: the number the
+ * creator asks for.
+ *
+ * The finer pitch because that is the side the emitter has to fit: at 100% a
+ * square emitter fills the narrow side of an oblong cell, and no more.
+ *
+ * @public
+ * @param {Object} params display parameters
+ * @returns {Number}
+ */
+export function emitterFill(params) {
+  const pitch = cellPitch(params).finer / 1000;
+  return pitch > 0 ? Math.min(emitterSize(params) / pitch, 1) : 1;
+}
+
+/**
+ * Why a panel's emitter is not one anybody builds with, or `null` when it is.
+ *
+ * Judged on the coarser pitch, the axis with the most dark ground: an
+ * emitter that fits the narrow side of an oblong cell can still be a speck
+ * along the long one.
+ *
+ * @public
+ * @param {Object} params display parameters
+ * @returns {String|null}
+ */
+export function unusualEmitter(params) {
+  const pitch = cellPitch(params);
+  const fill = pitch.coarser > 0 ? (emitterSize(params) * 1000) / pitch.coarser : 1;
+  if (fill >= UNUSUAL_EMITTER_FILL) return null;
+  const likely = likelyEmitter(pitch.finer);
+  const typical = Math.min(likely.size / pitch.coarser, 1);
+  // Cells so oblong that even the package the narrow side calls for is a
+  // speck along the long one: no emitter choice fixes that, the shape does.
+  if (typical < UNUSUAL_EMITTER_FILL) {
+    return `Unusual panel: each pixel is ${pitch.x.toFixed(1)} × ${pitch.y.toFixed(1)} mm, so an`
+      + ` emitter that fits the narrow side lights only ${Math.round(fill * 100)}% of the long one.`
+      + ' The panel\'s shape and its pixel grid disagree.';
+  }
+  let axis = '';
+  if (pitch.x !== pitch.y) axis = pitch.x > pitch.y ? ' horizontal' : ' vertical';
+  return `Unusual panel: the emitter is only ${Math.round(fill * 100)}% of the`
+    + ` ${pitch.coarser.toFixed(1)} mm${axis} pitch. LED walls at this pitch use about`
+    + ` ${Math.round(typical * 100)}% (${likely.name}).`;
+}
+
+/**
  * How much of each cell lights up, per axis, 0-1.
  *
  * Per axis rather than one number because the cells are only square when the
@@ -196,12 +366,13 @@ export function pixelFill(params) {
   const high = Number(params.pixelsHigh) || DEFAULT_DISPLAY_PARAMS.pixelsHigh;
   const width = Number(params.width) || DEFAULT_DISPLAY_PARAMS.width;
   const height = Number(params.height) || DEFAULT_DISPLAY_PARAMS.height;
-  // A profile without a pixel size carries the ratio directly.
-  if (params.pixelSize === undefined && typeof params.pixelFill === 'number') {
+  // A profile carrying only the old ratio drew it on both axes alike.
+  if (params.emitterFill == null && params.pixelSize === undefined
+    && typeof params.pixelFill === 'number') {
     const legacy = Math.min(Math.max(params.pixelFill, 0), 1);
     return { x: legacy, y: legacy };
   }
-  const size = Number(params.pixelSize) || DEFAULT_DISPLAY_PARAMS.pixelSize;
+  const size = emitterSize(params);
   return {
     x: Math.min(size / (width / wide), 1),
     y: Math.min(size / (height / high), 1),
@@ -243,19 +414,6 @@ export function displayCurve(params, outerWidth) {
 }
 
 /**
- * Millimetres per pixel across the panel -- the number a video wall is sold by.
- *
- * @public
- * @param {Object} params display parameters
- * @returns {Number}
- */
-export function pixelPitch(params) {
-  const wide = Number(params.pixelsWide) || DEFAULT_DISPLAY_PARAMS.pixelsWide;
-  const width = Number(params.width) || DEFAULT_DISPLAY_PARAMS.width;
-  return wide > 0 ? (width * 1000) / wide : 0;
-}
-
-/**
  * The channels this display declares, in OFL's vocabulary.
  *
  * @public
@@ -290,6 +448,9 @@ export function isDisplayProfile(profile) {
  */
 export function buildDisplayProfile(overrides = {}) {
   const params = { ...DEFAULT_DISPLAY_PARAMS, ...overrides };
+  // Stored resolved, so a definition keeps the emitter it was made with even
+  // if the package table changes.
+  if (params.emitterFill == null) params.emitterFill = emitterFill(params);
   const { availableChannels, modes } = displayChannels(params);
   const bezel = Number(params.bezel) || 0;
 
@@ -327,6 +488,15 @@ export default {
   panelAspect,
   pixelAspect,
   pixelPitch,
+  cellPitch,
+  pitchText,
   pixelFill,
+  EMITTER_PACKAGES,
+  LCD_PITCH,
+  UNUSUAL_EMITTER_FILL,
+  likelyEmitter,
+  emitterSize,
+  emitterFill,
+  unusualEmitter,
   displayCurve,
 };

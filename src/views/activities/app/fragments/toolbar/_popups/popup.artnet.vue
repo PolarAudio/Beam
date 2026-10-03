@@ -37,6 +37,34 @@
           @input="setInput"
         />
       </uk-flex>
+
+      <uk-flex
+        :gap="8"
+        col
+        class="title"
+      >
+        <h3>Addresses</h3>
+        <p class="subtitle">
+          How DMX addresses are written in Beam. Match the system you read them
+          beside. Universes count from 0, as Beam counts them.
+        </p>
+      </uk-flex>
+
+      <uk-flex center-h>
+        <div>
+          <h4>Notation:</h4>
+          <p class="subtitle">
+            Universe 2, channel 37 reads {{ example }}.
+          </p>
+        </div>
+        <uk-spacer />
+        <uk-select-input
+          :model-value="formatIndex"
+          style="width: 200px"
+          :options="formatLabels"
+          @input="setFormat"
+        />
+      </uk-flex>
     </uk-flex>
   </uk-popup>
 </template>
@@ -44,6 +72,9 @@
 <script>
 import PopupMixin from '@/views/mixins/popup.mixin';
 import artnetConnection from '@/plugins/artnet.connection';
+import {
+  ADDRESS_FORMATS, addressFormat, setAddressFormat, formatAddress,
+} from '@/models/DMX/address_format';
 
 export default {
   name: 'ArtnetPopup',
@@ -54,6 +85,7 @@ export default {
   data() {
     return {
       headerData: { title: 'Art-Net settings' },
+      formatLabels: ADDRESS_FORMATS.map((f) => f.label),
     };
   },
   computed: {
@@ -63,8 +95,19 @@ export default {
     inputEnabled() {
       return artnetConnection.inputEnabled;
     },
+    formatIndex() {
+      return Math.max(ADDRESS_FORMATS.findIndex((f) => f.id === addressFormat()), 0);
+    },
+    /** Universe 2, channel 37, in the chosen notation. */
+    example() {
+      return formatAddress(2 * 512 + 36);
+    },
   },
   methods: {
+    setFormat(index) {
+      const chosen = ADDRESS_FORMATS[index];
+      if (chosen) setAddressFormat(chosen.id);
+    },
     setInput(index) {
       if (index) {
         artnetConnection.enableInput();

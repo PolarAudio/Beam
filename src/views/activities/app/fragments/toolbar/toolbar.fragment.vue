@@ -15,19 +15,20 @@
     <newshow-popup v-model="newProjectPopupState" />
     <artnet-popup v-model="artnetPopupState" />
     <video-popup v-model="videoPopupState" />
-    <madmapper-popup v-model="madmapperPopupState" />
   </uk-flex>
 </template>
 
 <script>
 import EventBus from '@/plugins/eventbus';
+import confirm from '@/plugins/confirm';
+import Preferences from '@/plugins/visualizer/preferences';
+import importGdtfFiles from '@/plugins/gdtf_import';
 import VisualizerPopup from './_popups/popup.visualizer.vue';
 import LicensePopup from './_popups/popup.license.vue';
 import CreditsPopup from './_popups/popup.credits.vue';
 import NewshowPopup from './_popups/popup.newshow.vue';
 import ArtnetPopup from './_popups/popup.artnet.vue';
 import VideoPopup from './_popups/popup.video.vue';
-import MadmapperPopup from './_popups/popup.madmapper.vue';
 
 export default {
   name: 'ToolbarFragment',
@@ -41,7 +42,6 @@ export default {
     CreditsPopup,
     NewshowPopup,
     ArtnetPopup,
-    MadmapperPopup,
     VideoPopup,
   },
   data() {
@@ -60,10 +60,6 @@ export default {
        */
       artnetPopupState: false,
       videoPopupState: false,
-      /**
-       * MadMapper layout export popup state
-       */
-      madmapperPopupState: false,
       /**
        * New project popup state
        */
@@ -115,6 +111,13 @@ export default {
               },
             },
             {
+              name: 'Import GDTF...',
+              icon: 'folder',
+              callback: () => {
+                this.importGdtf();
+              },
+            },
+            {
               name: 'Save Project',
               shortcut: 'Ctrl+S',
               icon: 'save',
@@ -131,10 +134,10 @@ export default {
               },
             },
             {
-              name: 'Export MadMapper Layout',
-              icon: 'export',
+              name: 'Refresh from Library',
+              icon: 'folder',
               callback: () => {
-                this.madmapperPopupState = true;
+                this.refreshFromLibrary();
               },
             },
           ],
@@ -187,6 +190,13 @@ export default {
               icon: 'visualizer',
               callback: () => {
                 this.videoPopupState = true;
+              },
+            },
+            {
+              name: 'Reset to defaults',
+              icon: 'undo',
+              callback: () => {
+                this.resetToDefaults();
               },
             },
           ],
@@ -267,8 +277,75 @@ export default {
     EventBus.on('app_ready', () => {
       this.project = this.$show.documentTitle;
     });
+    // The debug panel's button, so both ask the same question.
+    EventBus.on('reset_defaults', () => this.resetToDefaults());
+    // Files dropped anywhere on the window. A .gdtf is imported; anything
+    // else is refused here, because the default for a dropped file is to
+    // navigate to it, which would replace the app and lose the show.
+    window.addEventListener('dragover', this.onFileDragOver);
+    window.addEventListener('drop', this.onFileDrop);
+  },
+  beforeUnmount() {
+    window.removeEventListener('dragover', this.onFileDragOver);
+    window.removeEventListener('drop', this.onFileDrop);
   },
   methods: {
+    /**
+     * Resets every preference and debug value to its default, after asking,
+     * and reloads so each module starts from its own constants.
+     *
+     * @public
+     * @async
+     */
+    async importGdtf() {
+      if (!window.library || !window.library.pickGdtf) return;
+      await importGdtfFiles(await window.library.pickGdtf(), this.$show);
+    },
+    /**
+     * Allows a file drop. Lists reorder by dragging too, but those drags
+     * carry no files and are left alone.
+     *
+     * @public
+     * @param {DragEvent} event
+     */
+    onFileDragOver(event) {
+      if (![...(event.dataTransfer?.types || [])].includes('Files')) return;
+      event.preventDefault();
+      // eslint-disable-next-line no-param-reassign
+      event.dataTransfer.dropEffect = 'copy';
+    },
+    /**
+     * Imports dropped .gdtf files and ignores the rest.
+     *
+     * @public
+     * @async
+     * @param {DragEvent} event
+     */
+    async onFileDrop(event) {
+      const files = [...(event.dataTransfer?.files || [])];
+      if (!files.length) return;
+      event.preventDefault();
+      const gdtf = files.filter((file) => file.name.toLowerCase().endsWith('.gdtf'));
+      if (gdtf.length < files.length) {
+        EventBus.emit('app_error', new Error('Only .gdtf fixture files can be dropped on Beam.'));
+      }
+      if (!gdtf.length || !window.library || !window.library.pathForFile) return;
+      await importGdtfFiles(gdtf.map((file) => window.library.pathForFile(file)), this.$show);
+    },
+    async resetToDefaults() {
+      const go = await confirm({
+        title: 'Reset to defaults',
+        message: 'Reset all preferences and debug values to their defaults?',
+        detail: this.$show.isSaved
+          ? 'Beam reloads.'
+          : 'Beam reloads. This show has unsaved changes: save it first or they may be lost.',
+        yes: 'Reset',
+        no: 'Cancel',
+      });
+      if (!go) return;
+      await Preferences.reset();
+      window.location.reload();
+    },
     /**
      * Load showfile from native file loader
      *
@@ -330,6 +407,42 @@ export default {
      */
     async exportShow() {
       await this.$show.exportDocument();
+    },
+    /**
+     * Replaces the profiles and objects an exported project carries with the
+     * library's, after asking: the show reloads, and is unsaved afterwards.
+     *
+     * @public
+     * @async
+     */
+    async refreshFromLibrary() {
+      const notice = (message, detail = '') => confirm({
+        title: 'Refresh from Library', message, detail, yes: 'OK', no: 'Close',
+      });
+      if (!this.$show.documentPath) {
+        await notice('This project has not been saved, so it carries nothing to refresh.');
+        return;
+      }
+      const go = await confirm({
+        title: 'Refresh from Library',
+        message: 'Replace the fixture profiles and objects this project carries with the ones in your library?',
+        detail: 'The show reloads with the library copies. Save to keep them in the file; '
+          + 'close without saving to keep the old ones.',
+        yes: 'Refresh',
+        no: 'Cancel',
+      });
+      if (!go) return;
+      const { carried, refreshed, kept } = await this.$show.refreshFromLibrary();
+      const onlyHere = kept.length
+        ? `Not in your library, so kept as carried: ${kept.join(', ')}`
+        : '';
+      if (!carried) {
+        await notice('This project carries no copies of its own. It already uses your library.');
+      } else if (!refreshed.length) {
+        await notice('Everything this project carries already matches your library.', onlyHere);
+      } else if (onlyHere) {
+        await notice(`Refreshed ${refreshed.length} item(s): ${refreshed.join(', ')}`, onlyHere);
+      }
     },
     /**
      * Display visualizer popup

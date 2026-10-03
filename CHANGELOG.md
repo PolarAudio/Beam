@@ -1,5 +1,236 @@
 # Changelog
 
+## 0.1.0-alpha.18
+
+### GDTF fixtures
+
+- Beam reads GDTF fixture files. **File → Import GDTF...** or dropping a .gdtf on the window copies it into `Library/Profiles/<manufacturer>/`, unchanged. A GDTF fixture replaces the OFL entry of the same name in Add to Show. Exports carry the file as it is.
+- OFL profiles are translated to GDTF internally, so both kinds drive moving heads through the same DMX engine. 16-bit channels are read in full, and mode masters are honoured.
+- Moving heads are built from the file's own meshes when it has them: base, yoke and head, placed where the file puts them. A file without meshes gets the shipped body at the file's height. GDTF primitives (base, yoke, head, conventional, scanner) are drawn as shapes of the model's size.
+- Gobos use the file's own wheel images. Colour wheel slots use the filter's colour and transmission from the file.
+- Speeds between named points (such as a gobo rotation that names its fast and slow ends) follow the line between those points.
+- Pan/tilt speed overrides are removed; GDTF heads take their speed from the file.
+- The range guide covers GDTF fixtures and shows each gobo slot's own image.
+
+### Static lights
+
+- A GDTF fixture that neither pans nor tilts is a static light: a par, a wash, a bar, a blinder. It is listed as **Static** and drawn standing still.
+- A light with several lenses gives each lens its own beam and its share of the output. A mode that addresses the lenses separately lights each one on its own.
+- A beam the file types None or Glow lights its face without throwing a beam into the haze.
+- A lens face is drawn in the shape and size the file gives it: a rectangle for a box-shaped lens, a disc for a round one. It sits on the outside of the lens, where the light leaves.
+- A light whose mode has colour channels but no dimmer runs at full, its colour channels the only control.
+- A light with red, green and blue at zero is dark. It showed white.
+
+### Brightness
+
+- Moving head brightness follows from the fixture's lumens, with no gains set by eye. Zoom, frost and focus keep the total output.
+- Beams in haze are computed from the haze's scattering along the ray. 100% haze is 10 m visibility.
+- The light leaves at the lens. A thin fixture no longer lights its own back or shows its beam through its body.
+
+### GDTF Share
+
+- Searching in Add to Show lists your library first, then the fixtures on GDTF Share that your library does not have. Picking one fills the form from the Share; **download and add** downloads, imports and places it.
+- Log in, refresh and log out from the panel beside the form. The account is stored encrypted by Windows and is never shown.
+- A fixture type already in the library is asked about: keep both (default), replace, or skip. Saved shows keep the revision they were built with.
+- **Newer on GDTF Share** marks a library file with a newer revision available.
+
+### Add to Show
+
+- Double-clicking an item in the item list opens Add to Show on its library entry: a fixture in its mode, an object, or a structure.
+- Any library fixture or Share fixture can be marked as a favourite or as bad, with the heart and thumbs-down buttons in the panel above the form.
+- The bad and favourite filters on the search line each have three states: all, only marked, not marked.
+- The funnel button filters by type (moving head, static, matrix, LED bar, laser, strobe, projector) and by origin (GDTF, OFL, Generic), with counts.
+- Every fixture row shows its origin in a column: GDTF, OFL or Generic.
+- Removing a GDTF file from the library moves it to `Library/Removed/Profiles` instead of deleting it. Shows that use it still open. Importing it again lists it again. Replacing a file on import moves the old one there too.
+- New icons for static lights, lasers and strobes. A fixture shows the same icon in the item list, the fixture panel and Add to Show.
+
+### Selection
+
+- A selected fixture is drawn as it is, with an orange outline. The white tint and the corner brackets are gone.
+- The move and rotate gizmo is drawn on top of the picture, unaffected by light, haze and bloom, and is left out of recordings.
+
+### Fixture panel
+
+- Values a GDTF file left at the format's defaults are left out, when most of a beam's values are defaults.
+- Selecting a light whose file gives it nothing to draw no longer breaks the scene.
+
+### Fixes
+
+- A dimmer change while the shutter was closed no longer lights the head for one frame.
+- Changing mode resets the head's optics; a gobo or shake from the previous mode no longer stays in.
+- Patching in a mode other than the first no longer patches the first mode.
+
+## 0.1.0-alpha.17
+
+### Brightness
+
+- Recalibrated by eye at 50% haze: beam gain 0.5 (was 0.085), facing brightness 37% (was 11%), pool falloff 1.55 (was 2). Pool gain stays 0.01. At alpha.16's values, beams from low-output heads such as the Tomshine 80W were nearly invisible.
+- The beam gain slider under **Debug → Mover beam** goes up to 2.
+- Haze defaults: turbulence 33% (was 70%), scale 10 m (was 4 m). Density stays 50%.
+
+### Preferences
+
+- **Preferences → Reset to defaults** clears every stored preference and debug tuning value and reloads Beam. It asks first, and warns when the show has unsaved changes. The debug panel has the same button at the top.
+
+## 0.1.0-alpha.16
+
+### Brightness
+
+- Pools from moving heads and strobes are on the projector's lux scale and fall off with the square of the distance. They fell off linearly before, which made long throws too bright.
+- Calibration set by eye: pool gain 0.01, beam gain 0.085, facing brightness 11%. The values are under **Debug → Mover beam** for checking and are not stored.
+- Bloom: lower strength (0.7–2.1 with haze), narrower spread (0.3–0.5) and a higher threshold (0.6–0.4). Bright pools no longer fill the dark between a gobo's bars or veil the frame.
+
+### Beams
+
+- Samples along a beam are spaced by the light, close together near the lens and further apart far out. A ray running down a beam no longer shows a bright curved sheet that jumps as the view moves.
+- A side-on beam past the knee fades as 1/distance, so long throws stay visible to the floor.
+- Gobos in the air are averaged along the ray and stay sharp across it, using anisotropic filtering. Gobo sheets in haze show as sheets instead of being blurred into their neighbours. Distance blur is a quarter of what it was.
+
+### Fixture panel
+
+- **Model** shows make, model, lumens and power for every fixture. For a moving head the lumens are the figure it is lit from, and an estimate from the power says so.
+- **Specifications** (collapsed) lists lamp, colour temperature, zoom range, weight, size, connector, categories and modes, and for a moving head the peak candela at the narrowest and widest zoom.
+
+### Manual
+
+- Moving head beams: pools and specifications.
+
+## 0.1.0-alpha.15
+
+### Patch bay
+
+- The **Patch Bay** title is gone. **export** joins structure and arrange as a button that acts on the selection, and **add** is a plain plus at the end of the row.
+- Rows can be dragged into a new order, and a line shows where they will land. Dragging a selected row moves the whole selection in its current order. The order is saved with the show.
+- A group member dropped between rows leaves its group.
+- Band selection: press in the margin beside or below the rows and drag. Ctrl or Shift adds to the highlight. The list scrolls while the pointer is held past its edge.
+- Shift-click selects a range and Ctrl-click adds or removes one row.
+- Selected rows use a darker teal with white text.
+- Fixture rows show the address in the chosen notation, or **unpatched**.
+
+### Hiding items
+
+- Each row has a hide toggle. A hidden fixture, object, structure or group is not drawn, gives no light, casts nothing and cannot be picked in the 3D view. Its row is dimmed.
+- Hiding is saved with the show. DMX still arrives, so a hidden item shows its current state when it is shown again.
+- Using the toggle on one of several highlighted rows hides or shows all of them.
+- Hiding a structure or group hides its members. Members taken out of a hidden structure stay hidden.
+- Orbit pivot, framing and box select ignore hidden items.
+
+### Names
+
+- A fixture, object, structure or group has a name and a separate instance number. The number is the lowest one not already used by another item of the same kind with the same name.
+- The list shows the number only when another item of that kind has the same name. Exports always use the name with its number.
+- Renaming gives the item the lowest free number under its new name. Renaming `Truss 3` to `Stage` makes `Stage 1`.
+- Shows saved before this change have their numbers split from their names where the name is the profile's name followed by a number.
+
+### Addresses
+
+- **Art-Net settings → Addresses** sets how addresses are written: **Universe.Channel (2.37)**, **Universe:Channel (2:37)** or **Absolute (1061)**. Universes count from 0. The default is Universe.Channel.
+
+### Fixture panel
+
+- Selecting several fixtures of the same profile opens one settings panel for all of them. A field whose values differ shows `*`, and anything set is written to every fixture. Name and address are still set one fixture at a time.
+- Checkboxes show a dash when the selected fixtures differ.
+- **Copy** with several fixtures selected copies each fixture's channel sheet, with its name.
+- The channel table has a **#** column (the fixture's own channel number). Long names and range text are cut off with the full text in a tooltip. The panel is 340 px wide.
+- A channel without a device control shows the name of the range its value is in, taken from the profile.
+- Channel range guide: while a DMX value changes, the channel's ranges are shown beside it as cards. Colour slots show their colours, a slot between two colours shows both, and gobo slots show the gobo image the beam draws.
+- Clicking the value keeps the guide open. Click a slot to set it, or press and slide on a range. Dragging, the scroll wheel and the arrow keys step through ranges and slots, and every range gets enough travel to land on. **Visualizer settings → Channel range guide** turns it off.
+- The quick guide describes pan/tilt speed and frost ranges. Beam now draws them, so they are no longer marked as not drawn.
+
+### Arrange
+
+- **Positions: Replace / Add**. Add offsets each item from where it stands, with the offsets centred so the set does not drift. Use it to stack layouts: a circle then a vertical line gives a helix. Add turns on **Keep heading**.
+- The panel opens on the order of the last Apply and warns when an Add pass uses a different one.
+- Circle: **End radius**. Setting it different from **Radius** makes a spiral: the radius steps per fixture and the last fixture lands on the end radius. It follows Radius while the two are equal.
+
+### Moving heads
+
+- Brightness comes from the profile's lumens over its stated beam angle. `bulb.lumens` is used if it works out to 5–150 lm/W against the stated power. Otherwise power × 22 lm/W is used, and without either the old 20,000 lm reference. Most heads are dimmer (median about 0.09×) and narrow-beam fixtures are brighter.
+- Zoom concentrates the light instead of keeping the same brightness: from 50° to 4° is about 150× brighter. The widest zoom is the reference.
+- A zoom channel runs from the lens's narrowest to its widest angle. Zoom stated in degrees is taken as degrees.
+- Frost: a frost channel, a frost slot on a wheel, or a frost effect (ramp up, ramp down, pulse, random). Full frost widens the beam by half, softens the edge fully and blurs the gobo until only its average light is left.
+- Pan/tilt speed channels work. A speed is a percent of the head's top speed, down to 2%. A duration is how long every move takes, from 0 to 30 s, with pan and tilt arriving together and never faster than the top speed.
+- A profile can mark its lens as focused by hand (`physical.lens.focus: "manual"`). Each placement then has a **Focus %** setting, default 50, saved with the show.
+- Tomshine 80W LED gobo moving head: 1750 lm (an estimate from its listed 2400 lux at 5 m), hand focus.
+
+### Objects
+
+- **import object** copies a GLB, OBJ, FBX or STL file into the object library, along with an OBJ's material library and textures. The dialog asks for **Units** (metres, centimetres, millimetres, inches, feet) and **Up axis**, and shows the model's size in metres. Files that could not be brought along are listed. Cancel removes the copy.
+- OBJ, FBX and STL files placed in the library by hand also load. OBJ and FBX materials are converted to the standard material, and a mesh with several materials keeps one per face group. An STL with no colours is grey. Morph targets are dropped.
+- New shape: **Tube**, with **Outer radius**, **Wall** and **Height**. Cylinders and tubes have an **Arc** angle from 1° to 360°. A partial arc is closed with end faces.
+- A library object has its own **Name** and **Scale** per placement. The model file is not changed.
+- Structures can hold objects as well as fixtures. Saved structures, placed structures and pasted structures keep their objects.
+- New shipped objects in `assorted`: a big and a small gravestone.
+
+### Display panels
+
+- **Pixel (mm)** is replaced by **Fill factor**: **Auto**, which picks the LED package usually used at this pitch, **Manual** (a percentage), or a package from SMD 0808 to SMD 5050. The fill is stored as a share of the pitch, so resizing a panel keeps the emitter in proportion.
+- Pitch is shown for both axes when the cells are not square.
+- A panel whose emitter is smaller than LED walls use gets an **Unusual** warning in the creator and in **Model**.
+- Small emitters are drawn brighter so the panel's average brightness matches its picture. A coarse-pitch wall of small emitters is no longer nearly black.
+- An emitter narrower than 2.5 screen pixels is drawn at that width with lower gain, instead of smearing into a bright line per row and column.
+
+### Projectors and haze
+
+- Projector shafts are sampled the way mover beams are: 8 fixed samples along each projector's lit stretch, with no dither grain. A shaft starts at the lens, brightens as it faces the camera (**Mover beam → facing brightness %**), and has a harder frame edge.
+- The room's haze uses blue noise that changes every frame instead of a 4×4 pattern, which showed as a fine grid on dark air. The haze turns with the beams' heading sweep instead of sliding along one axis.
+
+### Export
+
+- **File → Export MadMapper Layout** moved to the patch bay **export** button, which opens **Export selection** with an **Application** choice (MadMapper). It exports the selected fixtures, and structures and groups with their members. Hidden items are included.
+- A single exported item names the file. The save dialog asks every time.
+
+### Projects
+
+- Saving an opened export writes only the profiles and objects the show uses. Items added since are collected from the library.
+- **File → Refresh from Library** replaces the profiles and objects an exported project carries with the library's copies. The show reloads and is left unsaved. Items the library does not have keep their carried copy.
+
+### Studio
+
+- Fly time is saved with the show.
+- Cutting or flying to the live camera returns the view to that camera's framing.
+- Frame size, frame rate, quality and desktop audio are remembered between sessions.
+- A 4K take at 30 fps encodes every frame. It managed 10 fps before.
+- 4K above 30 fps records with the hardware encoder.
+- When no hardware encoder takes the size and rate, the take falls back to software, and the recording widget says so for the whole take.
+- Frames waiting on the encoder are capped at 2 GB. Past that, frames are dropped instead of the WebGL context being lost.
+- A finished take reports frames recorded out of total, split into dropped (encoder behind) and held (scene too slow).
+
+### Performance
+
+- Beam asks for the discrete GPU. The Windows installer sets Beam's graphics preference to High performance and removes it on uninstall.
+- The debug overlay shows which graphics adapter is drawing.
+
+### Fixtures
+
+- BeamZ LCB144 MKII, 8 sections.
+- Shehds LED Flat Par 7x18W RGBWA+UV.
+
+### Interface
+
+- Dialogs are never taller than the window: the body scrolls and the header and buttons stay in place.
+- The display creator keeps every field in place when warnings and summaries change.
+- Scrollbars are full width.
+- Pressing Enter in a number field commits the value and leaves the field.
+- **Grid opacity** steps by 0.05.
+
+### Manual
+
+- New section: Arranging a selection. Moving head beams describes where brightness comes from.
+
+### Fixes
+
+- A strobe range that states no flash length no longer ramps the flash up to 1000 ms with the rate. The lamp went solid a third of the way up.
+- A mover's flash covering half a frame was drawn at a quarter brightness instead of half.
+- Raising a strobe rate takes effect from the last flash instead of waiting out the old gap.
+- A zoom at 0 was a beam of no width.
+- A low pool at a grazing angle on the floor is no longer cut into stair steps.
+- A rotation such as Y 100 no longer shows as X 180, Y 80, Z 180. Editing one of those fields turned the item somewhere else.
+- Rotation fields keep tenths of a degree. Typed decimals were rounded away.
+- A structure or group made from a selection no longer moves every member when the gizmo is first let go.
+- A number field could take the focus back on every click elsewhere after two quick presses.
+- The patch bay buttons dropped to icons as soon as the column was narrowed, even with room left.
+
 ## 0.1.0-alpha.14
 
 ### Gobos

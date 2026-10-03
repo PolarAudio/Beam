@@ -136,6 +136,40 @@ function readableSize(bytes) {
   return `${(mb / 1024).toFixed(2)} GB`;
 }
 
+/**
+ * Share of missing frames past which a finished take is flagged. A take
+ * usually loses one frame as the encoder starts, which is not worth a warning.
+ *
+ * @constant {Number}
+ */
+const MISSING_FRAMES_WARNING = 0.01;
+
+/**
+ * What the widget says about a finished take.
+ *
+ * The file always has every slot of its frame grid; a missing frame is one
+ * where the frame before stands in, which plays as a stutter. So the count is
+ * said, and why: an encoder that fell behind and a scene that did not render
+ * in time call for different fixes -- a smaller size or rate for the first, a
+ * lighter scene for the second.
+ *
+ * @param {Object} result what `Recording.stop` returned
+ * @returns {Object} `{ text, error }`
+ */
+function savedMessage(result) {
+  const saved = `Saved ${readableSize(result.bytes)}`;
+  const frames = result.frames || {};
+  const missing = (frames.dropped || 0) + (frames.held || 0);
+  if (!missing || !frames.slots) return { text: saved, error: false };
+  const reasons = [];
+  if (frames.dropped) reasons.push(`${frames.dropped} dropped, the encoder fell behind`);
+  if (frames.held) reasons.push(`${frames.held} held, the scene did not render in time`);
+  return {
+    text: `${saved}. ${frames.slots - missing} of ${frames.slots} frames recorded: ${reasons.join('; ')}`,
+    error: missing / frames.slots > MISSING_FRAMES_WARNING,
+  };
+}
+
 export default {
   name: 'StudioRecordingWidget',
   compatConfig: { MODE: 3 },
@@ -351,7 +385,10 @@ export default {
       // Audio can fail on its own without failing the take -- the picture is
       // still worth having -- so say so rather than leaving a silent file to be
       // discovered later.
-      if (started.note) this.message = { text: started.note, error: false };
+      // Kept beside the size for the whole take: it is about the file being
+      // made, and a note replaced by the size half a second later is not read.
+      const { note } = started;
+      if (note) this.message = { text: note, error: false };
 
       this.take = take;
       Studio.state.recording = true;
@@ -361,7 +398,10 @@ export default {
       this.tickHandle = setInterval(() => {
         this.elapsed = take.elapsed;
         this.bytes = take.bytes;
-        this.message = { text: readableSize(take.bytes), error: false };
+        this.message = {
+          text: note ? `${readableSize(take.bytes)} · ${note}` : readableSize(take.bytes),
+          error: false,
+        };
         // An encoder that fails mid-take must not leave the button lit forever.
         if (take.error) this.stop();
       }, 500);
@@ -399,7 +439,7 @@ export default {
         return;
       }
       this.finishedPath = result.path;
-      this.message = { text: `Saved ${readableSize(result.bytes)}`, error: false };
+      this.message = savedMessage(result);
     },
     /**
      * Opens the last finished take in Explorer.

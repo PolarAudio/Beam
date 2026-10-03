@@ -1,0 +1,230 @@
+{
+  "$schema": "https://raw.githubusercontent.com/OpenLightingProject/open-fixture-library/master/schemas/fixture.json",
+  "name": "LCB144 MKII",
+  "shortName": "LCB144MK2",
+  "categories": ["Pixel Bar", "Color Changer"],
+  "meta": {
+    "authors": ["Paul"],
+    "createDate": "2026-09-25",
+    "lastModifyDate": "2026-09-25"
+  },
+  "comment": "Ref. 150.706. 144 RGB LEDs in 8 sections of 18. Channel tables from manual V1.2.",
+  "links": {
+    "manual": [
+      "https://www.beamzlighting.com/wp-content/uploads/2026/03/150.706-LCB144-MKII-LED-Colour-Bar_manual_V1.2.pdf"
+    ],
+    "productPage": [
+      "https://www.beamzlighting.com/product/lcb144-mkii-led-colour-bar/"
+    ]
+  },
+  "physical": {
+    "dimensions": [1080, 100, 100],
+    "weight": 1.45,
+    "DMXconnector": "3-pin",
+    "bulb": {
+      "type": "144x SMD 3-in-1 RGB LEDs"
+    },
+    "matrixPixels": {
+      "dimensions": [135, 100, 100],
+      "spacing": [0, 0, 0]
+    }
+  },
+  "matrix": {
+    "pixelCount": [8, 1, 1]
+  },
+  "availableChannels": {
+    "Red": {
+      "capability": {
+        "type": "ColorIntensity",
+        "color": "Red"
+      }
+    },
+    "Green": {
+      "capability": {
+        "type": "ColorIntensity",
+        "color": "Green"
+      }
+    },
+    "Blue": {
+      "capability": {
+        "type": "ColorIntensity",
+        "color": "Blue"
+      }
+    },
+    "Master Dimmer": {
+      "capability": {
+        "type": "Intensity"
+      }
+    },
+    "Strobe": {
+      "capability": {
+        "type": "ShutterStrobe",
+        "shutterEffect": "Strobe",
+        "speedStart": "1Hz",
+        "speedEnd": "24Hz",
+        "helpWanted": "The manual lists 0-255 as strobe speed only. Is there an open (no strobe) range at the bottom?"
+      }
+    },
+    "Chase": {
+      "capabilities": [
+        {
+          "dmxRange": [0, 25],
+          "type": "Effect",
+          "effectName": "Chase 1-8 cycle"
+        },
+        {
+          "dmxRange": [26, 51],
+          "type": "Effect",
+          "effectName": "Chase 1"
+        },
+        {
+          "dmxRange": [52, 77],
+          "type": "Effect",
+          "effectName": "Chase 2"
+        },
+        {
+          "dmxRange": [78, 103],
+          "type": "Effect",
+          "effectName": "Chase 3"
+        },
+        {
+          "dmxRange": [104, 129],
+          "type": "Effect",
+          "effectName": "Chase 4"
+        },
+        {
+          "dmxRange": [130, 155],
+          "type": "Effect",
+          "effectName": "Chase 5"
+        },
+        {
+          "dmxRange": [156, 181],
+          "type": "Effect",
+          "effectName": "Chase 6"
+        },
+        {
+          "dmxRange": [182, 207],
+          "type": "Effect",
+          "effectName": "Chase 7"
+        },
+        {
+          "dmxRange": [208, 233],
+          "type": "Effect",
+          "effectName": "Chase 8"
+        },
+        {
+          "dmxRange": [234, 255],
+          "type": "Effect",
+          "effectName": "Chase 9",
+          "comment": "Gradual colour change"
+        }
+      ]
+    },
+    "Mode": {
+      "capabilities": [
+        {
+          "dmxRange": [0, 0],
+          "type": "NoFunction",
+          "comment": "Dimmer mode (colour from the RGB channels)"
+        },
+        {
+          "dmxRange": [1, 13],
+          "type": "Effect",
+          "effectName": "Chase mode",
+          "comment": "Chase selected on the Chase channel"
+        },
+        {
+          "dmxRange": [14, 27],
+          "type": "Effect",
+          "effectName": "Sound mode A0",
+          "soundControlled": true,
+          "comment": "All A modes cycle"
+        },
+        {
+          "dmxRange": [28, 139],
+          "type": "Effect",
+          "effectName": "Sound mode A1-A8",
+          "soundControlled": true
+        },
+        {
+          "dmxRange": [140, 153],
+          "type": "Effect",
+          "effectName": "Sound mode B0",
+          "soundControlled": true,
+          "comment": "All B modes cycle"
+        },
+        {
+          "dmxRange": [154, 255],
+          "type": "Effect",
+          "effectName": "Sound mode B1-B8",
+          "soundControlled": true
+        }
+      ]
+    }
+  },
+  "templateChannels": {
+    "Red $pixelKey": {
+      "capability": {
+        "type": "ColorIntensity",
+        "color": "Red"
+      }
+    },
+    "Green $pixelKey": {
+      "capability": {
+        "type": "ColorIntensity",
+        "color": "Green"
+      }
+    },
+    "Blue $pixelKey": {
+      "capability": {
+        "type": "ColorIntensity",
+        "color": "Blue"
+      }
+    }
+  },
+  "modes": [
+    {
+      "name": "3-channel",
+      "shortName": "3ch",
+      "channels": ["Red", "Green", "Blue"]
+    },
+    {
+      "name": "4-channel",
+      "shortName": "4ch",
+      "channels": ["Red", "Green", "Blue", "Master Dimmer"]
+    },
+    {
+      "name": "7-channel",
+      "shortName": "7ch",
+      "channels": ["Red", "Green", "Blue", "Master Dimmer", "Strobe", "Chase", "Mode"]
+    },
+    {
+      "name": "24-channel",
+      "shortName": "24ch",
+      "channels": [
+        {
+          "insert": "matrixChannels",
+          "repeatFor": "eachPixelXYZ",
+          "channelOrder": "perPixel",
+          "templateChannels": ["Red $pixelKey", "Green $pixelKey", "Blue $pixelKey"]
+        }
+      ]
+    },
+    {
+      "name": "28-channel",
+      "shortName": "28ch",
+      "channels": [
+        {
+          "insert": "matrixChannels",
+          "repeatFor": "eachPixelXYZ",
+          "channelOrder": "perPixel",
+          "templateChannels": ["Red $pixelKey", "Green $pixelKey", "Blue $pixelKey"]
+        },
+        "Master Dimmer",
+        "Strobe",
+        "Chase",
+        "Mode"
+      ]
+    }
+  ]
+}

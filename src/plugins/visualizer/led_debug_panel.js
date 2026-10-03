@@ -1,13 +1,14 @@
 // eslint-disable-next-line import/extensions, import/no-unresolved
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import Laser from './laser';
-import MovingHead from './moving_head';
+import Light from './light';
 import LEDField from './led_field';
 import LEDPanel from './led_panel';
 import Perf from './perf_overlay';
 import SceneEnv from './scene_env';
 import { ambientCeiling } from './ambient';
 import Tuning from './tuning';
+import EventBus from '../eventbus';
 import ContactShadows from './contact_shadows';
 import { hazeWarp, hazeTurn } from './haze_noise';
 import PatchSingleton from '../../models/DMX/patch.model';
@@ -96,8 +97,7 @@ export default function createLEDDebugPanel(visualizer, host) {
     contactEdge: ContactShadows.edge(),
     strictPatch: PatchSingleton.strict,
     // Mover beams
-    beamScatter: Math.round(MovingHead.scatterAmount() * 100),
-    beamOcclusion: MovingHead.occlusion(),
+    beamOcclusion: Light.occlusion(),
     beamDebug: 0,
     // Laser
     laserAir: Laser.scatterGain(),
@@ -111,6 +111,9 @@ export default function createLEDDebugPanel(visualizer, host) {
     // Measurement
     passes: Perf.getPasses(),
   };
+
+  gui.add({ reset: () => EventBus.emit('reset_defaults') }, 'reset')
+    .name('Reset all to defaults');
 
   const die = gui.addFolder('Emitter die');
   die.add(state, 'gain', 0, 8, 0.05)
@@ -329,31 +332,25 @@ export default function createLEDDebugPanel(visualizer, host) {
       Tuning.write('airScale', v, visualizer);
     });
 
-  // A beam pointed at you is far brighter than one crossing your view, because
-  // haze scatters light forwards. Side-on is the reference here, so this only
-  // ever brightens beams that turn towards the camera.
   const beam = gui.addFolder('Mover beam');
-  beam.add(state, 'beamScatter', 0, 100, 1)
-    .name('facing brightness %')
-    .onChange((v) => Tuning.write('beamScatter', v, visualizer));
   // A diagnostic, not a preference: not stored, so a session cannot start
   // with beams passing through walls because a switch was left off.
   beam.add(state, 'beamOcclusion')
     .name('stop at surfaces')
-    .onChange((v) => MovingHead.setOcclusion(v));
+    .onChange((v) => Light.setOcclusion(v));
   // One shader term as greyscale, to see which one carries a fault.
   beam.add(state, 'beamDebug', {
     beam: 0,
     'field fraction': 1,
     profile: 2,
-    'chord fraction': 3,
-    attenuation: 4,
+    'path integral': 3,
+    irradiance: 4,
     phase: 5,
     haze: 6,
     intensity: 7,
   })
     .name('draw term')
-    .onChange((v) => MovingHead.setDebugTerm(v));
+    .onChange((v) => Light.setDebugTerm(v));
 
   // Two separate hands, because a laser is drawn twice: the shaft through the
   // haze is geometry, the figure on the stone is a projected picture. Turning

@@ -13,15 +13,18 @@
     />
     <!-- High level to detail: what the fixture *is* (its definition), then
          what this one is set to, then where it stands. -->
+    <!-- Several fixtures of one definition share these: the Model widget
+         speaks for the definition anyway, and the settings write to all. -->
     <model-widget
-      v-show="editedFixture"
+      v-show="shownFixture"
       ref="model"
-      :fixture="editedFixture"
+      :fixture="shownFixture"
     />
     <fixture-settings-widget
-      v-show="editedFixture"
+      v-show="shownFixture"
       ref="settings"
-      :fixture="editedFixture"
+      :fixture="shownFixture"
+      :fixtures="sharedFixtures"
     />
     <!-- One placement widget for whatever single thing is selected, of
          whatever kind, under one name and one guard. -->
@@ -143,8 +146,33 @@ export default {
      *
      * @returns {Object|null}
      */
+    /**
+     * The selected fixtures, when there are several and all of them are one
+     * definition -- the case where their settings can be edited together.
+     * Empty otherwise.
+     *
+     * @returns {Array}
+     */
+    sharedFixtures() {
+      const items = this.selectedItems;
+      if (items.length < 2) return [];
+      if (!items.every((item) => kindOf(item) === SCENE_ITEM_KINDS.FIXTURE)) return [];
+      const key = items[0].profileKey;
+      return items.every((item) => item.profileKey === key) ? items : [];
+    },
+    /**
+     * The fixture the Model and settings widgets are drawn for: the one being
+     * edited, or the first of several that share a definition.
+     *
+     * @returns {Object|null}
+     */
+    shownFixture() {
+      return this.editedFixture || this.sharedFixtures[0] || null;
+    },
     editedFixture() {
-      return this.selectedMember || this.selectedFixture;
+      const member = this.selectedMember;
+      if (member && kindOf(member) === SCENE_ITEM_KINDS.FIXTURE) return member;
+      return member ? null : this.selectedFixture;
     },
     /**
      * The structure member being looked at, or null.
@@ -158,7 +186,10 @@ export default {
      */
     selectedMember() {
       if (!this.selectedStructure || this.memberId === null) return null;
-      return this.$show.fixturePool.findFromId(this.memberId) || null;
+      // By row id among the structure's own members: row ids are namespaced
+      // by kind, so this finds an object member as readily as a fixture.
+      return this.selectedStructure.members
+        .find((member) => member.listable.id === this.memberId) || null;
     },
     /**
      * Everything in the selection, of whatever kind.
@@ -323,7 +354,7 @@ export default {
      * point of picking it, and the position tool locks itself on the way in.
      *
      * @public
-     * @param {Number|null} id member fixture id, or null when there is none
+     * @param {Number|String|null} id the member's row id, or null when there is none
      */
     selectMember(id) {
       this.highlightMember(false);

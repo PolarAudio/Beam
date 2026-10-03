@@ -1,5 +1,5 @@
 /* eslint-disable import/no-extraneous-dependencies */
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import NDI from './ndi';
 
 /**
@@ -159,12 +159,12 @@ contextBridge.exposeInMainWorld('jsonStore', {
  *
  * One file per item, so saving one profile touches one file rather than
  * re-serialising the library. Items are named by key -- `manufacturer/model`
- * for profiles and overrides, a name for structures -- and never by path: the
+ * for profiles, a name for structures -- and never by path: the
  * file name is a convenience the main process derives, not an identity.
  */
 contextBridge.exposeInMainWorld('library', {
   /**
-   * @param {String} kind 'profiles', 'structures' or 'overrides'
+   * @param {String} kind 'profiles' or 'structures'
    * @returns {Promise<Object>} key to contents
    */
   readAll: (kind) => ipcRenderer.invoke('library:readAll', kind),
@@ -211,6 +211,28 @@ contextBridge.exposeInMainWorld('library', {
    */
   writeThumbnail: (key, dataUrl) => ipcRenderer.invoke('library:writeThumbnail', key, dataUrl),
   /**
+   * Asks for a model file and copies it, with the files it refers to, into
+   * `Library/Objects`. It is not an object until `finishImport` describes it.
+   *
+   * @returns {Promise<Object>} `{ ok, id, entry, skipped }` or `{ ok: false, reason }`
+   */
+  importObject: () => ipcRenderer.invoke('library:importObject'),
+  /**
+   * Writes an imported model's units and up axis, and its name if changed.
+   *
+   * @param {Number} id from `importObject`
+   * @param {Object} settings `{ name, scale, upAxis }`
+   * @returns {Promise<Object>} `{ ok, key }` or `{ ok: false, reason }`
+   */
+  finishImport: (id, settings) => ipcRenderer.invoke('library:finishImport', id, settings),
+  /**
+   * Removes a cancelled import's files from the library.
+   *
+   * @param {Number} id from `importObject`
+   * @returns {Promise<Object>} `{ ok }`
+   */
+  cancelImport: (id) => ipcRenderer.invoke('library:cancelImport', id),
+  /**
    * Environment images in `Library/Environments`.
    *
    * Metadata only. Each carries a `library://` url, which is what `RGBELoader`
@@ -229,6 +251,71 @@ contextBridge.exposeInMainWorld('library', {
    * @returns {Promise<Object>} `{ ok, entry }` or `{ ok: false, reason }`
    */
   addEnvironment: () => ipcRenderer.invoke('library:addEnvironment'),
+  /**
+   * GDTF fixtures in `Library/Profiles`, metadata only. The bytes are served
+   * as `library://profiles/<file>`.
+   *
+   * @returns {Promise<Array>} `{ key, file, name, manufacturer, fixtureTypeId, dataVersion }`
+   */
+  gdtfList: () => ipcRenderer.invoke('library:gdtfList'),
+  gdtfRemoved: () => ipcRenderer.invoke('library:gdtfRemoved'),
+  /** Asks for .gdtf files. @returns {Promise<Array<String>>} absolute paths */
+  pickGdtf: () => ipcRenderer.invoke('library:pickGdtf'),
+  /**
+   * Copies one .gdtf into the library. A file of the same fixture type is
+   * reported as a conflict unless `replace` is set.
+   *
+   * @param {String} source absolute path
+   * @param {Object} [options] `{ replace }`
+   * @returns {Promise<Object>} `{ ok, entry }`, `{ ok: false, conflict }`
+   *   or `{ ok: false, reason }`
+   */
+  importGdtf: (source, options) => ipcRenderer.invoke('library:importGdtf', source, options),
+  removeGdtf: (key) => ipcRenderer.invoke('library:removeGdtf', key),
+  gdtfMarks: () => ipcRenderer.invoke('library:gdtfMarks'),
+  setGdtfBad: (what, bad) => ipcRenderer.invoke('library:setGdtfBad', what, bad),
+  setFavourite: (what, on) => ipcRenderer.invoke('library:setFavourite', what, on),
+  /**
+   * The path of a file dropped on the window. The page cannot see paths; the
+   * preload can, and hands over only this one.
+   *
+   * @param {File} file
+   * @returns {String}
+   */
+  pathForFile: (file) => webUtils.getPathForFile(file),
+});
+
+/**
+ * GDTF Share. The account is stored by the main process, encrypted, and is
+ * never handed back: `status` says only whether one is stored and whose.
+ */
+contextBridge.exposeInMainWorld('gdtfShare', {
+  /** @returns {Promise<Object>} `{ available, user }` */
+  status: () => ipcRenderer.invoke('gdtfShare:status'),
+  /**
+   * Checks an account with GDTF Share and stores it if it is good.
+   *
+   * @returns {Promise<Object>} `{ ok, error }`
+   */
+  saveAccount: (user, password) => ipcRenderer.invoke('gdtfShare:saveAccount', user, password),
+  /** @returns {Promise<Object>} `{ ok }` */
+  forgetAccount: () => ipcRenderer.invoke('gdtfShare:forgetAccount'),
+  /**
+   * Every revision on the Share, cached unless `refresh`.
+   *
+   * @returns {Promise<Object>} `{ ok, list, fetched, error }`
+   */
+  list: (refresh) => ipcRenderer.invoke('gdtfShare:list', refresh),
+  /**
+   * Downloads a revision to a temporary .gdtf for the import.
+   *
+   * @returns {Promise<Object>} `{ ok, path, error }`
+   */
+  download: (rid, hint) => ipcRenderer.invoke('gdtfShare:download', rid, hint),
+  /** @returns {Promise<Object>} revision id imported, by fixture type ID */
+  imported: () => ipcRenderer.invoke('gdtfShare:imported'),
+  /** Notes a revision as imported. @returns {Promise<Object>} every record */
+  recordImport: (fixtureTypeId, rid) => ipcRenderer.invoke('gdtfShare:recordImport', fixtureTypeId, rid),
 });
 
 /**
@@ -284,24 +371,26 @@ contextBridge.exposeInMainWorld('documentStore', {
   read: (target) => ipcRenderer.invoke('document:read', target),
   /**
    * Makes a document the open one. What it carries -- an export's collected
-   * profiles, overrides and models -- is unpacked and consulted ahead of the
+   * profiles and models -- is unpacked and consulted ahead of the
    * library until the next mount or unmount.
    *
    * @param {String} target
-   * @returns {Promise<Object>} `{ profiles, overrides }`, keyed as the library
+   * @returns {Promise<Object>} `{ profiles, gdtf }`, keyed as the library
    *   keys them; models are found through `library.objects()`
    */
   mount: (target) => ipcRenderer.invoke('document:mount', target),
   /** Forgets the open document: a new or imported show has none. */
   unmount: () => ipcRenderer.invoke('document:unmount'),
   /**
+   * Saves the show. A document that carries files keeps carrying the ones the
+   * show still references, and only those.
+   *
    * @param {String} target
    * @param {String} json serialised show
-   * @param {Object} [resources] entry path to serialised contents; collecting
-   *   these is what makes the file an export rather than an ordinary save
-   * @returns {Promise<Boolean>} whether the write succeeded
+   * @param {Object} wanted `{ profiles, objects }`, each an array of keys
+   * @returns {Promise<Object>} `{ ok, carried, profiles, gdtf }`
    */
-  write: (target, json, resources) => ipcRenderer.invoke('document:write', target, json, resources),
+  write: (target, json, wanted) => ipcRenderer.invoke('document:write', target, json, wanted),
   /**
    * Writes an export: the show with every profile and model it references
    * collected into the file, found by key in the library and shipped assets.
@@ -312,6 +401,15 @@ contextBridge.exposeInMainWorld('documentStore', {
    * @returns {Promise<Object>} `{ ok, collected, missing }`
    */
   export: (target, json, wanted) => ipcRenderer.invoke('document:export', target, json, wanted),
+  /**
+   * Replaces what the open document carries with this machine's library
+   * copies, for the items the show references. Only the unpacked copy
+   * changes; the file takes it on the next save.
+   *
+   * @param {Object} wanted `{ profiles, objects }`, each an array of keys
+   * @returns {Promise<Object>} `{ carried, refreshed, kept, objects, profiles, gdtf }`
+   */
+  refresh: (wanted) => ipcRenderer.invoke('document:refresh', wanted),
   /** @returns {Promise<String|null>} chosen path, or null when cancelled */
   open: () => ipcRenderer.invoke('document:open'),
   /** @returns {Promise<String|null>} chosen path, or null when cancelled */

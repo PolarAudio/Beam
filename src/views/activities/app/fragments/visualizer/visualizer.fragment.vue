@@ -280,6 +280,10 @@ export default {
     activeCameraId() {
       return Studio.state.activeCameraId;
     },
+    /** @property {Number} studioReturns cuts and flies to the live camera */
+    studioReturns() {
+      return Studio.state.returns;
+    },
   },
 
   watch: {
@@ -330,22 +334,20 @@ export default {
         Studio.captureInto(previous, handle.viewpoint);
       }
 
-      const { seconds } = Studio.state.transition;
-      // Asked for per change, by the button that was pressed, rather than read
-      // from a mode. A fly only makes sense between two cameras -- arriving in
-      // studio mode has nothing to travel from, so that still snaps.
-      const wantsFly = Studio.state.flyRequested;
-      Studio.state.flyRequested = false;
-      if (wantsFly && handle && previous) {
-        const camera = Studio.state.cameras.find((c) => c.id === value);
-        handle.flyToViewpoint(Studio.viewpointOf(value), {
-          seconds,
-          easing: 'inOut',
-          fov: camera ? camera.fov : undefined,
-        });
-        return;
-      }
-      this.applyCamera(value);
+      // A fly only makes sense between two cameras -- arriving in studio mode
+      // has nothing to travel from, so that still snaps.
+      this.goToCamera(value, !!previous);
+    },
+    /**
+     * Cutting or flying to the camera that is already live.
+     *
+     * Nothing changes camera, so the watcher above never runs. The view goes
+     * back to the camera's stored framing -- for a locked camera that is the
+     * shot it was locked at, whatever the view has done since.
+     */
+    studioReturns() {
+      if (!this.studioActive) return;
+      this.goToCamera(Studio.state.activeCameraId, true);
     },
     /**
      * Follows the frame and the lens while studio mode is on.
@@ -552,6 +554,30 @@ export default {
     applyShot() {
       const handle = this.$show.visualizerHandle;
       if (handle) handle.beginRecordingFrame(Studio.shot);
+    },
+    /**
+     * Makes the view a camera's, by a fly if the button pressed asked for one.
+     *
+     * @public
+     * @param {String} id camera id
+     * @param {Boolean} canFly whether there is a view to travel from
+     */
+    goToCamera(id, canFly) {
+      const handle = this.$show.visualizerHandle;
+      // Asked for per change, by the button that was pressed, rather than read
+      // from a mode.
+      const wantsFly = Studio.state.flyRequested;
+      Studio.state.flyRequested = false;
+      if (wantsFly && handle && canFly) {
+        const camera = Studio.state.cameras.find((c) => c.id === id);
+        handle.flyToViewpoint(Studio.viewpointOf(id), {
+          seconds: Studio.state.transition.seconds,
+          easing: 'inOut',
+          fov: camera ? camera.fov : undefined,
+        });
+        return;
+      }
+      this.applyCamera(id);
     },
     /**
      * Moves the view to a camera's stored viewpoint.

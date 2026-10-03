@@ -1,5 +1,3 @@
-import Capability from './capabilityManager.model';
-
 /**
  * Enumeration of every available capability types.
  *
@@ -85,7 +83,6 @@ class Channel {
     this.fineChannelAliases = null;
     this.fineChannels = [];
     this.isFine = data.isFine;
-    this.capabilities = [];
     this.color = null;
     this.active = true;
     this._value = {
@@ -93,28 +90,6 @@ class Channel {
       model: 0,
     };
     this.setup(data.OFLData);
-  }
-
-  /**
-   * Minimum channel value
-   *
-   * @todo this is a bit dodgy but it seems like the only way to get single capabilities minmax
-   * @readonly
-   * @type {Number}
-   */
-  get minVal() {
-    return this.capabilities[0].min;
-  }
-
-  /**
-   * Maximum channel value
-   *
-   * @todo this is a bit dodgy but it seems like the only way to get single capabilities minmax
-   * @readonly
-   * @type {Number}
-   */
-  get maxVal() {
-    return this.capabilities[this.capabilities.length - 1].max;
   }
 
   /**
@@ -139,15 +114,9 @@ class Channel {
   setup(channelData) {
     if (channelData) {
       this.fineChannelAliases = channelData.fineChannelAliases;
-      if (channelData.capability) {
-        this.setChannelTypes(channelData.capability);
-        this.capabilities = [new Capability(channelData.capability)];
-      } else {
-        this.capabilities = channelData.capabilities.map((capability) => {
-          this.setChannelTypes(capability);
-          return new Capability(capability);
-        });
-      }
+      (channelData.capabilities || [channelData.capability]).forEach((capability) => {
+        this.setChannelTypes(capability);
+      });
     }
   }
 
@@ -224,22 +193,6 @@ class Channel {
     if (this.type === 'Color') {
       this.color = capability.color;
     }
-  }
-
-  /**
-   * Returns capability from provided DMX value
-   *
-   * @param {Number} DMXValue channel value between 0 and 255
-   * @return {Object} capability instance
-   */
-  getCapability(DMXValue) {
-    if (this.capabilities) {
-      return this.capabilities.find(
-        (capability) => capability.range[0] <= DMXValue
-        && capability.range[1] >= DMXValue,
-      );
-    }
-    return null;
   }
 }
 

@@ -5,10 +5,17 @@
   >
     <span
       class="uikit_checkbox_tickbox"
-      :class="{ active }"
+      :class="{ active: active && !showsMixed, mixed: showsMixed }"
       @click="toggle()"
     >
-      <span class="uikit_checkbox_tickbox_tick">
+      <span
+        v-if="showsMixed"
+        class="uikit_checkbox_tickbox_mixed"
+      />
+      <span
+        v-else
+        class="uikit_checkbox_tickbox_tick"
+      >
         <!-- TODO: replace this by a div with svg mask to change color dynamically/clean !-->
         <svg
           width="9"
@@ -60,6 +67,11 @@ export default {
      */
     disabled: Boolean,
     /**
+     * Whether the items this box stands for disagree. Shown as a dash; a
+     * click ticks it for all of them.
+     */
+    mixed: Boolean,
+    /**
      * Text label to be displayed on the right of the checkbox
      */
     label: {
@@ -74,11 +86,21 @@ export default {
        * Checkbox's activity value
        */
       active: this.modelValue,
+      /** Whether a click has settled a mixed box. */
+      settled: false,
     };
+  },
+  computed: {
+    showsMixed() {
+      return this.mixed && !this.settled;
+    },
   },
   watch: {
     modelValue(val) {
       this.active = val;
+    },
+    mixed() {
+      this.settled = false;
     },
   },
   methods: {
@@ -88,7 +110,8 @@ export default {
        */
     toggle() {
       if (!this.disabled) {
-        this.active = !this.active;
+        this.active = this.showsMixed ? true : !this.active;
+        this.settled = true;
         /**
          * Checkbox's activity changed
          *
@@ -103,6 +126,12 @@ export default {
 </script>
 
 <style scoped>
+.uikit_checkbox_tickbox_mixed {
+  width: 8px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--secondary-light);
+}
 .uikit_checkbox {
   display: flex;
   flex-direction: row;

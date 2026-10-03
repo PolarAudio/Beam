@@ -298,6 +298,33 @@ console.log('--- stepping on a recorder\'s slots: a 30 fps take of a 15 Hz strob
   within('back on the scene clock: 2 s at 15 Hz is 30 flashes', after.filter((l) => l > 0).length, 29, 31);
 }
 
+console.log('--- a rate change takes effect at once');
+{
+  // Frames from the change to the first lit one, after running at `from`.
+  const firstFlashAfter = (mode, from, to) => {
+    const shutter = new Shutter({ random: seeded(7) });
+    shutter.mode = mode;
+    shutter.rate = from;
+    let t = 0;
+    for (let i = 0; i < 10; i += 1) { shutter.sample(t); t += FRAME; }
+    shutter.rate = to;
+    for (let i = 0; i < 600; i += 1) {
+      if (shutter.sample(t) > 0) return i;
+      t += FRAME;
+    }
+    return Infinity;
+  };
+  [0.5, 1, 2].forEach((from) => {
+    const strobe = firstFlashAfter(SHUTTER_MODES.STROBE, from, 20);
+    within(`strobe ${from} Hz raised to 20 Hz flashes within 2 frames`, strobe, 0, 2);
+    const random = firstFlashAfter(SHUTTER_MODES.RANDOM, from, 20);
+    within(`random ${from} Hz raised to 20 Hz flashes within 3 frames`, random, 0, 3);
+  });
+  // Slowed down, the next flash waits one new interval from the last one.
+  const slowed = firstFlashAfter(SHUTTER_MODES.STROBE, 20, 1);
+  within('strobe 20 Hz lowered to 1 Hz waits about a second', slowed, 55, 62);
+}
+
 console.log('--- OFL effects map to modes');
 check('Open', Shutter.modeFromEffect('Open'), SHUTTER_MODES.ON);
 check('Closed', Shutter.modeFromEffect('Closed'), SHUTTER_MODES.OFF);

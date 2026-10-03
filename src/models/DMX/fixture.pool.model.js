@@ -1,5 +1,6 @@
 import { Proxify } from '../utils/proxify.utils';
 import Fixture from './fixture.model';
+import { claimInstance } from './item_naming';
 
 /**
  * @class FixturePool
@@ -24,48 +25,6 @@ class FixturePool extends Proxify {
    */
   get showData() {
     return this.fixtures.map((f) => f.showData);
-  }
-
-  /**
-   * The next free numbered name for a profile, e.g. "MAC Aura 3".
-   *
-   * Numbered from one and per base name, so identical fixtures can be told
-   * apart while unrelated profiles keep their own sequence.
-   *
-   * @public
-   * @param {String} base profile name to number
-   * @returns {String} a name no fixture is using
-   */
-  numberedName(base) {
-    const taken = new Set(this.fixtures.map((fixture) => fixture.name));
-    let n = 1;
-    while (taken.has(`${base} ${n}`)) n += 1;
-    return `${base} ${n}`;
-  }
-
-  /**
-   * The nearest free name to the one asked for.
-   *
-   * Names identify a fixture to the user, so two fixtures sharing one makes
-   * the list ambiguous. A name already in use gains a number rather than
-   * being refused, so typing never fails outright.
-   *
-   * @public
-   * @param {String} desired name the user asked for
-   * @param {Number} [ignoreId] id of the fixture allowed to keep this name
-   * @returns {String} a name no other fixture is using
-   */
-  uniqueName(desired, ignoreId = null) {
-    const wanted = (desired || '').trim() || 'Fixture';
-    const taken = new Set(
-      this.fixtures
-        .filter((fixture) => fixture.id !== ignoreId)
-        .map((fixture) => fixture.name),
-    );
-    if (!taken.has(wanted)) return wanted;
-    let n = 2;
-    while (taken.has(`${wanted} ${n}`)) n += 1;
-    return `${wanted} ${n}`;
   }
 
   /**
@@ -121,6 +80,7 @@ class FixturePool extends Proxify {
    * @param {Object} fixture fixture instance
    */
   addExisting(fixture) {
+    claimInstance(fixture, this.fixtures);
     this.fixtures.push(fixture); // TODO: replace with ..AndStackUndo once patched
   }
 
@@ -135,6 +95,8 @@ class FixturePool extends Proxify {
   addRaw(fixtureData) {
     const fixture = new Fixture(fixtureData);
     fixture.id = this.genFixtureId();
+    // Numbered before it joins the list, which draws its row on the push.
+    claimInstance(fixture, this.fixtures);
     this.fixtures.push(fixture); // TODO: replace with ..AndStackUndo once patched
     return fixture;
   }

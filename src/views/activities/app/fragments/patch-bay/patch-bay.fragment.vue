@@ -4,8 +4,6 @@
       ref="header"
       class="patch_bay_header"
     >
-      <h3>Patch Bay</h3>
-      <span style="flex: 1" />
       <!-- Hidden rather than removed. A group is becoming a saved selection
            set for control, not a thing that moves in the scene -- structures
            do that -- so there is nothing to make one for from here yet.
@@ -27,16 +25,33 @@
         :disabled="!canArrange"
         @click="toggleArrange"
       />
+      <!-- Acts on the selection, as structure and arrange do. -->
       <uk-button
-        icon="new"
+        icon="export"
         style="margin-right: 8px"
-        label="add"
+        label="export"
         :icon-only="compactButtons"
+        title="export the selection"
+        :disabled="!canExport"
+        @click="openExport"
+      />
+      <!-- Apart from the three that act on the selection: adding makes
+           something new rather than doing something to what is chosen. -->
+      <span class="patch_bay_header_spacer" />
+      <!-- A bare plus, not a bordered button: the bordered ones act on a
+           collection of items, and adding is not one of those. -->
+      <uk-button
+        class="patch_bay_add"
+        icon="add"
+        label="add"
+        flat
+        icon-only
         title="add"
         @click="displayPatchPopup"
       />
     </div>
     <uk-list
+      band-select
       deletable
       colored
       draggable
@@ -46,13 +61,19 @@
       :highlight-ids="highlightedIds"
       :selected-id="selectedRowId"
       @select="displayFixture"
+      @activate="openInAddToShow"
       @highlight="highlightFixtures"
       @delete="deleteFixtures"
-      @reparent="reparentItem"
+      @reorder="reorderItem"
     />
     <patch-popup
       v-model="patchPopupDisplayState"
+      :reveal="revealFixture"
       @placed="selectPlaced"
+    />
+    <export-popup
+      v-model="exportPopupState"
+      :items="exportItems"
     />
   </div>
 </template>
@@ -63,8 +84,23 @@ import Controls from '@/plugins/visualizer/controls';
 import Clipboard, { chunkSummary } from '@/models/DMX/clipboard';
 import { SCENE_ITEM_KINDS, rowId, kindOf } from '@/models/DMX/scene_item';
 import Selection from '@/models/DMX/selection';
+import { displayNameOf } from '@/models/DMX/item_naming';
+import { formatAddress } from '@/models/DMX/address_format';
 import { fixtureIcon } from '@/models/DMX/generic/fixture_kind';
 import PatchPopup from './_popups/popup.patch.vue';
+import ExportPopup from './_popups/popup.export.vue';
+
+/**
+ * The key an item is counted under when deciding whether its name is shared:
+ * its kind and its name, since numbering is per kind. A kind never holds a
+ * colon, so the two cannot run into each other.
+ *
+ * @param {Object} item
+ * @returns {String}
+ */
+function nameKey(item) {
+  return `${kindOf(item)}:${item.name}`;
+}
 
 export default {
   name: 'PatchBayFragment',
@@ -74,6 +110,7 @@ export default {
   },
   components: {
     PatchPopup,
+    ExportPopup,
   },
   data() {
     return {
@@ -84,6 +121,11 @@ export default {
       pool: this.$show.fixturePool,
       show: this.$show,
       patchPopupDisplayState: false,
+      /**
+       * What Add to Show opens on: a fixture just imported, or the library
+       * entry of an item double-clicked; `{ kind, key, name, mode }`.
+       */
+      revealFixture: null,
       /**
        * Ids of items selected in the 3D view, mirrored into the list. Mixed:
        * a fixture is its numeric id, a structure the `structure:N` its row
@@ -97,6 +139,10 @@ export default {
        * is made for plenty of reasons that are not "lay these out again".
        */
       arrangeOpen: false,
+      /** Whether the export popup is open. */
+      exportPopupState: false,
+      /** What the export popup was opened on: the selection at that moment. */
+      exportItems: [],
       /**
        * Whether the header buttons are down to their icons.
        *
@@ -105,6 +151,8 @@ export default {
        * icons with tooltips.
        */
       compactButtons: false,
+      /** Bumped when a hide is toggled, so `listable` redraws; see there. */
+      visibilityTick: 0,
     };
   },
   computed: {
@@ -146,6 +194,14 @@ export default {
       return this.highlightedIds.length > 1;
     },
     /**
+     * Whether anything is selected to export.
+     *
+     * @property {Boolean} canExport
+     */
+    canExport() {
+      return this.highlightedIds.length > 0;
+    },
+    /**
      * The patch bay as a tree: groups first, holding their members, then
      * everything still at the root.
      *
@@ -155,37 +211,60 @@ export default {
      * @type {Array}
      */
     listable() {
+      // How many items of each kind carry each name, counted once here rather
+      // than by every row: a row shows its instance number only when its name
+      // is shared.
+      const counts = new Map();
+      [this.pool.fixtures, this.show.objects || [], this.show.structures, this.show.groups]
+        .forEach((items) => items.forEach((item) => {
+          const key = nameKey(item);
+          counts.set(key, (counts.get(key) || 0) + 1);
+        }));
+      // By uid, which is unique across kinds: a structure holding object 3
+      // must not hide fixture 3.
       const spokenFor = new Set();
       const groups = this.show.groups.map((group) => {
-        group.members.forEach((member) => spokenFor.add(member.id));
+        group.members.forEach((member) => spokenFor.add(member.uid));
         // Its own icon rather than the selector's folder: a group is a thing
         // in the show, not a place to look in.
-        return {
-          name: group.name,
+        return [group, {
+          name: group.label,
           icon: 'group',
           id: rowId(SCENE_ITEM_KINDS.GROUP, group.id),
           kind: group.kind,
           uid: group.uid,
           groupId: group.id,
-          unfold: group.members.map((member) => this.describeFixture(member)),
-        };
+          unfold: group.members
+            .map((member) => this.withVisibility(member, this.describeFixture(member), counts)),
+        }];
       });
       // Structures are flat rows with nothing to unfold. What they hold sits
       // at coordinates relative to them, which makes those things not scene
       // items -- they are reached through the structure's own widget, and
       // putting them here would contradict what this list is.
       const structures = this.show.structures.map((structure) => {
-        structure.members.forEach((member) => spokenFor.add(member.id));
-        return structure.listable;
+        structure.members.forEach((member) => spokenFor.add(member.uid));
+        return [structure, structure.listable];
       });
       // Objects are scene items too, and flat rows for the same reason
-      // structures are. They hold no fixtures and no channels, so nothing here
-      // is spoken for by one.
-      const objects = (this.show.objects || []).map((object) => object.listable);
+      // structures are, unless a structure holds them.
+      const objects = (this.show.objects || [])
+        .filter((object) => !spokenFor.has(object.uid))
+        .map((object) => [object, object.listable]);
       const loose = this.pool.fixtures
-        .filter((fixture) => !spokenFor.has(fixture.id))
-        .map((fixture) => this.describeFixture(fixture));
-      return [...structures, ...objects, ...groups, ...loose];
+        .filter((fixture) => !spokenFor.has(fixture.uid))
+        .map((fixture) => [fixture, this.describeFixture(fixture)]);
+      // In the order the user dragged them into. An item never placed has no
+      // listOrder and follows the placed ones, in the order above; the sort is
+      // stable, so they keep it.
+      const place = ([item]) => (Number.isFinite(item.listOrder) ? item.listOrder : Infinity);
+      // Read so a hide toggled from this list redraws it: the items themselves
+      // are not reactive, so nothing else would tell the rows.
+      // eslint-disable-next-line no-unused-expressions
+      this.visibilityTick;
+      return [...structures, ...objects, ...groups, ...loose]
+        .sort((a, b) => place(a) - place(b))
+        .map(([item, row]) => this.withVisibility(item, row, counts));
     },
   },
   mounted() {
@@ -194,6 +273,7 @@ export default {
     EventBus.on('copy_requested', this.copySelection);
     EventBus.on('paste_requested', this.pasteClipboard);
     EventBus.on('duplicate_requested', this.duplicateSelection);
+    EventBus.on('reveal_fixture', this.showImported);
     this.watchHeaderWidth();
   },
   beforeUnmount() {
@@ -202,17 +282,23 @@ export default {
     EventBus.off('copy_requested', this.copySelection);
     EventBus.off('paste_requested', this.pasteClipboard);
     EventBus.off('duplicate_requested', this.duplicateSelection);
+    EventBus.off('reveal_fixture', this.showImported);
     if (this.headerObserver) this.headerObserver.disconnect();
   },
   methods: {
     /**
      * Drops the header buttons to icons when their labels no longer fit.
      *
-     * The full width is measured once, on the first paint, while the labels
-     * are still showing -- measuring afterwards would read the compact width
-     * and the row would never expand again. Comparing against that fixed
+     * The labelled width is measured once, on the first paint, while the
+     * labels are still showing -- measuring afterwards would read the compact
+     * width and the row would never expand again. Comparing against that fixed
      * number is also what stops the two states flapping into each other, since
      * switching to icons does not change what is being compared.
+     *
+     * Measured as the buttons themselves, not as the row: the row is as wide
+     * as its column, so its width says nothing about what the labels need,
+     * and reading it switched to icons as soon as the column was dragged
+     * narrower than it started, however much room was left.
      *
      * @public
      */
@@ -220,9 +306,17 @@ export default {
       const { header } = this.$refs;
       if (!header || typeof ResizeObserver === 'undefined') return;
       this.$nextTick(() => {
-        // scrollWidth, not clientWidth: the row overflows rather than shrinks,
-        // so this is what the labels actually ask for.
-        this.headerFullWidth = header.scrollWidth;
+        const row = getComputedStyle(header);
+        // The spacer only fills what is left over, so it asks for nothing.
+        const children = Array.from(header.children)
+          .filter((child) => !child.classList.contains('patch_bay_header_spacer'));
+        const last = children[children.length - 1];
+        // The trailing margin of the last button is air, not room it needs.
+        this.headerFullWidth = children.reduce((sum, child) => {
+          const box = getComputedStyle(child);
+          const trailing = child === last ? 0 : parseFloat(box.marginRight);
+          return sum + child.offsetWidth + parseFloat(box.marginLeft) + trailing;
+        }, parseFloat(row.paddingLeft) + parseFloat(row.paddingRight));
         this.headerObserver = new ResizeObserver(() => {
           this.compactButtons = header.clientWidth < this.headerFullWidth;
         });
@@ -238,7 +332,7 @@ export default {
      */
     describeFixture(fixture) {
       return {
-        name: fixture.name,
+        name: fixture.label,
         icon: fixtureIcon(fixture),
         // Library reference: the profile is not one of this show's definitions.
         overlay: this.$show.isShowDefinition(fixture.profileKey) ? null : 'link',
@@ -247,7 +341,7 @@ export default {
         uid: fixture.uid,
         universe: fixture.universe,
         address: fixture.address,
-        more: `U${fixture.universe} - CH${fixture.chStart + 1}`,
+        more: fixture.address > -1 ? formatAddress(fixture.address) : 'unpatched',
       };
     },
     /**
@@ -356,6 +450,51 @@ export default {
      * @param {Object} row
      * @returns {Object|null}
      */
+    /**
+     * A row as the list shows it: named on screen, with its hide toggle, and
+     * dimmed while the item is hidden.
+     *
+     * @public
+     * @param {Object} item the scene item the row stands for
+     * @param {Object} row its list entry
+     * @param {Map} counts items per kind and name; see `listable`
+     * @returns {Object} the entry, with `name`, `actions` and `dimmed`
+     */
+    withVisibility(item, row, counts) {
+      if (!item || !('hidden' in item)) return row;
+      const sharing = counts.get(nameKey(item));
+      return {
+        ...row,
+        name: displayNameOf(item, sharing),
+        dimmed: !!item.isHidden,
+        actions: [{
+          icon: 'hide',
+          small: true,
+          active: !!item.hidden,
+          callback: () => this.toggleHidden(item, row),
+        }],
+      };
+    },
+    /**
+     * Hides or shows an item from its row's toggle.
+     *
+     * A toggle on one of several highlighted rows sets every highlighted item
+     * to the state it now has, so a selection is hidden or shown as one.
+     *
+     * @public
+     * @param {Object} item the item whose toggle was clicked
+     * @param {Object} row its list entry
+     */
+    toggleHidden(item, row) {
+      const hidden = !item.hidden;
+      const targets = Selection.has(row) && Selection.items.length > 1
+        ? Selection.items.map((entry) => this.itemOfKind(entry.kind, entry)).filter(Boolean)
+        : [item];
+      targets.forEach((target) => {
+        if ('hidden' in target) target.hidden = hidden;
+      });
+      this.visibilityTick += 1;
+    },
     itemFromRow(row) {
       if (!row) return null;
       // Rows carry their own uid, which is unique across kinds -- so unlike the
@@ -391,41 +530,72 @@ export default {
       this.$show.createGroup(members);
     },
     /**
-     * Makes one structure out of the selected fixtures.
+     * Makes one structure out of the selected fixtures and objects.
      *
-     * Structures take fixtures and objects, not other structures, so a
-     * selection that already holds one contributes only its loose items.
+     * Structures take fixtures and objects, not other structures or groups,
+     * so a selection that holds one contributes only its loose items. Each
+     * entry is resolved by its kind: row ids are namespaced, and an object's
+     * would never be found among the fixtures.
      *
      * @public
      */
+    /**
+     * Opens the export popup on what is selected, taken now so that selecting
+     * something else while it is open does not change what it writes.
+     *
+     * @public
+     */
+    openExport() {
+      this.exportItems = Selection.items
+        .map((entry) => this.itemOfKind(entry.kind, entry))
+        .filter(Boolean);
+      if (!this.exportItems.length) return;
+      this.exportPopupState = true;
+    },
     createStructure() {
-      const members = this.highlightedIds
-        .map((id) => this.pool.findFromId(id))
+      const members = Selection.items
+        .filter((entry) => entry.kind === SCENE_ITEM_KINDS.FIXTURE
+          || entry.kind === SCENE_ITEM_KINDS.OBJECT)
+        .map((entry) => this.itemOfKind(entry.kind, entry))
         .filter(Boolean)
-        .filter((fixture) => !fixture.structure);
+        .filter((item) => !item.structure);
       if (!members.length) return;
       const structure = this.$show.createStructure(members);
       this.selectStructure(structure.id);
     },
     /**
-     * Moves a dragged item into a group, or out to the root.
+     * Moves a dragged row to where it was dropped. Dragging a selected row
+     * takes the whole selection, which lands together in the order it had.
      *
      * @public
-     * @param {Object} payload {item, target} from the list
+     * @param {Object} payload `{ item, target, position }` from the list
      */
-    reparentItem({ item, target }) {
-      // A structure is one item, and what it holds is not in this list, so
-      // there is nothing to drag into or out of one.
-      const itemKind = kindOf(item);
-      if (!item || itemKind === SCENE_ITEM_KINDS.GROUP
-        || itemKind === SCENE_ITEM_KINDS.STRUCTURE) return;
-      if (kindOf(target) === SCENE_ITEM_KINDS.STRUCTURE) return;
-      const fixture = this.pool.findFromId(item.id);
-      if (!fixture) return;
-      const group = kindOf(target) === SCENE_ITEM_KINDS.GROUP
-        ? this.$show.groups.find((g) => g.id === target.groupId)
-        : null;
-      this.$show.moveToGroup(fixture, group);
+    reorderItem({ item, target, position }) {
+      const dragged = this.itemFromRow(item);
+      const anchor = this.itemFromRow(target);
+      if (!dragged || !anchor) return;
+      const rows = this.listable.map((row) => this.itemFromRow(row)).filter(Boolean);
+      const selected = Selection.items
+        .map((entry) => this.itemOfKind(entry.kind, entry))
+        .filter((entry) => entry && (rows.includes(entry) || entry.group));
+      const moving = selected.includes(dragged) ? selected : [dragged];
+      // The gap is counted in the list as it stands, then shifted up by every
+      // moving row above it, since those leave before anything is inserted.
+      const gap = rows.indexOf(anchor) + (position === 'after' ? 1 : 0);
+      const at = gap - rows.slice(0, gap).filter((entry) => moving.includes(entry)).length;
+      // Rows keep their order among themselves; group members follow them.
+      const ranked = (entry) => {
+        const index = rows.indexOf(entry);
+        return index === -1 ? Infinity : index;
+      };
+      moving.sort((a, b) => ranked(a) - ranked(b));
+      // A group member dropped between rows is a row of its own from then on.
+      moving.forEach((entry) => {
+        if (entry.group) this.$show.moveToGroup(entry, null);
+      });
+      const order = rows.filter((entry) => !moving.includes(entry));
+      order.splice(at, 0, ...moving);
+      this.$show.setListOrder(order);
     },
     /**
      * Routes to the selected fixture, which the modifier follows.
@@ -697,7 +867,45 @@ export default {
      * @public
      */
     displayPatchPopup() {
+      this.revealFixture = null;
       this.patchPopupDisplayState = true;
+    },
+    /**
+     * Opens Add to Show on a fixture just imported, so placing it is the
+     * next step rather than finding it.
+     *
+     * @public
+     * @param {Object} reveal `{ key, name }`
+     */
+    showImported(reveal) {
+      this.revealFixture = reveal;
+      this.patchPopupDisplayState = true;
+    },
+    /**
+     * Opens Add to Show on the library entry an item was placed from, loaded
+     * and ready to place another: a fixture's profile in its mode, an
+     * object's model, a structure. A group, or an object made in the show,
+     * has no entry, and nothing opens.
+     *
+     * @public
+     * @param {Object} row the item list's row
+     */
+    openInAddToShow(row) {
+      const item = this.itemFromRow(row);
+      if (!item) return;
+      const kind = kindOf(row);
+      let reveal = null;
+      if (kind === SCENE_ITEM_KINDS.FIXTURE && item.profileKey) {
+        reveal = {
+          kind: 'fixtures', key: item.profileKey, name: item.name, mode: item.modeName,
+        };
+      } else if (kind === SCENE_ITEM_KINDS.OBJECT && item.model) {
+        reveal = { kind: 'objects', key: item.model, name: item.name };
+      } else if (kind === SCENE_ITEM_KINDS.STRUCTURE && item.name) {
+        reveal = { kind: 'structures', key: item.name, name: item.name };
+      }
+      if (!reveal) return;
+      this.showImported(reveal);
     },
   },
 };
@@ -731,17 +939,24 @@ export default {
   min-width: 24px;
   min-height: 24px;
 }
+/* No width of its own: the export button's margin is the gap before add, so
+   the labels fit exactly when the measurement says they do. */
+/* Bigger than the glyph a flat button gets, since it stands alone. Spelled out
+   to outrank the button's own flat and icon-only sizes, which are !important. */
+.patch_bay_header :deep(.uikit_button.flat.icon_only.patch_bay_add .uikit_button_icon) {
+  width: 18px !important;
+  height: 18px !important;
+  fill: #fff !important;
+}
+.patch_bay_header_spacer {
+  flex: 1;
+  min-width: 0;
+}
 .patch_bay_header :deep(.uikit_button) {
   /* Held at their natural width so the row genuinely overflows when the
      labels do not fit. Allowed to shrink they would squash into each other
      instead, and there would be nothing to measure. */
   flex-shrink: 0;
-}
-.patch_bay_header h3 {
-  /* The title yields first: it is the one thing here that is only a label. */
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .patch_bay_fixture_list {
   display: flex;

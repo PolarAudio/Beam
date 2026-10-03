@@ -93,7 +93,11 @@ export default {
     /** @returns {Number} how long a fly takes */
     transitionSeconds: {
       get() { return Studio.state.transition.seconds; },
-      set(value) { Studio.setTransitionSeconds(value); },
+      set(value) {
+        Studio.setTransitionSeconds(value);
+        // Saved with the show, beside the cameras, so a change is a change to it.
+        this.$show.touch();
+      },
     },
     /**
      * Whether the selected camera can be deleted.

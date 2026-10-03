@@ -1,4 +1,6 @@
-import { reactive } from 'vue';
+import { reactive, watch } from 'vue';
+import Preferences from '@/plugins/visualizer/preferences';
+import EventBus from '@/plugins/eventbus';
 
 /**
  * @file Studio mode: what is being filmed, and with which camera.
@@ -75,6 +77,27 @@ function numberedName(cameras) {
   return `Camera ${taken.length ? Math.max(...taken) + 1 : 1}`;
 }
 
+/** How long a fly takes when a show does not say. */
+const DEFAULT_FLY_SECONDS = 1.5;
+
+/**
+ * The recording settings, and the preference each is kept under.
+ *
+ * Preferences rather than the show: they are about the file coming out of this
+ * machine, not about the scene, so a 4K habit follows the user from project to
+ * project and a show sent to someone else does not bring its maker's output
+ * size with it.
+ *
+ * @constant {Object}
+ */
+const RECORDING_PREFERENCES = {
+  frameWidth: 'studioFrameWidth',
+  frameHeight: 'studioFrameHeight',
+  fps: 'studioFps',
+  quality: 'studioQuality',
+  recordAudio: 'studioRecordAudio',
+};
+
 const state = reactive({
   /** Whether the app is in studio mode rather than editor mode. */
   active: false,
@@ -102,7 +125,7 @@ const state = reactive({
    * two actions where the job is one, and the mode is invisible by the time it
    * matters.
    */
-  transition: { seconds: 1.5 },
+  transition: { seconds: DEFAULT_FLY_SECONDS },
   /**
    * Whether the change now in flight was asked to fly.
    *
@@ -110,6 +133,14 @@ const state = reactive({
    * the watcher that acts on it. It is not a setting and is never persisted.
    */
   flyRequested: false,
+  /**
+   * Counts cuts and flies to the camera that is already live.
+   *
+   * Such a press changes no camera, so a watcher on `activeCameraId` never
+   * hears it -- yet it is how a locked camera is brought back to its framing
+   * after looking around. Transient, never persisted.
+   */
+  returns: 0,
   /**
    * Every camera, the scene camera first.
    *
@@ -140,7 +171,10 @@ const state = reactive({
   selectedCameraId: SCENE_CAMERA_ID,
 });
 
-export default {
+/** Stops writing the recording settings back; set once they are adopted. */
+let recordingWatch = null;
+
+const Studio = {
   state,
   PRESETS,
   LIMITS,
@@ -259,7 +293,8 @@ export default {
   cutToCamera(id) {
     if (!state.cameras.some((camera) => camera.id === id)) return;
     state.flyRequested = false;
-    state.activeCameraId = id;
+    if (id === state.activeCameraId) state.returns += 1;
+    else state.activeCameraId = id;
   },
 
   /**
@@ -270,9 +305,9 @@ export default {
    */
   flyToCamera(id) {
     if (!state.cameras.some((camera) => camera.id === id)) return;
-    if (id === state.activeCameraId) return;
     state.flyRequested = true;
-    state.activeCameraId = id;
+    if (id === state.activeCameraId) state.returns += 1;
+    else state.activeCameraId = id;
   },
 
   /**
@@ -283,6 +318,60 @@ export default {
     const wanted = Number(seconds);
     if (!Number.isFinite(wanted)) return;
     state.transition.seconds = Math.min(20, Math.max(0.1, wanted));
+  },
+
+  /**
+   * The studio settings a show keeps beside its cameras.
+   *
+   * The fly time is part of how that show's cameras move, so it travels with
+   * them rather than with the installation.
+   *
+   * @public
+   * @returns {Object}
+   */
+  get showSettings() {
+    return { flySeconds: state.transition.seconds };
+  },
+
+  /**
+   * Takes on a show's studio settings; a show written before they were saved
+   * gets the defaults.
+   *
+   * @public
+   * @param {Object} [settings] what `showSettings` wrote
+   */
+  loadSettings(settings) {
+    state.transition.seconds = DEFAULT_FLY_SECONDS;
+    if (settings) this.setTransitionSeconds(settings.flySeconds);
+  },
+
+  /**
+   * Takes on the recording settings stored in the preferences.
+   *
+   * Called once the preferences are loaded; from then on every change is
+   * written back, so the next start comes up as this one was left.
+   *
+   * @public
+   */
+  adoptRecordingPreferences() {
+    const stored = (name) => Preferences.get(RECORDING_PREFERENCES[name]);
+    this.setFrame(stored('frameWidth'), stored('frameHeight'));
+    const storedFps = Number(stored('fps'));
+    if (Number.isFinite(storedFps) && storedFps > 0) state.fps = storedFps;
+    if (typeof stored('quality') === 'string') state.quality = stored('quality');
+    state.recordAudio = stored('recordAudio') !== false;
+    if (recordingWatch) return;
+    recordingWatch = watch(
+      () => [state.frame.width, state.frame.height, state.fps, state.quality, state.recordAudio],
+      ([frameWidth, frameHeight, fps, quality, recordAudio]) => {
+        const values = {
+          frameWidth, frameHeight, fps, quality, recordAudio,
+        };
+        Object.entries(values).forEach(([name, value]) => {
+          Preferences.set(RECORDING_PREFERENCES[name], value);
+        });
+      },
+    );
   },
 
   /**
@@ -538,3 +627,9 @@ export default {
     state.frame.height = clamp(height);
   },
 };
+
+// The visualizer loads the preferences before it announces itself, so this is
+// the first moment the stored recording settings can be read.
+EventBus.on('visualizer_loaded', () => Studio.adoptRecordingPreferences());
+
+export default Studio;

@@ -5,6 +5,7 @@ import {
 import Channel from './channel.model';
 import BarChannels from './bar_channels';
 import PatchSingleton, { DMX_UNIVERSE_LENGTH, channelAddress } from './patch.model';
+import Light from '../../plugins/visualizer/light';
 import MovingHead from '../../plugins/visualizer/moving_head';
 import LedBar from '../../plugins/visualizer/led_bar';
 import Projector from '../../plugins/visualizer/projector';
@@ -16,6 +17,72 @@ import { kindOf } from './generic/fixture_kind';
 import Controls from '../../plugins/visualizer/controls';
 import withTransform from './scene_item.transform';
 import { SCENE_ITEM_KINDS } from './scene_item';
+import { itemLabel, splitSavedName } from './item_naming';
+import { formatAddress } from './address_format';
+import translateOfl from './gdtf/ofl_to_gdtf';
+import DmxEngine from './gdtf/dmx_engine';
+import HeadDispatch from './gdtf/head_dispatch';
+import {
+  channelRows, fixtureCategory, headInputs, wheelsForHead,
+} from './gdtf/fixture_parts';
+
+/**
+ * OFL profiles translated into the GDTF model, by profile key. A definition
+ * is never edited, so one translation serves every fixture of it.
+ */
+const translations = new Map();
+
+/** An OFL profile in the GDTF model, translated once per key. */
+function translated(key, profile) {
+  const cached = translations.get(key);
+  if (cached && cached.source === profile.name) return cached.type;
+  const { fixtureType } = translateOfl(profile);
+  translations.set(key, { source: profile.name, type: fixtureType });
+  return fixtureType;
+}
+
+/**
+ * A GDTF channel's role, as the MadMapper export reads roles: a colour, pan,
+ * tilt, intensity, or something else.
+ */
+function roleOf(attribute, label) {
+  if (/^Color(Add|Sub)_/.test(attribute)) return { type: 'ColorIntensity', color: label };
+  if (attribute === 'Pan') return { type: 'Pan' };
+  if (attribute === 'Tilt') return { type: 'Tilt' };
+  if (attribute === 'Dimmer') return { type: 'Intensity' };
+  return { type: 'Generic' };
+}
+
+/**
+ * What a GDTF fixture's listings and exports read: its name, its modes as
+ * lists of channel names, so channel counts agree with the patch, and each
+ * channel's role and fine byte, for the MadMapper export. Nothing here drives
+ * the fixture.
+ */
+function listingFor(type) {
+  const availableChannels = {};
+  const modes = type.modes.map((mode) => {
+    const rows = channelRows(new DmxEngine(type, mode));
+    rows.forEach((row) => {
+      if (row.isFine || !row.engineChannel || availableChannels[row.name]) return;
+      const label = row.name.slice(row.engineChannel.instanceOf
+        ? row.engineChannel.instanceOf.length + 1 : 0);
+      availableChannels[row.name] = {
+        fineChannelAliases: row.fineChannels.map((fine) => fine.name),
+        capability: roleOf(row.attribute, label),
+      };
+    });
+    return { name: mode.name, channels: rows.map((row) => row.name) };
+  });
+  return {
+    name: type.name,
+    categories: [fixtureCategory(type)],
+    modes,
+    availableChannels,
+    wheels: {},
+    physical: {},
+  };
+}
 
 /**
  * Splitting pattern for parsing fine channels
@@ -36,58 +103,6 @@ const FINE_CHANNEL_SPLIT_PATERN = ' fine';
 const FINE_CHANNEL_TERMINOLOGY = 'Fine';
 
 /**
- * OFL Capability types strings for parsing OFL Fixture channels
- *
- * @constant
- * @type {String}
- * @default
- */
-const CAPABILITY_TYPES = {
-  ShutterStrobe: 'ShutterStrobe',
-  StrobeSpeed: 'StrobeSpeed',
-  StrobeDuration: 'StrobeDuration',
-  Intensity: 'Intensity',
-  ColorIntensity: 'ColorIntensity',
-  ColorPreset: 'ColorPreset',
-  ColorTemperature: 'ColorTemperature',
-  Pan: 'Pan',
-  PanFine: 'PanFine',
-  PanContinuous: 'PanContinuous',
-  Tilt: 'Tilt',
-  TiltFine: 'TiltFine',
-  TiltContinuous: 'TiltContinuous',
-  PanTiltSpeed: 'PanTiltSpeed',
-  WheelSlot: 'WheelSlot',
-  WheelShake: 'WheelShake',
-  WheelSlotRotation: 'WheelSlotRotation',
-  WheelRotation: 'WheelRotation',
-  Prism: 'Prism',
-  PrismRotation: 'PrismRotation',
-  Iris: 'Iris',
-  Effect: 'Effect',
-  BeamAngle: 'BeamAngle',
-  BeamPosition: 'BeamPosition',
-  EffectSpeed: 'EffectSpeed',
-  EffectDuration: 'EffectDuration',
-  EffectPrameter: 'EffectPrameter',
-  SoundSensitivity: 'SoundSensitivity',
-  Focus: 'Focus',
-  Zoom: 'Zoom',
-};
-
-/**
- * OFL Wheel channels types strings for parsing OFL Fixture wheels
- *
- * @constant
- * @type {Object}
- * @default
- */
-const WHEEL_CHANNEL_TYPES = {
-  COLOR_WHEEL: 'Color Wheel',
-  GOBO_WHEEL: 'Gobo Wheel',
-};
-
-/**
  * OFL Fixture category definitions for parsing fixture type
  *
  * @constant
@@ -96,22 +111,24 @@ const WHEEL_CHANNEL_TYPES = {
  */
 const FIXTURE_TYPES = {
   MOVING_HEAD: 'Moving Head',
+  // A light that neither pans nor tilts; drawn by the moving head's renderer
+  // standing still.
+  STATIC: 'Static',
 };
+
+/** Categories the moving head's renderer draws. */
+const HEAD_CATEGORIES = [FIXTURE_TYPES.MOVING_HEAD, FIXTURE_TYPES.STATIC];
 
 /** Fallback bulb colour temperature, for profiles that omit one. */
 const DEFAULT_COLOR_TEMP = 8000;
 
 /**
- * How fast a head slews when nothing overrides it, in degrees per second.
- *
- * OFL has no field for this -- it describes what a speed channel does, never how
- * quickly the head actually travels -- so it cannot come from a profile. These
- * are plausible figures, overridable per model.
+ * Where a hand-focused lens starts, 0 fully out to 100 fully in. Halfway gives
+ * close to the edge a head without any focus control is drawn with.
  *
  * @constant {Number}
  */
-export const DEFAULT_PAN_SPEED = 270;
-export const DEFAULT_TILT_SPEED = 210;
+const DEFAULT_MANUAL_FOCUS = 50;
 
 /**
  * Stand-in for a fixture the renderer has no model for.
@@ -206,10 +223,12 @@ class Fixture extends withTransform(Proxify) {
     // stamps it the same way. See scene_item.js.
     this.initSceneItem(SCENE_ITEM_KINDS.FIXTURE);
     if (!data.isStub) {
-      this.OFLData = data.OFLData;
-      // Resolved once here so the panel and the renderer read the same number.
-      this._panSpeed = Number(this.OFLData.panSpeed) || DEFAULT_PAN_SPEED;
-      this._tiltSpeed = Number(this.OFLData.tiltSpeed) || DEFAULT_TILT_SPEED;
+      /**
+       * The fixture's GDTF fixture type, when it comes from a .gdtf: read
+       * once by the show and shared by every fixture of that type.
+       */
+      this.fixtureType = data.fixtureType ? markRaw(data.fixtureType) : null;
+      this.OFLData = data.OFLData || (this.fixtureType ? listingFor(this.fixtureType) : null);
       this.id = parseInt(data.id, 10);
       // Read before the address: patching lays the channels out according to
       // this, so it has to be known by the time the address is claimed.
@@ -234,6 +253,17 @@ class Fixture extends withTransform(Proxify) {
       this.modeName = data.mode;
       this.wheels = {};
       this.name = data.name || DEFAULT_FIXTURE_NAME;
+      /**
+       * Beam's number for this item among others of its kind with the same
+       * name; see item_naming.js. Given when the item joins the show.
+       */
+      this.instance = Number.isInteger(data.instance) ? data.instance : null;
+      if (this.instance === null) {
+        // Saved before instances existed: the number was part of the name.
+        const split = splitSavedName(this.name, [data.baseName, data.model]);
+        this.name = split.name;
+        this.instance = split.instance;
+      }
       this.category = data.category;
       this.channels = [];
       this.quickChannelsAccessors = {};
@@ -248,9 +278,14 @@ class Fixture extends withTransform(Proxify) {
       this.structure = null;
       /**
        * Whether this fixture's beam casts a shadow. Off unless asked for --
-       * see MovingHead's own accessor for why it is not given away freely.
+       * see Light's own accessor for why it is not given away freely.
        */
       this._castsShadow = !!data.castsShadow;
+      /** Where a hand-set lens is wound to: see `focus`. */
+      this._focus = data.focus != null && Number.isFinite(Number(data.focus))
+        ? Number(data.focus) : DEFAULT_MANUAL_FOCUS;
+      /** Hidden from the scene: see `hidden`. */
+      this._hidden = !!data.hidden;
       /**
        * What this device is set to, or null for a fixture that is neither a
        * projector nor a display.
@@ -322,6 +357,9 @@ class Fixture extends withTransform(Proxify) {
       }
       // After the zeroing, or a saved value would be wiped by it.
       this.applyParkedChannels();
+      // A channel left at its default is never reported by a write, so the
+      // head hears every channel once.
+      if (this._dispatch) this._dispatch.applyAll();
     }
     return this.proxify(['_3DModel']);
   }
@@ -352,14 +390,23 @@ class Fixture extends withTransform(Proxify) {
     return !!(this.OFLData && this.OFLData.asls && this.OFLData.asls.bar);
   }
 
+  /**
+   * How the fixture is shown and exported: its name and instance, `name N`.
+   *
+   * @readonly
+   * @type {String}
+   */
+  get label() {
+    return itemLabel(this.name, this.instance);
+  }
+
   get listable() {
     return {
-      name: this.name,
+      name: this.label,
       icon: this.isBar ? 'ledbar' : 'movinghead',
       id: this.id,
       universe: this.universe,
-      // chStart is 0-based internally; DMX addresses are shown 1-based.
-      more: `U${this.universe}-CH${this.chStart + 1}`,
+      more: this.address > -1 ? formatAddress(this.address) : 'unpatched',
     };
   }
 
@@ -376,6 +423,7 @@ class Fixture extends withTransform(Proxify) {
       category: this.category,
       manufacturer: this.manufacturer,
       name: this.name,
+      instance: this.instance || undefined,
       address: this.address,
       universeAligned: this.universeAligned,
       universe: this.universe,
@@ -388,6 +436,8 @@ class Fixture extends withTransform(Proxify) {
       groupId: this.group ? this.group.id : undefined,
       structureId: this.structure ? this.structure.id : undefined,
       castsShadow: this._castsShadow,
+      focus: this.hasManualFocus ? this._focus : undefined,
+      hidden: this._hidden || undefined,
       // Only the parked values, never what DMX happens to be saying -- the
       // same line the app already draws between an address and the wire.
       device: this.device ? this.device.showData : undefined,
@@ -492,13 +542,53 @@ class Fixture extends withTransform(Proxify) {
     this.channels = [];
     this.quickChannelsAccessors = {};
     this.modeName = this.modeNames[modeIndex];
-    // this.parseFromOFLData();
-    this.prepareChannels();
-    this.setupFineChannels();
-    this.setupQuickAccessors();
+    if (this.fixtureType) {
+      const inputs = this.applyGdtfMode();
+      if (this._dispatch) {
+        // A static light's lenses are its mode's: built again for this one.
+        if (this._lightSpec) {
+          this.createLamps({ ...this._lightSpec, lumens: inputs.lumens }, this.fixtureType.body);
+        }
+        this._3DModel.setModeInputs({
+          maxPan: inputs.panSpan,
+          maxTilt: inputs.tiltSpan,
+          minAngle: inputs.minAngle,
+          maxAngle: inputs.maxAngle,
+          lumens: inputs.lumens,
+        });
+        this._dispatch = this.dispatchFor();
+      }
+    } else {
+      this.prepareChannels();
+      this.setupFineChannels();
+      this.setupQuickAccessors();
+      // A moving head reads DMX through the new mode's translation; the
+      // lens is the profile's whatever the mode.
+      if (this._engine) {
+        const type = translated(this.profileKey, this.OFLData);
+        const mode = type.modes[this.modeIndex] || type.modes[0];
+        const inputs = headInputs(type, mode);
+        this._3DModel.setModeInputs({ maxPan: inputs.panSpan, maxTilt: inputs.tiltSpan });
+        this._engine = markRaw(new DmxEngine(type, mode));
+        this._dispatch = this.dispatchFor();
+      }
+    }
+    // As a new fixture starts: every channel at nought, then what was set
+    // by hand, then every channel told to the head, which the mode change
+    // has put back to how a new head starts.
+    if (this.hasManualFocus && this._3DModel) this._3DModel.focus = this._focus;
+    this.channels.forEach((channel) => {
+      this.setChannel(channel.id - 1, 0);
+    });
+    this.applyParkedChannels();
+    if (this._dispatch) this._dispatch.applyAll();
   }
 
   get modeIndex() {
+    // The patch dialog chooses a mode by its place in the list.
+    if (Number.isInteger(this.modeName)) {
+      return this.modeName >= 0 && this.modeName < this.modeNames.length ? this.modeName : 0;
+    }
     const modeIndex = this.modeNames.indexOf(this.modeName);
     return modeIndex > -1 ? modeIndex : 0;
   }
@@ -613,10 +703,6 @@ class Fixture extends withTransform(Proxify) {
    */
   get modeNames() {
     return this.modes.map((mode) => mode.name);
-  }
-
-  get instance() {
-    return this;
   }
 
   /**
@@ -774,29 +860,13 @@ class Fixture extends withTransform(Proxify) {
   }
 
   /**
-   * Key this fixture's profile is stored and overridden under.
+   * Key this fixture's profile is stored under.
    *
    * @readonly
    * @type {String}
    */
   get profileKey() {
     return `${this.manufacturer}/${this.model}`;
-  }
-
-  /**
-   * Head slew rate in degrees per second. A property of the model rather than
-   * of this instance; writing it pushes straight through to the renderer so an
-   * edit is visible without reloading the show.
-   *
-   * @type {Number}
-   */
-  set panSpeed(value) {
-    this._panSpeed = Number(value) || DEFAULT_PAN_SPEED;
-    if (this._3DModel) this._3DModel.panSpeed = this._panSpeed;
-  }
-
-  get panSpeed() {
-    return this._panSpeed || DEFAULT_PAN_SPEED;
   }
 
   /**
@@ -810,15 +880,6 @@ class Fixture extends withTransform(Proxify) {
     const { dimensions } = (this.OFLData || {}).physical || {};
     const height = Array.isArray(dimensions) ? Number(dimensions[1]) : NaN;
     return height > 0 ? height / 1000 : null;
-  }
-
-  set tiltSpeed(value) {
-    this._tiltSpeed = Number(value) || DEFAULT_TILT_SPEED;
-    if (this._3DModel) this._3DModel.tiltSpeed = this._tiltSpeed;
-  }
-
-  get tiltSpeed() {
-    return this._tiltSpeed || DEFAULT_TILT_SPEED;
   }
 
   /**
@@ -1034,112 +1095,14 @@ class Fixture extends withTransform(Proxify) {
       return;
     }
 
-    const channel = this.channels[id]; // Getting channel instance from ID
-    if (channel.fineChannels.length > 0) { // Channel has fine capabilities ?
-      this.setChannel(channel.fineChannels[0].id - 1, (value % 1) * 255); // Setting fine channel values recursively
-    }
-    value = Math.ceil(Math.min(Math.max(value, 0), 255)); // Clamping value between 0 and 255
-    this.channels[id].value = value; // Setting channel's value
-
-    // A generated bar's emitters take their colour from the DMX texture, which
-    // the shader samples directly -- `prepare3DModelInstance` hands the
-    // renderer `pixelTexels`, not channel values. So everything below is work
-    // whose result nothing reads: `LedBar` has no `colorIntensity` setter, and
-    // the object `getValue` allocates for each channel is assigned to a plain
-    // property and dropped.
-    //
-    // It is not free work. A 256 x 256 tile is 196,608 channels arriving 40
-    // times a second, and each one would allocate an object and parse entity
-    // strings to fill it.
-    if (this._3DModel instanceof LedBar) return;
-
-    const capability = channel.getCapability(value); // Fetching channel's capability from value
-    // A preset is released by the channel that set it. Any other channel --
-    // channel 1, say -- may be unrelated to colour and, with diff input on, is
-    // never written unless it moves, so the preset would latch forever.
-    if (this._colorPresetChannelId === id
-      && (!capability || capability.type !== CAPABILITY_TYPES.ColorPreset)) {
-      this._3DModel.colorPreset = null;
-      this._colorPresetChannelId = null;
-    }
-    // A prism is released the same way: the channel that put it in takes it
-    // out when its value moves to a range that is not a prism.
-    if (this._prismChannelId === id
-      && (!capability || (capability.type !== CAPABILITY_TYPES.Prism
-        && capability.type !== CAPABILITY_TYPES.PrismRotation))
-      && typeof this._3DModel.setPrism === 'function') {
-      this._3DModel.setPrism(false);
-      this._prismChannelId = null;
-    }
-    if (capability) { // Making sure channel's capability is defined
-      const values = capability.getValue(value); // Fetching values from capability value
-      switch (capability.type) { // Checking capability type
-        case CAPABILITY_TYPES.ColorIntensity: // Capability is color
-          this._3DModel.colorIntensity = values; // Updating fixture 3D model color intensity with provided color value
-          break;
-        case CAPABILITY_TYPES.WheelSlot: { // Capability is wheelSlot
-          // Fractional on purpose: slot 2.5 is a split, the wheel parked with the
-          // boundary between slots 2 and 3 across the beam.
-          const slot = values.slotNumber - 1.0;
-          // The wheel is the one the capability names, or the channel's own
-          // name when it names none, which is OFL's rule. The head decides
-          // by the slot's type whether that is a colour, a gobo or a prism.
-          if (typeof this._3DModel.setWheelSlot === 'function') {
-            this._3DModel.setWheelSlot(values.wheel || channel.name, slot);
-          } else if (channel.type === WHEEL_CHANNEL_TYPES.COLOR_WHEEL) {
-            this._3DModel.colorWheelSlot = slot;
-          }
-          break;
-        }
-        case CAPABILITY_TYPES.WheelShake:
-          if (typeof this._3DModel.setWheelShake === 'function') {
-            this._3DModel.setWheelShake(values.wheel || channel.name, values);
-          }
-          break;
-        case CAPABILITY_TYPES.WheelSlotRotation:
-          if (typeof this._3DModel.setWheelSlotRotation === 'function') {
-            this._3DModel.setWheelSlotRotation(values.wheel || channel.name, values);
-          }
-          break;
-        case CAPABILITY_TYPES.WheelRotation:
-          if (typeof this._3DModel.setWheelRotation === 'function') {
-            this._3DModel.setWheelRotation(values.wheel || channel.name, values);
-          }
-          break;
-        case CAPABILITY_TYPES.Prism:
-          if (typeof this._3DModel.setPrism === 'function') {
-            // The facet count and layout are only ever in the text: the
-            // range's comment, or the channel's own name.
-            this._3DModel.setPrism(true, `${values.comment || ''} ${channel.name || ''}`);
-            this._prismChannelId = id;
-          }
-          break;
-        case CAPABILITY_TYPES.PrismRotation:
-          if (typeof this._3DModel.setPrismRotation === 'function') {
-            this._3DModel.setPrismRotation(values);
-          }
-          break;
-        case CAPABILITY_TYPES.Iris:
-          if (typeof this._3DModel.setIris === 'function') {
-            this._3DModel.setIris(values.openPercent / 100);
-          }
-          break;
-        case CAPABILITY_TYPES.ColorTemperature:
-          // Moves the white point rather than replacing the colour mix.
-          this._3DModel.colorTemperature = values.colorTemperature;
-          break;
-        case CAPABILITY_TYPES.ColorPreset: {
-          const preset = values.color ? values.color[0] : null;
-          this._3DModel.colorPreset = preset;
-          this._colorPresetChannelId = preset ? id : null;
-          break;
-        }
-        default:
-          Object.keys(values).forEach((val) => {
-            this._3DModel[val] = values[val];
-          });
-          break;
-      }
+    const clamped = Math.ceil(Math.min(Math.max(value, 0), 255));
+    if (this.channels[id]) this.channels[id].value = clamped;
+    // A moving head, from either kind of profile: the engine reads the byte in
+    // GDTF terms and the dispatcher acts on what changed. Any other fixture
+    // has no renderer yet and only keeps the value for the panels.
+    if (this._engine) {
+      const changed = this._engine.write(id, clamped);
+      if (this._dispatch) this._dispatch.apply(changed);
     }
   }
   /* eslint-disable max-len */
@@ -1152,6 +1115,10 @@ class Fixture extends withTransform(Proxify) {
    * @todo Implement other fixure categories
    */
   parseFromOFLData() {
+    if (this.fixtureType) {
+      this.parseFromGdtf();
+      return;
+    }
     // eslint-disable-next-line prefer-destructuring
     this.category = this.OFLData.categories[0]; // We're only interested in the first category asset ATM.
     this.wheels = this.OFLData.wheels; // Isolating and setting fixture's wheels configuration from OFL data
@@ -1162,6 +1129,7 @@ class Fixture extends withTransform(Proxify) {
     this.setupFineChannels();
     this.setupQuickAccessors();
     this.prepare3DModelInstance();
+    this.applyHidden();
   }
 
   /**
@@ -1171,6 +1139,180 @@ class Fixture extends withTransform(Proxify) {
    *
    * @public
    */
+  /**
+   * Builds the fixture from its GDTF fixture type: one channel row per
+   * address the mode occupies, read by the DMX engine, and a moving head
+   * driven through the dispatcher.
+   *
+   * @public
+   */
+  parseFromGdtf() {
+    const type = this.fixtureType;
+    this.modes = type.modes;
+    this._name = type.name;
+    const inputs = this.applyGdtfMode();
+    this.category = inputs.category;
+    this.wheels = wheelsForHead(type);
+    if (HEAD_CATEGORIES.includes(inputs.category)) {
+      const moving = inputs.category === FIXTURE_TYPES.MOVING_HEAD;
+      const spec = {
+        minAngle: inputs.minAngle || 10,
+        maxAngle: inputs.maxAngle || 25,
+        minTilt: 0,
+        maxTilt: inputs.tiltSpan || 0,
+        minPan: 0,
+        maxPan: inputs.panSpan || 0,
+        colorTemp: inputs.colorTemp || DEFAULT_COLOR_TEMP,
+        lumens: inputs.lumens,
+        bodyHeight: inputs.bodyHeight,
+        wheels: this.wheels,
+        // Null where the file has no RealFade; the head then uses its own.
+        panSpeed: inputs.panSpeed,
+        tiltSpeed: inputs.tiltSpeed,
+        // The file's own body, read when the type was loaded; the shipped
+        // one where a moving head's file has no meshes.
+        body: type.body || null,
+      };
+      this.createLight(spec, moving);
+      this._lightSpec = moving ? null : spec;
+      if (!moving) this.createLamps(spec, type.body);
+      this._dispatch = this.dispatchFor();
+    } else {
+      // No renderer for this type yet: patch it, address it, draw nothing.
+      this._3DModel = markRaw(unsupportedModel());
+    }
+    this.applyHidden();
+  }
+
+  /**
+   * Sets up the current mode of a GDTF fixture: its channel rows and the
+   * engine that reads them.
+   *
+   * @private
+   * @returns {Object} the head's inputs in this mode; see `headInputs`
+   */
+  applyGdtfMode() {
+    const type = this.fixtureType;
+    this.mode = type.modes[this.modeIndex] || type.modes[0];
+    // Kept by name from here on, which is what the show saves.
+    this.modeName = this.mode.name;
+    // Kept out of Vue's reactivity: it is written on every DMX packet.
+    this._engine = markRaw(new DmxEngine(type, this.mode));
+    this.channels = channelRows(this._engine);
+    this.setupQuickAccessors();
+    return headInputs(type, this.mode);
+  }
+
+  /**
+   * Builds the light, from either kind of profile: a moving head, or a light
+   * that stands still.
+   *
+   * @public
+   * @param {Object} spec angles, output, wheels and body, and a moving
+   *   head's travel and speeds
+   * @param {Boolean} moving whether it pans and tilts
+   */
+  createLight(spec, moving) {
+    const data = {
+      ...spec,
+      colorWheel: spec.wheels && spec.wheels['Color Wheel'] ? spec.wheels['Color Wheel'].slots : [],
+      intensity: 0.0,
+    };
+    const light = moving
+      ? new MovingHead({
+        ...data,
+        // At the centre of its travel, where the yoke and head are not turned.
+        pan: (spec.maxPan || 0) / 2,
+        tilt: (spec.maxTilt || 0) / 2,
+      })
+      : new Light(data);
+    light.position = this._position;
+    light.rotation = this._rotation;
+    // Kept out of Vue's reactivity: three.js cannot be handed an Object3D
+    // reached through a reactive proxy.
+    this._3DModel = markRaw(light);
+    // Reverse link, so a ray hitting the 3D model can name its fixture.
+    light.fixtureHandle = this;
+    // Pushed down after building: a fixture reloaded from a show carries its
+    // own answer, and the renderer starts every light with shadows off.
+    light.castsShadow = this._castsShadow;
+    if (this.hasManualFocus) light.focus = this._focus;
+  }
+
+  /**
+   * A light for each further lens of a static light in its mode: lamps, hung
+   * from the first, each lit with its own beam's share of the fixture's
+   * output. The lenses are those of the geometry the mode names, the first
+   * light's lens moved to the first of them. A fixture with one lens has
+   * none.
+   *
+   * @public
+   * @param {Object} spec what the first light was built from
+   * @param {Object|null} body the fixture type's body
+   */
+  createLamps(spec, body) {
+    const first = this._3DModel;
+    first.removeLamps();
+    this._lenses = null;
+    const sets = (body && body.lensSets) || {};
+    const lenses = sets[this.mode && this.mode.geometry] || (body && body.lenses) || [];
+    // A beam the file types None or Glow draws no beam; its geometry glows.
+    const glows = (lens) => ['None', 'Glow'].includes(lens.beam && lens.beam.beamType);
+    if (lenses.length) {
+      first.placeLens(lenses[0]);
+      first.glow = glows(lenses[0]);
+    }
+    if (lenses.length < 2) {
+      first.share = 1;
+      return;
+    }
+    const flux = lenses.map((lens) => Number(lens.beam && lens.beam.luminousFlux) || 0);
+    const total = flux.reduce((sum, f) => sum + f, 0);
+    const shareOf = (i) => (total > 0 ? flux[i] / total : 1 / lenses.length);
+    first.share = shareOf(0);
+    this._lenses = [{ head: first, path: lenses[0].path }];
+    lenses.slice(1).forEach((lens, k) => {
+      const lamp = new Light({
+        ...spec,
+        colorWheel: spec.wheels && spec.wheels['Color Wheel'] ? spec.wheels['Color Wheel'].slots : [],
+        intensity: 0.0,
+        body: null,
+        bodyHeight: null,
+        lamp: true,
+        lens: { frame: lens.frame, radius: lens.radius, face: lens.face },
+        share: shareOf(k + 1),
+        lumens: spec.lumens * shareOf(k + 1),
+        glow: glows(lens),
+      });
+      lamp.fixtureHandle = this;
+      first.attachLamp(markRaw(lamp));
+      this._lenses.push({ head: lamp, path: lens.path });
+    });
+  }
+
+  /**
+   * The dispatch that drives this fixture's light from its engine, through
+   * every lens it has.
+   *
+   * @private
+   * @returns {HeadDispatch}
+   */
+  dispatchFor() {
+    return markRaw(new HeadDispatch(this._3DModel, this._engine, this._lenses || null));
+  }
+
+  /**
+   * What a GDTF fixture's panels read until they read the GDTF model; see
+   * `listingFor`.
+   *
+   * @public
+   * @param {Object} type a GDTF fixture type
+   * @returns {Object}
+   */
+  static gdtfListing(type) {
+    return listingFor(type);
+  }
+
   notifyRepatched() {
     if (this._3DModel && this._3DModel.repatch) this._3DModel.repatch();
   }
@@ -1312,40 +1454,34 @@ class Fixture extends withTransform(Proxify) {
       && !!this.OFLData.physical;
 
     switch (renderable ? FIXTURE_TYPES.MOVING_HEAD : null) {
-      case FIXTURE_TYPES.MOVING_HEAD: { // Fixture is a moving head
-        const movingHead = new MovingHead({ // Creating new moving head instance
-          minAngle: this.OFLData.physical.lens ? this.OFLData.physical.lens.degreesMinMax[0] : 10, // Setting moving head's minimum beam angle
-          maxAngle: this.OFLData.physical.lens ? this.OFLData.physical.lens.degreesMinMax[1] : 25, // Setting moving head's maximum beam angle
-          minTilt: this.quickChannelsAccessors.Tilt ? this.quickChannelsAccessors.Tilt[0].minVal : 0,
-          maxTilt: this.quickChannelsAccessors.Tilt ? this.quickChannelsAccessors.Tilt[0].maxVal : 0,
-          minPan: this.quickChannelsAccessors.Pan ? this.quickChannelsAccessors.Pan[0].minVal : 0,
-          maxPan: this.quickChannelsAccessors.Pan ? this.quickChannelsAccessors.Pan[0].maxVal : 0,
+      case FIXTURE_TYPES.MOVING_HEAD: {
+        const { lens, bulb } = this.OFLData.physical;
+        // DMX reaches the head through the profile's GDTF translation, the
+        // same path a .gdtf takes. Modes keep their order in translation.
+        const type = translated(this.profileKey, this.OFLData);
+        const mode = type.modes[this.modeIndex] || type.modes[0];
+        // The travel across every pan and tilt function of the mode, as a
+        // GDTF fixture's is found.
+        const inputs = headInputs(type, mode);
+        this.createLight({
+          minAngle: lens ? lens.degreesMinMax[0] : 10,
+          maxAngle: lens ? lens.degreesMinMax[1] : 25,
+          minTilt: 0,
+          maxTilt: inputs.tiltSpan || 0,
+          minPan: 0,
+          maxPan: inputs.panSpan || 0,
           // Not every profile carries a bulb block; a daylight-ish default is
           // better than refusing to build the fixture.
-          colorTemp: (this.OFLData.physical.bulb || {}).colorTemperature || DEFAULT_COLOR_TEMP,
-          // Absent from OFL, which has no notion of how fast a head travels.
-          // A profile may carry its own `panSpeed` and `tiltSpeed` keys.
-          panSpeed: this.panSpeed,
-          tiltSpeed: this.tiltSpeed,
+          colorTemp: (bulb || {}).colorTemperature || DEFAULT_COLOR_TEMP,
+          lumens: Light.lumensOf(this.OFLData.physical),
           bodyHeight: this.bodyHeight,
-          intensity: 0.0, // Setting moving head's default intensity
-          pan: 128, // Setting moving head's default pan value
-          tilt: 128, // Setting moving head's default tilt value
-          colorWheel: this.OFLData.wheels && this.OFLData.wheels['Color Wheel'] ? this.OFLData.wheels['Color Wheel'].slots : [], // Providing color wheel data (if necessary)
           // Every wheel the profile has, by name: the head sorts them into
           // colour, gobo and prism wheels by what their slots hold, however
           // many of each there are.
           wheels: this.OFLData.wheels || {},
-        });
-        movingHead.position = this._position; // Setting moving head's position in 3D space
-        movingHead.rotation = this._rotation; // Setting moving head's rotation in 3D space
-        // Kept out of Vue's reactivity, as above.
-        this._3DModel = markRaw(movingHead); // Binding moving head instance to this fixture instance
-        // Reverse link, so a ray hitting the 3D model can name its fixture.
-        movingHead.fixtureHandle = this;
-        // Pushed down after building: a fixture reloaded from a show carries
-        // its own answer, and the renderer starts every head with shadows off.
-        movingHead.castsShadow = this._castsShadow;
+        }, true);
+        this._engine = markRaw(new DmxEngine(type, mode));
+        this._dispatch = this.dispatchFor();
         break;
       }
       default: {
@@ -1364,6 +1500,9 @@ class Fixture extends withTransform(Proxify) {
   prepareChannels() {
     const { OFLData } = this;
     this.mode = OFLData.modes[this.modeIndex] || OFLData.modes[0]; // Parsing and setting fixture channel mode
+    // Kept by name from here on, which is what the show saves: the patch
+    // dialog hands over a place in the list.
+    if (this.mode && this.mode.name) this.modeName = this.mode.name;
 
     // A generated bar's channels are a range, not a collection of objects:
     // every one of them is the same colour intensity under a different name,
@@ -1475,6 +1614,72 @@ class Fixture extends withTransform(Proxify) {
   }
 
   /**
+   * Whether the profile says the lens is focused by hand. OFL has no word for
+   * it, so a profile marks it Beam's way: `physical.lens.focus: "manual"`.
+   *
+   * @readonly
+   * @type {Boolean}
+   */
+  get hasManualFocus() {
+    const lens = ((this.OFLData || {}).physical || {}).lens || {};
+    return lens.focus === 'manual';
+  }
+
+  /**
+   * Where a hand-focused lens is wound to, 0 fully out to 100 fully in. On
+   * the placement, because each unit's lens is set on its own.
+   *
+   * @type {Number}
+   */
+  set focus(value) {
+    this._focus = Math.min(Math.max(Number(value) || 0, 0), 100);
+    if (this.hasManualFocus && this._3DModel && 'focus' in this._3DModel) {
+      this._3DModel.focus = this._focus;
+    }
+  }
+
+  get focus() {
+    return this._focus;
+  }
+
+  /**
+   * Whether this item is hidden from the scene: not drawn, giving no light,
+   * and not picked in the 3D view. Saved with the show. DMX still arrives,
+   * so showing it again shows what it is doing now.
+   *
+   * @type {Boolean}
+   */
+  set hidden(state) {
+    this._hidden = !!state;
+    this.applyHidden();
+  }
+
+  get hidden() {
+    return !!this._hidden;
+  }
+
+  /**
+   * Hidden by its own flag or by the structure or group holding it.
+   *
+   * @readonly
+   * @type {Boolean}
+   */
+  get isHidden() {
+    return !!(this._hidden
+      || (this.structure && this.structure.hidden)
+      || (this.group && this.group.hidden));
+  }
+
+  /**
+   * Pushes whether this is hidden down to what draws it.
+   *
+   * @public
+   */
+  applyHidden() {
+    if (this._3DModel && 'hidden' in this._3DModel) this._3DModel.hidden = this.isHidden;
+  }
+
+  /**
    * Whether this fixture is able to cast one at all.
    *
    * An emitter bar has no beam and no spotlight behind it, so the choice would
@@ -1511,8 +1716,12 @@ class Fixture extends withTransform(Proxify) {
    * @param {Boolean} state wheter the fixture Model should be highlighted or not
    */
   highlightSingle(state, centerControls = false) {
+    // A fixture with nothing to draw has no highlight to set, but is still
+    // selected.
     if (this._3DModel) {
-      this._3DModel.setSinglyHighlighted(state);
+      if (typeof this._3DModel.setSinglyHighlighted === 'function') {
+        this._3DModel.setSinglyHighlighted(state);
+      }
       if (state && centerControls) {
         Controls.detachAll();
         Controls.attach(this);
@@ -1556,8 +1765,8 @@ class Fixture extends withTransform(Proxify) {
     const model = instance._3DModel;
     if (model instanceof LedBar) {
       LedBar.deleteInstance(model);
-    } else if (instance.category === FIXTURE_TYPES.MOVING_HEAD) {
-      MovingHead.deleteInstance(model);
+    } else if (HEAD_CATEGORIES.includes(instance.category)) {
+      Light.deleteInstance(model);
     } else if (model && model.constructor
       && typeof model.constructor.deleteInstance === 'function') {
       // Asked of the renderer itself, so a new kind needs nothing added here.

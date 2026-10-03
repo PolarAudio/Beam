@@ -4,6 +4,10 @@ import * as THREE from 'three';
 import LightField from './light_field';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
+import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
+import { MTLLoader } from 'three/examples/jsm/loaders/MTLLoader.js';
+import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
+import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import SceneManager from './scene_manager';
 import primitiveGeometry from './primitive_geometry';
 import { castsContactShadow, standsUp } from './contact_shadows';
@@ -19,7 +23,7 @@ import { castsContactShadow, standsUp } from './contact_shadows';
  * them. A silo gantry of 5 primitives and 18,838 triangles costs 5 draw calls
  * for one placement, and so does the hundredth.
  *
- * This is the same trade `moving_head.js` makes for base, yoke and
+ * This is the same trade `light.js` makes for base, yoke and
  * head, generalised to whatever a `.glb` happens to contain. What it does not
  * change is vertex work -- a hundred gantries is still 1.9 M triangles to
  * rasterise, because that is a hundred gantries.
@@ -56,6 +60,169 @@ dracoLoader.setDecoderPath(DRACO_DECODER_PATH);
 const loader = new GLTFLoader()
   .setCrossOrigin('anonymous')
   .setDRACOLoader(dracoLoader);
+
+const fbxLoader = new FBXLoader();
+const stlLoader = new STLLoader();
+
+/** Colour of a surface whose file says nothing about one, as a created shape's. */
+const UNSTATED_COLOR = '#b0b4b8';
+
+/**
+ * The file extension a descriptor's model is stored under.
+ *
+ * @param {Object} descriptor a library entry
+ * @param {String} source the url it is loaded from
+ * @returns {String} lowercase, with the dot
+ */
+function extensionOf(descriptor, source) {
+  const name = descriptor.file || decodeURIComponent(String(source).split(/[?#]/)[0]);
+  const dot = name.lastIndexOf('.');
+  return dot === -1 ? '' : name.slice(dot).toLowerCase();
+}
+
+/**
+ * Loads an `.obj`, with the material library it names when there is one.
+ *
+ * The file is read as text first because its `mtllib` line is the only place
+ * the material file is named. A material library that will not load leaves the
+ * model grey rather than failing it.
+ *
+ * @param {String} source url of the `.obj`
+ * @returns {Promise<Object>} `{ scene }`
+ */
+async function loadObj(source) {
+  const text = await new THREE.FileLoader().loadAsync(source);
+  const objLoader = new OBJLoader();
+  const named = /^\s*mtllib\s+(.+?)\s*$/m.exec(text);
+  if (named) {
+    try {
+      const base = new URL(source, window.location.href);
+      const materials = await new MTLLoader().loadAsync(new URL(named[1].replace(/\\/g, '/'), base).href);
+      materials.preload();
+      objLoader.setMaterials(materials);
+    } catch (err) {
+      console.warn(`[object] ${source}: material library not loaded, ${err.message}`);
+    }
+  }
+  return { scene: objLoader.parse(text) };
+}
+
+/**
+ * Loads a model file of any supported format as `{ scene }`, the shape
+ * `GLTFLoader` gives, so everything after this is one path.
+ *
+ * An `.stl` is bare geometry, so it is given a mesh and the plain surface a
+ * created shape has -- with its vertex colours, when it carries any.
+ *
+ * @param {Object} descriptor a library entry
+ * @param {String} source the url to load
+ * @returns {Promise<Object>} `{ scene }`
+ */
+function loadModelFile(descriptor, source) {
+  switch (extensionOf(descriptor, source)) {
+    case '.obj':
+      return loadObj(source);
+    case '.fbx':
+      return fbxLoader.loadAsync(source).then((group) => ({ scene: group }));
+    case '.stl':
+      return stlLoader.loadAsync(source).then((geometry) => {
+        const material = new THREE.MeshStandardMaterial({
+          color: new THREE.Color(geometry.hasColors ? '#ffffff' : UNSTATED_COLOR),
+          roughness: 0.75,
+          metalness: 0,
+          vertexColors: !!geometry.hasColors,
+        });
+        const scene = new THREE.Group();
+        scene.add(new THREE.Mesh(geometry, material));
+        return { scene };
+      });
+    default:
+      return loader.loadAsync(source);
+  }
+}
+
+/**
+ * A material the room's lighting treats like every other surface.
+ *
+ * OBJ and FBX arrive as Phong or Lambert, which do not take the environment the
+ * way the standard material does, so a model would sit apart from everything
+ * around it. The colour and the maps are kept; the finish is the one created
+ * shapes use, because those formats' shininess does not map onto roughness in
+ * any way their exporters agree on.
+ *
+ * @param {Object} material THREE.Material from a loader
+ * @returns {Object} a MeshStandardMaterial
+ */
+function asStandard(material) {
+  if (!material || material.isMeshStandardMaterial) return material;
+  return new THREE.MeshStandardMaterial({
+    name: material.name,
+    color: material.color ? material.color.clone() : new THREE.Color(UNSTATED_COLOR),
+    map: material.map || null,
+    normalMap: material.normalMap || null,
+    alphaMap: material.alphaMap || null,
+    emissive: material.emissive ? material.emissive.clone() : new THREE.Color(0x000000),
+    emissiveMap: material.emissiveMap || null,
+    transparent: !!material.transparent,
+    opacity: material.opacity === undefined ? 1 : material.opacity,
+    side: material.side,
+    vertexColors: !!material.vertexColors,
+    roughness: 0.75,
+    metalness: 0,
+  });
+}
+
+/**
+ * One draw range of a geometry as a geometry of its own.
+ *
+ * @param {Object} geometry THREE.BufferGeometry
+ * @param {Number} start first index, or first vertex when not indexed
+ * @param {Number} count how many
+ * @returns {Object} THREE.BufferGeometry
+ */
+function subset(geometry, start, count) {
+  if (geometry.index) {
+    const end = Math.min(start + count, geometry.index.count);
+    const part = geometry.clone();
+    part.setIndex(Array.from(geometry.index.array.slice(start, end)));
+    part.clearGroups();
+    return part;
+  }
+  const total = geometry.attributes.position.count;
+  const end = Math.min(start + count, total);
+  const part = new THREE.BufferGeometry();
+  Object.entries(geometry.attributes).forEach(([name, attribute]) => {
+    const size = attribute.itemSize;
+    part.setAttribute(name, new THREE.BufferAttribute(
+      attribute.array.slice(start * size, end * size),
+      size,
+      attribute.normalized,
+    ));
+  });
+  return part;
+}
+
+/**
+ * A mesh's geometry and material, one pair per material it uses.
+ *
+ * OBJ and FBX put several materials on one mesh, one per group of faces; an
+ * instanced primitive draws with one. Split by group, so each face keeps the
+ * material it was given rather than all of them taking the first.
+ *
+ * @param {Object} geometry THREE.BufferGeometry
+ * @param {Object|Array} material one material, or one per group
+ * @returns {Array} `{ geometry, material, owned }`, owned when the geometry was
+ *   made here rather than borrowed from the loader
+ */
+function pieces(geometry, material) {
+  if (!Array.isArray(material)) return [{ geometry, material, owned: false }];
+  if (!geometry.groups.length) return [{ geometry, material: material[0], owned: false }];
+  return geometry.groups.map((group) => ({
+    geometry: subset(geometry, group.start, group.count),
+    material: material[group.materialIndex] || material[0],
+    owned: true,
+  }));
+}
 
 /** Loaded models by key, each holding its primitives and their placements. */
 const models = new Map();
@@ -155,18 +322,28 @@ function rescueMaterial(material) {
  */
 function flatten(gltf, fix) {
   const primitives = [];
+  // One converted material per original, so faces that shared one still do.
+  const converted = new Map();
+  const standard = (material) => {
+    if (!converted.has(material)) converted.set(material, rescueMaterial(asStandard(material)));
+    return converted.get(material);
+  };
   gltf.scene.updateMatrixWorld(true);
   gltf.scene.traverse((node) => {
     if (!node.isMesh || !node.geometry) return;
-    const geometry = node.geometry.clone();
-    geometry.applyMatrix4(scratch.matrix.copy(fix).multiply(node.matrixWorld));
-    // Normals no longer match the geometry once it has been scaled or turned.
-    if (!geometry.attributes.normal) geometry.computeVertexNormals();
-    geometry.computeBoundingBox();
-    geometry.computeBoundingSphere();
-    primitives.push({
-      geometry,
-      material: rescueMaterial(Array.isArray(node.material) ? node.material[0] : node.material),
+    pieces(node.geometry, node.material).forEach((piece) => {
+      const geometry = piece.owned ? piece.geometry : piece.geometry.clone();
+      // A placed model is drawn at rest. Morph targets would need per-instance
+      // weights an instanced mesh does not carry, and the renderer stops on
+      // the first frame that finds targets without them.
+      geometry.morphAttributes = {};
+      geometry.morphTargetsRelative = false;
+      geometry.applyMatrix4(scratch.matrix.copy(fix).multiply(node.matrixWorld));
+      // Normals no longer match the geometry once it has been scaled or turned.
+      if (!geometry.attributes.normal) geometry.computeVertexNormals();
+      geometry.computeBoundingBox();
+      geometry.computeBoundingSphere();
+      primitives.push({ geometry, material: standard(piece.material) });
     });
   });
   return primitives;
@@ -275,9 +452,7 @@ async function buildPreview(descriptor) {
 
   const gltf = descriptor.kind === 'primitive'
     ? null
-    : await new Promise((resolve, reject) => {
-      loader.load(source, resolve, undefined, reject);
-    });
+    : await loadModelFile(descriptor, source);
 
   const primitives = gltf
     ? flatten(gltf, correction(descriptor))
@@ -321,9 +496,7 @@ async function load(descriptor) {
 
   const fetched = descriptor.kind === 'primitive'
     ? Promise.resolve(null)
-    : new Promise((resolve, reject) => {
-      loader.load(source, resolve, undefined, reject);
-    });
+    : loadModelFile(descriptor, source);
 
   const pending = fetched.then((gltf) => {
     const primitives = gltf
@@ -386,7 +559,7 @@ function writeInstance(model, index, placement) {
   scratch.position.set(placement.position.x, placement.position.y, placement.position.z);
   scratch.euler.set(placement.rotation.x, placement.rotation.y, placement.rotation.z);
   scratch.quaternion.setFromEuler(scratch.euler);
-  scratch.scale.setScalar(placement.scale === undefined ? 1 : placement.scale);
+  scratch.scale.setScalar(drawnScale(placement));
   scratch.matrix.compose(scratch.position, scratch.quaternion, scratch.scale);
   model.meshes.forEach((mesh) => {
     mesh.setMatrixAt(index, scratch.matrix);
@@ -400,11 +573,28 @@ function writeInstance(model, index, placement) {
     // old sphere.
     //
     // Nulled rather than recomputed, so the cost is paid on the next raycast
-    // rather than on every write. `MovingHead` recomputes on every pick for the
+    // rather than on every write. `Light` recomputes on every pick for the
     // same reason; this is the cheaper half of the same fix.
     mesh.boundingSphere = null;
     mesh.boundingBox = null;
   });
+}
+
+/**
+ * The scale a placement is drawn at: its own, or nothing while its owner is
+ * hidden.
+ *
+ * A hidden object keeps its row, collapsed to a point, rather than being
+ * taken out of the packed array: nothing else is renumbered, and showing it
+ * again is one matrix write. A collapsed instance draws nothing, casts
+ * nothing and blocks no light.
+ *
+ * @param {Object} placement
+ * @returns {Number}
+ */
+function drawnScale(placement) {
+  if (placement.owner && placement.owner.isHidden) return 0;
+  return placement.scale === undefined ? 1 : placement.scale;
 }
 
 /**
@@ -594,7 +784,7 @@ function syncFromOwners() {
       dummy.updateMatrixWorld();
       dummy.getWorldPosition(scratch.position);
       dummy.getWorldQuaternion(scratch.quaternion);
-      scratch.scale.setScalar(placement.scale === undefined ? 1 : placement.scale);
+      scratch.scale.setScalar(drawnScale(placement));
       scratch.matrix.compose(scratch.position, scratch.quaternion, scratch.scale);
       model.meshes.forEach((mesh) => {
         mesh.setMatrixAt(index, scratch.matrix);

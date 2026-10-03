@@ -1,7 +1,7 @@
 // eslint-disable-next-line import/extensions, import/no-unresolved
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import Laser from './laser';
-import MovingHead from './moving_head';
+import Light from './light';
 import LEDField from './led_field';
 import LEDPanel from './led_panel';
 import Perf from './perf_overlay';
@@ -97,7 +97,7 @@ export default function createLEDDebugPanel(visualizer, host) {
     contactEdge: ContactShadows.edge(),
     strictPatch: PatchSingleton.strict,
     // Mover beams
-    beamOcclusion: MovingHead.occlusion(),
+    beamOcclusion: Light.occlusion(),
     beamDebug: 0,
     // Laser
     laserAir: Laser.scatterGain(),
@@ -337,7 +337,7 @@ export default function createLEDDebugPanel(visualizer, host) {
   // with beams passing through walls because a switch was left off.
   beam.add(state, 'beamOcclusion')
     .name('stop at surfaces')
-    .onChange((v) => MovingHead.setOcclusion(v));
+    .onChange((v) => Light.setOcclusion(v));
   // One shader term as greyscale, to see which one carries a fault.
   beam.add(state, 'beamDebug', {
     beam: 0,
@@ -350,7 +350,7 @@ export default function createLEDDebugPanel(visualizer, host) {
     intensity: 7,
   })
     .name('draw term')
-    .onChange((v) => MovingHead.setDebugTerm(v));
+    .onChange((v) => Light.setDebugTerm(v));
 
   // Two separate hands, because a laser is drawn twice: the shaft through the
   // haze is geometry, the figure on the stone is a projected picture. Turning

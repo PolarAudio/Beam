@@ -81,7 +81,7 @@ vec2 prismOffset(int k, int facets, bool linear, float angle, float spread) {
 
 /**
  * How much wider than the beam's cone its depth tile looks, as a ratio of the
- * half-angle's tangent. Must match `DEPTH_FOV_MARGIN` in moving_head.js,
+ * half-angle's tangent. Must match `DEPTH_FOV_MARGIN` in light.js,
  * which draws the tile.
  */
 #define DEPTH_FOV_MARGIN 1.2

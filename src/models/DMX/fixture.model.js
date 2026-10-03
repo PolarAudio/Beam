@@ -5,6 +5,7 @@ import {
 import Channel from './channel.model';
 import BarChannels from './bar_channels';
 import PatchSingleton, { DMX_UNIVERSE_LENGTH, channelAddress } from './patch.model';
+import Light from '../../plugins/visualizer/light';
 import MovingHead from '../../plugins/visualizer/moving_head';
 import LedBar from '../../plugins/visualizer/led_bar';
 import Projector from '../../plugins/visualizer/projector';
@@ -277,7 +278,7 @@ class Fixture extends withTransform(Proxify) {
       this.structure = null;
       /**
        * Whether this fixture's beam casts a shadow. Off unless asked for --
-       * see MovingHead's own accessor for why it is not given away freely.
+       * see Light's own accessor for why it is not given away freely.
        */
       this._castsShadow = !!data.castsShadow;
       /** Where a hand-set lens is wound to: see `focus`. */
@@ -1149,7 +1150,7 @@ class Fixture extends withTransform(Proxify) {
     this.category = inputs.category;
     this.wheels = wheelsForHead(type);
     if (HEAD_CATEGORIES.includes(inputs.category)) {
-      this.createMovingHead({
+      this.createLight({
         minAngle: inputs.minAngle || 10,
         maxAngle: inputs.maxAngle || 25,
         minTilt: 0,
@@ -1164,9 +1165,9 @@ class Fixture extends withTransform(Proxify) {
         panSpeed: inputs.panSpeed,
         tiltSpeed: inputs.tiltSpeed,
         // The file's own body, read when the type was loaded; the shipped
-        // one where the file has no meshes.
+        // one where a moving head's file has no meshes.
         body: type.body || null,
-      });
+      }, inputs.category === FIXTURE_TYPES.MOVING_HEAD);
       this._dispatch = markRaw(new HeadDispatch(this._3DModel, this._engine));
     } else {
       // No renderer for this type yet: patch it, address it, draw nothing.
@@ -1195,32 +1196,39 @@ class Fixture extends withTransform(Proxify) {
   }
 
   /**
-   * Builds the moving head, from either kind of profile.
+   * Builds the light, from either kind of profile: a moving head, or a light
+   * that stands still.
    *
    * @public
-   * @param {Object} spec angles, ranges, output and wheels
+   * @param {Object} spec angles, output, wheels and body, and a moving
+   *   head's travel and speeds
+   * @param {Boolean} moving whether it pans and tilts
    */
-  createMovingHead(spec) {
-    const movingHead = new MovingHead({
+  createLight(spec, moving) {
+    const data = {
       ...spec,
       colorWheel: spec.wheels && spec.wheels['Color Wheel'] ? spec.wheels['Color Wheel'].slots : [],
       intensity: 0.0,
-      // At the centre of its travel, where the yoke and head are not turned;
-      // a light that neither pans nor tilts stays there.
-      pan: (spec.maxPan || 0) / 2,
-      tilt: (spec.maxTilt || 0) / 2,
-    });
-    movingHead.position = this._position;
-    movingHead.rotation = this._rotation;
+    };
+    const light = moving
+      ? new MovingHead({
+        ...data,
+        // At the centre of its travel, where the yoke and head are not turned.
+        pan: (spec.maxPan || 0) / 2,
+        tilt: (spec.maxTilt || 0) / 2,
+      })
+      : new Light(data);
+    light.position = this._position;
+    light.rotation = this._rotation;
     // Kept out of Vue's reactivity: three.js cannot be handed an Object3D
     // reached through a reactive proxy.
-    this._3DModel = markRaw(movingHead);
+    this._3DModel = markRaw(light);
     // Reverse link, so a ray hitting the 3D model can name its fixture.
-    movingHead.fixtureHandle = this;
+    light.fixtureHandle = this;
     // Pushed down after building: a fixture reloaded from a show carries its
-    // own answer, and the renderer starts every head with shadows off.
-    movingHead.castsShadow = this._castsShadow;
-    if (this.hasManualFocus) movingHead.focus = this._focus;
+    // own answer, and the renderer starts every light with shadows off.
+    light.castsShadow = this._castsShadow;
+    if (this.hasManualFocus) light.focus = this._focus;
   }
 
   /**
@@ -1385,7 +1393,7 @@ class Fixture extends withTransform(Proxify) {
         // The travel across every pan and tilt function of the mode, as a
         // GDTF fixture's is found.
         const inputs = headInputs(type, mode);
-        this.createMovingHead({
+        this.createLight({
           minAngle: lens ? lens.degreesMinMax[0] : 10,
           maxAngle: lens ? lens.degreesMinMax[1] : 25,
           minTilt: 0,
@@ -1395,13 +1403,13 @@ class Fixture extends withTransform(Proxify) {
           // Not every profile carries a bulb block; a daylight-ish default is
           // better than refusing to build the fixture.
           colorTemp: (bulb || {}).colorTemperature || DEFAULT_COLOR_TEMP,
-          lumens: MovingHead.lumensOf(this.OFLData.physical),
+          lumens: Light.lumensOf(this.OFLData.physical),
           bodyHeight: this.bodyHeight,
           // Every wheel the profile has, by name: the head sorts them into
           // colour, gobo and prism wheels by what their slots hold, however
           // many of each there are.
           wheels: this.OFLData.wheels || {},
-        });
+        }, true);
         this._engine = markRaw(new DmxEngine(type, mode));
         this._dispatch = markRaw(new HeadDispatch(this._3DModel, this._engine));
         break;
@@ -1688,7 +1696,7 @@ class Fixture extends withTransform(Proxify) {
     if (model instanceof LedBar) {
       LedBar.deleteInstance(model);
     } else if (HEAD_CATEGORIES.includes(instance.category)) {
-      MovingHead.deleteInstance(model);
+      Light.deleteInstance(model);
     } else if (model && model.constructor
       && typeof model.constructor.deleteInstance === 'function') {
       // Asked of the renderer itself, so a new kind needs nothing added here.

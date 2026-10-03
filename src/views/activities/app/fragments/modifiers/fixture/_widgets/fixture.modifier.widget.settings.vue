@@ -557,7 +557,7 @@
 
 <script>
 import { DMX_UNIVERSE_LENGTH } from '@/models/DMX/patch.model';
-import { MAX_SHADOW_CASTERS } from '@/plugins/visualizer/moving_head';
+import { MAX_SHADOW_CASTERS } from '@/plugins/visualizer/light';
 import { imageSizeAt } from '@/models/DMX/generic/projector';
 import { GENERIC_KINDS } from '@/models/DMX/generic/kinds';
 import LaserStream from '@/plugins/laser_stream';

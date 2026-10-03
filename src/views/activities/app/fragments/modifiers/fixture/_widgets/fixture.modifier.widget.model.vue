@@ -272,7 +272,7 @@ import gdtfGuide from '@/models/DMX/gdtf/gdtf_guide';
 import DmxEngine from '@/models/DMX/gdtf/dmx_engine';
 import { headInputs } from '@/models/DMX/gdtf/fixture_parts';
 import { formatAddress } from '@/models/DMX/address_format';
-import MovingHead from '@/plugins/visualizer/moving_head';
+import Light from '@/plugins/visualizer/light';
 
 /** A whole number with thousands separators. */
 const grouped = (n) => Math.round(n).toLocaleString('en-GB');
@@ -282,8 +282,8 @@ const grouped = (n) => Math.round(n).toLocaleString('en-GB');
  * puts on a surface 10 m away there.
  */
 function peakFact(lumens, narrow, wide) {
-  const atNarrow = MovingHead.peakAtZoom(lumens, narrow);
-  const atWide = MovingHead.peakAtZoom(lumens, wide);
+  const atNarrow = Light.peakAtZoom(lumens, narrow);
+  const atWide = Light.peakAtZoom(lumens, wide);
   const lux = (cd) => `${grouped(cd / 100)} lux at 10 m`;
   const value = narrow === wide
     ? `${grouped(atWide)} cd · ${lux(atWide)}`
@@ -402,7 +402,7 @@ export default {
       if (lens) {
         const [narrow, wide] = lens;
         facts.push({ label: 'Zoom', value: narrow === wide ? `${narrow}°` : `${narrow}° – ${wide}°` });
-        const lumens = this.isMover ? MovingHead.lumensOf(physical) : null;
+        const lumens = this.isMover ? Light.lumensOf(physical) : null;
         if (lumens) facts.push(peakFact(lumens, narrow, wide));
       }
       if (physical.weight) facts.push({ label: 'Weight', value: `${physical.weight} kg` });
@@ -750,7 +750,7 @@ export default {
         const lumens = stated > 0 ? stated : Number(projector.lumens);
         return lumens > 0 ? `${grouped(lumens)} lm` : '';
       }
-      const used = MovingHead.lumensOf(physical);
+      const used = Light.lumensOf(physical);
       if (!used) return 'not stated · lit as the reference head';
       if (used === stated) return `${grouped(used)} lm`;
       const from = `estimated from ${grouped(physical.power)} W`;

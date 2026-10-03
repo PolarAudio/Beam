@@ -30,7 +30,7 @@ import { normaliseMatrixProfile } from './ofl_matrix';
 import readGdtf, { wheelImages } from './gdtf/gdtf_reader';
 import buildBody from '../../plugins/visualizer/gdtf_body';
 import { headInputs } from './gdtf/fixture_parts';
-import { MAX_SHADOW_CASTERS } from '../../plugins/visualizer/moving_head';
+import { MAX_SHADOW_CASTERS } from '../../plugins/visualizer/light';
 
 const SHOWFILE_EXTENSIONS = {
   JSON: 'json',

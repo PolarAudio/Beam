@@ -156,7 +156,7 @@ function gdtfAction(c, origins) {
 
 export default class HeadDispatch {
   /**
-   * @param {Object} head a MovingHead
+   * @param {Object} head the light it drives: a `Light`, or a `MovingHead`
    * @param {Object} engine a DmxEngine for the same fixture
    */
   constructor(head, engine) {

@@ -176,7 +176,7 @@ const uniforms = {
   lightFieldCount: { value: 0 },
   // Sources write candela on the lux scale; light falls as the inverse square.
   lightFieldDecay: { value: 2 },
-  // The mover depth atlas, set by `MovingHead.renderDepth` each frame.
+  // The mover depth atlas, set by `Light.renderDepth` each frame.
   lightFieldDepth: { value: null },
   lightFieldDepthFar: { value: 1 },
   lightFieldDepthBias: { value: 0.05 },
@@ -326,7 +326,7 @@ uniform float lightFieldDepthBias;
 uniform float lightFieldDepthTile;
 uniform sampler2D lightFieldGobo;
 
-// The tile looks wider than the field by this, as in moving_head.js.
+// The tile looks wider than the field by this, as in light.js.
 #define FIELD_DEPTH_FOV_MARGIN 1.2
 // How much of the light a prism lets through, as in the beam shader.
 #define FIELD_PRISM_TRANSMISSION 0.88

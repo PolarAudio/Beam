@@ -23,7 +23,7 @@ import { castsContactShadow, standsUp } from './contact_shadows';
  * them. A silo gantry of 5 primitives and 18,838 triangles costs 5 draw calls
  * for one placement, and so does the hundredth.
  *
- * This is the same trade `moving_head.js` makes for base, yoke and
+ * This is the same trade `light.js` makes for base, yoke and
  * head, generalised to whatever a `.glb` happens to contain. What it does not
  * change is vertex work -- a hundred gantries is still 1.9 M triangles to
  * rasterise, because that is a hundred gantries.
@@ -556,7 +556,7 @@ function writeInstance(model, index, placement) {
     // old sphere.
     //
     // Nulled rather than recomputed, so the cost is paid on the next raycast
-    // rather than on every write. `MovingHead` recomputes on every pick for the
+    // rather than on every write. `Light` recomputes on every pick for the
     // same reason; this is the cheaper half of the same fix.
     mesh.boundingSphere = null;
     mesh.boundingBox = null;

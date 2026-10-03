@@ -8,7 +8,7 @@ import closestEuler from '@/models/DMX/closest_euler';
 import { SCENE_ITEM_KINDS, kindOf } from '@/models/DMX/scene_item';
 import Selection from '@/models/DMX/selection';
 import SceneManager from './scene_manager';
-import MovingHead from './moving_head';
+import Light from './light';
 import LedBar from './led_bar';
 import Projector from './projector';
 import Display from './display';
@@ -50,7 +50,7 @@ import GroupHandle from './group_handle';
  * @constant {Array}
  */
 const SCENE_RENDERERS = [
-  MovingHead, LedBar, Projector, Display, Laser, Strobe, SceneObjects, GroupHandle,
+  Light, LedBar, Projector, Display, Laser, Strobe, SceneObjects, GroupHandle,
 ];
 
 function selectionKey(item) {
@@ -98,7 +98,7 @@ function ownerOfHit(hit) {
   if (userData.ledBar) return userData.ledBar.fixtureHandle || null;
   if (userData.sceneObjectModel) return SceneObjects.ownerAt(hit.object, hit.instanceId);
   if (hit.instanceId === undefined) return null;
-  const instance = MovingHead.getInstance(hit.instanceId);
+  const instance = Light.getInstance(hit.instanceId);
   return (instance && instance.fixtureHandle) || null;
 }
 

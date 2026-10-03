@@ -10,7 +10,7 @@ import SceneManager from './scene_manager';
 import AnimationManager from './animation_manager';
 import Controls from './controls';
 import ViewCube from './view_cube';
-import MovingHead from './moving_head';
+import Light from './light';
 import InfiniteGridHelper from './grid';
 import LEDField from './led_field';
 import LightField from './light_field';
@@ -1039,7 +1039,7 @@ class Visualizer {
     this.globalLightHandle.castShadow = false;
     this.globalLightHandle.position.set(-10, -10, 10);
 
-    MovingHead.prepareInstanciation(this.camera, SceneManager);
+    Light.prepareInstanciation(this.camera, SceneManager);
 
     // The beams have their uniforms from `SceneEnv` as they are built, so
     // there is nothing to push at them here. The bloom is this side's business
@@ -1048,7 +1048,7 @@ class Visualizer {
     SceneEnv.on('changed', () => this.applyFogToBloom());
 
     AnimationManager.add((t) => {
-      MovingHead.update(t);
+      Light.update(t);
       LEDField.update(t);
       // The strobes' flash trains, before the field packs them and before the
       // wash reads what they did to the camera.
@@ -1080,8 +1080,8 @@ class Visualizer {
       // projectors' depth pass above.
       Laser.renderDepth(this.renderer, SceneManager);
       // Each lit mover beam's depth from its lens, the same way, within a
-      // per-frame tile budget; see `MovingHead.renderDepth`.
-      MovingHead.renderDepth(this.renderer, SceneManager);
+      // per-frame tile budget; see `Light.renderDepth`.
+      Light.renderDepth(this.renderer, SceneManager);
       Laser.renderFigures(this.renderer);
       if (laserEffect) {
         laserEffect.setLasers(
@@ -1937,7 +1937,7 @@ class Visualizer {
       // Only opaque geometry is in it: beams write no depth, so they never
       // end against each other, which is right. A beam is air, not a wall.
       if (finalComposer && finalComposer.stableDepthTexture) {
-        MovingHead.setSceneDepth(finalComposer.stableDepthTexture, this.camera);
+        Light.setSceneDepth(finalComposer.stableDepthTexture, this.camera);
       }
       if (finalComposer) {
         finalComposer.render();

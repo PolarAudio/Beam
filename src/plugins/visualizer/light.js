@@ -819,6 +819,12 @@ class Light {
      */
     this._lamp = !!data.lamp;
     this._lens = data.lens || null;
+    /**
+     * Whether the lens only glows: a GDTF beam of type None or Glow, which
+     * the file says draws no beam, the geometry giving the light itself. Its
+     * face lights and its light still lands; there is no beam in the air.
+     */
+    this._glow = !!data.glow;
     /** The lamps hung from this light, which follow what is done to it. */
     this._lamps = [];
     /** What the shutter let through this frame, 0..1. */
@@ -2320,6 +2326,20 @@ class Light {
   }
 
   /**
+   * Whether the lens only glows; see the constructor.
+   *
+   * @type {Boolean}
+   */
+  set glow(glow) {
+    this._glow = !!glow;
+    this.writeLight();
+  }
+
+  get glow() {
+    return this._glow;
+  }
+
+  /**
    * This lens's share of the fixture's light: its output is the fixture's
    * times this, now and in every mode.
    *
@@ -2725,7 +2745,7 @@ class Light {
     const lit = this._hidden ? 0
       : this._intensity * this._shutter * this.peakUnits();
     this._spotLight.intensity = SPOTLIGHT_PHYSICALLY_CORRECT_INTENSITY * lit;
-    intensity_buffer_attribute.setX(this._id, lit);
+    intensity_buffer_attribute.setX(this._id, this._glow ? 0 : lit);
     intensity_buffer_attribute.needsUpdate = true;
     this.updateLensColor();
   }

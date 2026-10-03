@@ -1256,7 +1256,12 @@ class Fixture extends withTransform(Proxify) {
     this._lenses = null;
     const sets = (body && body.lensSets) || {};
     const lenses = sets[this.mode && this.mode.geometry] || (body && body.lenses) || [];
-    if (lenses.length) first.placeLens(lenses[0]);
+    // A beam the file types None or Glow draws no beam; its geometry glows.
+    const glows = (lens) => ['None', 'Glow'].includes(lens.beam && lens.beam.beamType);
+    if (lenses.length) {
+      first.placeLens(lenses[0]);
+      first.glow = glows(lenses[0]);
+    }
     if (lenses.length < 2) {
       first.share = 1;
       return;
@@ -1277,6 +1282,7 @@ class Fixture extends withTransform(Proxify) {
         lens: { frame: lens.frame, radius: lens.radius },
         share: shareOf(k + 1),
         lumens: spec.lumens * shareOf(k + 1),
+        glow: glows(lens),
       });
       lamp.fixtureHandle = this;
       first.attachLamp(markRaw(lamp));

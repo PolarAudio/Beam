@@ -658,9 +658,9 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
   // chord, and a few samples of it are that integral.
   //
   // **Each sample also asks the beam's own depth tile whether the lens can
-  // see it.** The tile was drawn from a camera at the beam's origin looking
-  // down the axis with its up along the beam's y, so a sample's place in
-  // it is its offset from the origin resolved on the beam's axes. Past the
+  // see it.** The tile was drawn from a camera at the lens looking down the
+  // axis with its up along the beam's y, so a sample's place in it is its
+  // offset from the lens resolved on the beam's axes. Past the
   // first surface the lens sees, the light never arrived: the sample is
   // dark, which is what stops a beam at a wall and shadows the air behind
   // a cube standing in it. A sample outside the tile, which happens only in

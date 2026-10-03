@@ -14,6 +14,7 @@ import {
 } from '../../models/DMX/generic/laser';
 import BodyFinish from './body_finish';
 import { castsContactShadow } from './contact_shadows';
+import { setOutlined } from './selection_outline';
 
 /**
  * The lasers' own depth atlas, so a beam can stop at the first surface each ray
@@ -143,9 +144,6 @@ const BODY = new BodyFinish({
  * dialog's lens.
  */
 const APERTURE_MATERIAL = new THREE.MeshBasicMaterial({ color: 0x1ca6bd });
-
-/** Outline shown while a laser is selected. Matches the projector's. */
-const HIGHLIGHT_MATERIAL = new THREE.LineBasicMaterial({ color: 0x1ca6bd });
 
 /** The aim line, drawn only while selected. */
 const AIM_MATERIAL = new THREE.LineBasicMaterial({
@@ -498,13 +496,6 @@ class Laser {
     this._aperture.userData.pickOwner = this;
     this._dummy.add(this._aperture);
 
-    this._outline = new THREE.LineSegments(
-      new THREE.EdgesGeometry(BOX_GEOMETRY),
-      HIGHLIGHT_MATERIAL,
-    );
-    this._outline.visible = false;
-    this._dummy.add(this._outline);
-
     this._aim = new THREE.LineSegments(new THREE.BufferGeometry(), AIM_MATERIAL);
     this._aim.visible = false;
     this._dummy.add(this._aim);
@@ -583,7 +574,6 @@ class Laser {
     // Width across, depth front-to-back, height up -- the box stands the way
     // the machine does.
     this._body.scale.set(width, depth, height);
-    this._outline.scale.copy(this._body.scale);
 
     // The model measures the aperture from the centre of the front panel, seen
     // by someone facing it; same unnegated -Y/+Z convention as the projector's
@@ -951,8 +941,18 @@ class Laser {
    * @param {Boolean} state
    */
   showAids(state) {
-    this._outline.visible = !!state;
+    setOutlined(this, !!state, this.outlineMeshes());
     this._aim.visible = !!state;
+  }
+
+  /**
+   * What the selection outline is drawn round: its body and aperture.
+   *
+   * @public
+   * @returns {Array<THREE.Mesh>}
+   */
+  outlineMeshes() {
+    return [this._body, this._aperture];
   }
 
   /**
@@ -1020,7 +1020,7 @@ class Laser {
     if (!instance) return;
     instances.delete(instance);
     if (instance._aim && instance._aim.geometry) instance._aim.geometry.dispose();
-    if (instance._outline && instance._outline.geometry) instance._outline.geometry.dispose();
+    setOutlined(instance, false);
     if (instance._beamGeo) instance._beamGeo.dispose();
     if (instance._beamMaterial) instance._beamMaterial.dispose();
     if (instance._figure) {

@@ -6,6 +6,7 @@ import { castsContactShadow } from './contact_shadows';
 import BodyFinish from './body_finish';
 import Shutter, { SHUTTER_MODES } from './shutter';
 import { GLOW_UNIFORMS, GLOW_FRAGMENT } from './led_field';
+import { setOutlined } from './selection_outline';
 import {
   DEFAULT_STROBE_PARAMS, faceOrigin, faceSize, floodHalfAngles, floodSolidAngle,
   lumens, isXenon, flashLumenSeconds,
@@ -71,9 +72,6 @@ const BODY = new BodyFinish({
   metalness: 0.25,
   lift: 0.4,
 });
-
-/** Outline shown while a strobe is selected. Matches the projector's. */
-const HIGHLIGHT_MATERIAL = new THREE.LineBasicMaterial({ color: 0x1ca6bd });
 
 /** The flood, drawn only while selected -- see `showAids`. */
 const AID_MATERIAL = new THREE.LineBasicMaterial({
@@ -288,13 +286,6 @@ class Strobe {
     this._glow.visible = false;
     this._dummy.add(this._glow);
 
-    this._outline = new THREE.LineSegments(
-      new THREE.EdgesGeometry(BOX_GEOMETRY),
-      HIGHLIGHT_MATERIAL,
-    );
-    this._outline.visible = false;
-    this._dummy.add(this._outline);
-
     this._aid = new THREE.LineSegments(new THREE.BufferGeometry(), AID_MATERIAL);
     this._aid.visible = false;
     this._dummy.add(this._aid);
@@ -319,7 +310,6 @@ class Strobe {
 
     // Width across, depth front-to-back, height up.
     this._body.scale.set(width, depth, height);
-    this._outline.scale.copy(this._body.scale);
 
     const face = faceSize(params);
     const origin = faceOrigin(params);
@@ -656,8 +646,18 @@ class Strobe {
    * @param {Boolean} state
    */
   showAids(state) {
-    this._outline.visible = !!state;
+    setOutlined(this, !!state, this.outlineMeshes());
     this._aid.visible = !!state;
+  }
+
+  /**
+   * What the selection outline is drawn round: its body and faces.
+   *
+   * @public
+   * @returns {Array<THREE.Mesh>}
+   */
+  outlineMeshes() {
+    return [this._body, this._face, this._faceSecond];
   }
 
   /**
@@ -715,7 +715,7 @@ class Strobe {
     instances.delete(instance);
     LightField.unregister(instance);
     if (instance._aid && instance._aid.geometry) instance._aid.geometry.dispose();
-    if (instance._outline && instance._outline.geometry) instance._outline.geometry.dispose();
+    setOutlined(instance, false);
     if (instance._faceMaterial) instance._faceMaterial.dispose();
     if (instance._faceSecondMaterial) instance._faceSecondMaterial.dispose();
     if (instance._glowMaterial) instance._glowMaterial.dispose();

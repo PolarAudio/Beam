@@ -578,8 +578,7 @@ const LightField = {
    * Teaches one material to read the field.
    *
    * Idempotent, and safe on a material that already has an `onBeforeCompile`
-   * of its own -- the existing one is kept and run first, which matters
-   * because `MODEL_MATERIAL` uses one for its highlight attribute.
+   * of its own -- the existing one is kept and run first.
    *
    * @public
    * @param {THREE.Material} material

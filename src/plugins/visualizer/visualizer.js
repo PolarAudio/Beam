@@ -82,6 +82,7 @@ import ContactShadows from './contact_shadows';
 import LaserEffect from './laser_pass';
 import Strobe from './strobe';
 import StrobeWashEffect from './strobe_wash';
+import { SelectionOutlineEffect, setSceneDepth as setOutlineDepth } from './selection_outline';
 import Recorder from './recorder';
 import {
   EffectComposer,
@@ -107,6 +108,7 @@ let projectorEffect = null;
 let laserEffect = null;
 /** Whites the frame when a strobe fires at the camera. */
 let strobeWashEffect = null;
+let selectionOutlineEffect = null;
 /** Scratch for the wash summed over every strobe each frame. */
 const strobeWash = new THREE.Color();
 
@@ -1362,9 +1364,13 @@ class Visualizer {
     // calibrated in lux against a real rig, and a glow would change how every
     // mapping show looks.
     finalComposer.addPass(new EffectPass(this.camera, laserEffect));
+    // Last, after the tone curve: the outline is a mark on the picture, not
+    // light in the scene, and its orange is the orange it is drawn in.
+    selectionOutlineEffect = new SelectionOutlineEffect(this.camera);
     const effects = bloomEffect
       ? [projectorEffect, ambientHazeEffect, strobeWashEffect, bloomEffect, toneMapping]
       : [projectorEffect, ambientHazeEffect, strobeWashEffect, toneMapping];
+    effects.push(selectionOutlineEffect);
     finalComposer.addPass(new EffectPass(this.camera, ...effects));
 
     // A depth-reading effect -- the ambient haze, here -- makes the composer
@@ -1938,6 +1944,7 @@ class Visualizer {
       // end against each other, which is right. A beam is air, not a wall.
       if (finalComposer && finalComposer.stableDepthTexture) {
         Light.setSceneDepth(finalComposer.stableDepthTexture, this.camera);
+        setOutlineDepth(finalComposer.stableDepthTexture, this.camera);
       }
       if (finalComposer) {
         finalComposer.render();
@@ -1951,9 +1958,10 @@ class Visualizer {
     // takes it only when its own clock has reached the next frame slot.
     Recorder.frameDrawn();
 
-    // Over the finished image, and after Perf.end() so the gizmo's own cost is
-    // not counted against the scene it is reporting on. Not while recording:
-    // it is a navigation aid, and it would sit in the corner of the footage.
+    // Over the finished image, and after Perf.end() so their own cost is not
+    // counted against the scene it is reporting on. Not while recording: the
+    // move gizmo and the view cube are aids, and would sit in the footage.
+    if (!helpers.recording) Controls.renderGizmo(this.renderer);
     if (this.viewCube && !helpers.recording) this.viewCube.render(this.renderer);
   }
 }

@@ -16,6 +16,7 @@ import {
   goboTexture, goboLayerFor, goboImageCell, GOBO_BLUR_LEVELS,
 } from './gobo_library';
 import BodyFinish from './body_finish';
+import { addInstancedSource } from './selection_outline';
 import {
   prismFromText, PRISM_DEFAULT_FACETS, PRISM_MAX_FACETS,
 } from '../../models/DMX/gdtf/name_rules';
@@ -40,29 +41,6 @@ const MODEL_FINISH = new BodyFinish({
 const MODEL_MATERIAL = MODEL_FINISH.material().clone();
 MODEL_MATERIAL.side = THREE.DoubleSide;
 MODEL_MATERIAL.clippingPlanes = true;
-
-MODEL_MATERIAL.onBeforeCompile = (shader) => {
-  // the rest is the same
-  shader.vertexShader = shader.vertexShader.replace(
-    '#define STANDARD\n',
-    `#define STANDARD
-         attribute float highlight;
-         varying float vHighlight;`,
-  );
-  shader.vertexShader = shader.vertexShader.replace(
-    '#include <clipping_planes_vertex>\n\t',
-    '#include <clipping_planes_vertex>\nvHighlight = highlight;\n',
-  );
-  shader.fragmentShader = shader.fragmentShader.replace(
-    'varying vec3 vViewPosition;\n',
-    'varying vec3 vViewPosition;\nvarying float vHighlight;\n',
-  );
-  shader.fragmentShader = shader.fragmentShader.replace(
-    'totalEmissiveRadiance = emissive;\n',
-    'totalEmissiveRadiance = vHighlight == 0.0 ? emissive : vec3(.42,.42,.44);\n',
-  );
-  MODEL_MATERIAL.userData.shader = shader;
-};
 
 /**
  * How many lights the instanced buffers hold before they are grown.
@@ -107,7 +85,15 @@ const BEAM_TOP_RADIUS = 0.09;
 const LENS_DARK = 0.05;
 /** Scratch for the lens colour write. */
 const lensColor = new THREE.Color();
-const BEAM_MAX_ANGLE = 45;
+/**
+ * The widest half angle a beam is drawn at, degrees: a 160 degree field. A
+ * flood or blinder states fields past 90; the limit is the depth tile's camera,
+ * which has to see the whole cone with its margin and a prism's spread, and a
+ * perspective view cannot reach 180.
+ *
+ * @constant {Number}
+ */
+const BEAM_MAX_ANGLE = 80;
 
 /**
  * How fast a wheel travels from slot to slot when a new one is chosen, in
@@ -203,8 +189,8 @@ const FROST_WIDEN = 0.5;
 /**
  * What each beam can see from its lens, packed into one texture.
  *
- * A tile per head, drawn from a camera at the beam's origin looking down
- * its axis. The fragment shader projects each of a ray's chord samples into
+ * A tile per light, drawn from a camera at its lens looking down its
+ * axis. The fragment shader projects each of a ray's chord samples into
  * the tile and drops the ones past the first surface the lens sees, which
  * is what stops a beam at a wall and darkens the air behind a cube in it.
  *
@@ -214,14 +200,13 @@ const FROST_WIDEN = 0.5;
  * floor plane alone. Depth is linear distance over `far`, which is the
  * drawn cone's length.
  *
- * The near plane is half a metre, not a token 0.1: the camera sits on the
- * lens face, and the head's own model stands a few centimetres in front of
- * it around the lens opening. Drawn into the tile, that bezel shadowed the
- * pool into its own eight-sided silhouette. Nothing in a rig sits within
- * half a metre of a lens, and samples that close read as lit anyway.
+ * The near plane is five centimetres: the camera sits at the lens, and
+ * its view starts as a point there, so a bezel round the lens opening is
+ * outside it while a wall or a piece of set a hand's width away is not.
+ * Depth is stored linearly, so a near plane this close costs no precision.
  */
 const MOVER_DEPTH = new DepthAtlas({
-  columns: 16, rows: 16, tile: 128, near: 0.5, far: BEAM_LENGTH * 1.5, linear: true,
+  columns: 16, rows: 16, tile: 128, near: 0.05, far: BEAM_LENGTH * 1.5, linear: true,
 });
 
 /**
@@ -587,10 +572,10 @@ const SUBTRACTIVE_EMITTERS = {
 /** Emitters that emit the fixture's white point rather than a fixed hue. */
 const WHITE_EMITTERS = ['white', 'warmwhite', 'coldwhite', 'coolwhite'];
 
-/** Half-extent of a light's selection box, in metres, at the model's own size. */
-const SELECTION_HALF_EXTENT = 0.51;
 /** Scratch box for measuring one part of a light against the world. */
 const partBounds = new THREE.Box3();
+/** The shipped body at rest, at the model's own size, in a light's frame. */
+const modelBounds = new THREE.Box3();
 
 /**
  * Bounds on how far a body may be scaled from the shipped model. Library
@@ -621,13 +606,12 @@ let modelBaseDepth = 0;
 /** Scratch for rebuilding the beam's frame from the scaled head's. */
 const beamScale = new THREE.Vector3(1, 1, 1);
 const rigidPosition = new THREE.Vector3();
+/** Where the light leaves: the lens, `BEAM_START` down the axis from `rigidPosition`. */
+const lensPosition = new THREE.Vector3();
 const rigidQuaternion = new THREE.Quaternion();
 const rigidScale = new THREE.Vector3();
 const rigidMatrix = new THREE.Matrix4();
 const beamAxis = new THREE.Vector3();
-
-/** Scratch corner, reused while growing a selection box. */
-const boundsCorner = new THREE.Vector3();
 
 /**
  * Where the beam geometry starts along its own axis, metres from its origin:
@@ -1504,6 +1488,7 @@ class Light {
     this._basePenumbra = penumbra;
     this._focus = focus;
     this.applyLensEdge();
+    (this._lamps || []).forEach((lamp) => { lamp.focus = focus; });
   }
 
   get focus() {
@@ -2205,9 +2190,9 @@ class Light {
       SPOTLIGHT_PHYSICALLY_CORRECT_DECAY,
     );
 
-    // The light sits ahead of the head (see the translation below), so the
-    // fixture's own body stays behind the shadow frustum and cannot black out
-    // its own beam. Shadow camera fov tracks the cone angle automatically.
+    // The light sits at the lens (see below), so the fixture's own body stays
+    // behind the shadow frustum and cannot black out its own beam. Shadow
+    // camera fov tracks the cone angle automatically.
     //
     // Off unless asked for. Each shadow-casting light costs one fragment
     // texture image unit and a GPU offers few of them -- 16 is common -- so if
@@ -2236,17 +2221,21 @@ class Light {
     this._spotLight.shadow.bias = SPOTLIGHT_SHADOW_BIAS;
     this._spotLight.shadow.normalBias = SPOTLIGHT_SHADOW_NORMAL_BIAS;
 
-    this._spotLight.applyMatrix4(new THREE.Matrix4().makeRotationX(-Math.PI / 2));
-    this._spotLight.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 0, 0.9));
-
     this._dummy.add(this._bodyRoot);
     /** What the lens hangs from, and any lamps with it. */
     this._lensJoint = this.buildJoints();
     this._lensJoint.add(this._beamDummy);
     this._beamDummy.attach(this._targetDummy);
-    this._beamDummy.attach(this._spotLight);
-
-    this._spotLight.target = this._targetDummy;
+    // The light leaves the lens, where the beam starts, and goes along it:
+    // its pool falls off from there, and a body however thin stays behind
+    // it. Put anywhere behind the lens, a light shines on its own fixture.
+    this._beamDummy.add(this._spotLight);
+    this._spotLight.position.set(0, 0, BEAM_START);
+    /** A point down the beam, for the light to aim at. */
+    this._aimDummy = new THREE.Object3D();
+    this._aimDummy.position.set(0, 0, BEAM_START + 1);
+    this._beamDummy.add(this._aimDummy);
+    this._spotLight.target = this._aimDummy;
     if (this._body) this.mountBody();
     else if (this._lens) this.mountLens(this._lens);
 
@@ -2443,6 +2432,8 @@ class Light {
       bounds.union(geometry.boundingBox.clone().applyMatrix4(root.clone().multiply(matrix)));
     });
     this._baseDepth = Math.max(-bounds.min.z, 0);
+    /** The body at rest in the fixture's frame, for the selection box. */
+    this._restBounds = bounds.clone();
     const size = bounds.getSize(new THREE.Vector3()).divide(PICK_BOX_SIZE);
     const centre = bounds.getCenter(new THREE.Vector3());
     const back = PICK_BOX_CENTRE.clone().negate();
@@ -2585,6 +2576,7 @@ class Light {
     this._beamDummy.matrixWorld.decompose(rigidPosition, rigidQuaternion, rigidScale);
     beamAxis.set(0, 0, 1).applyQuaternion(rigidQuaternion);
     rigidPosition.addScaledVector(beamAxis, this.beamOriginShift);
+    lensPosition.copy(rigidPosition).addScaledVector(beamAxis, BEAM_START);
     beamScale.set(this._lensScale, this._lensScale, 1);
     rigidMatrix.compose(rigidPosition, rigidQuaternion, beamScale);
   }
@@ -2592,9 +2584,9 @@ class Light {
   /**
    * Aims the depth tile's camera down the beam.
    *
-   * The same origin and orientation the instance matrix gives the cone,
-   * without the body's scale, times the fixed basis; its frustum is the
-   * beam's field plus a margin. Matrices are set by hand and the automatic
+   * At the lens, where the cone starts, with the orientation the instance
+   * matrix gives the cone, without the body's scale, times the fixed basis;
+   * its frustum is the beam's field plus a margin. Matrices are set by hand and the automatic
    * pass is off, as the laser's are, because three would otherwise rebuild
    * them from an untouched position.
    *
@@ -2603,7 +2595,7 @@ class Light {
   updateDepthCamera() {
     this.rigidBeamMatrix();
     const cam = this._depthCam;
-    cam.matrixWorld.compose(rigidPosition, rigidQuaternion, depthScale).multiply(depthBasis);
+    cam.matrixWorld.compose(lensPosition, rigidQuaternion, depthScale).multiply(depthBasis);
     cam.matrixWorldInverse.copy(cam.matrixWorld).invert();
     // Wide enough for the whole drawn cone, which a prism widens by its
     // spread: a sample outside the tile counts as lit, so a tile narrower
@@ -2646,7 +2638,7 @@ class Light {
       instance.updateDepthCamera();
       instance._beamDummy.getWorldDirection(vector_beam);
       const turned = 1 - Math.max(vector_beam.dot(instance._depthDir), 0);
-      const distance = Math.max(vector_cam_pos.distanceTo(rigidPosition), 1);
+      const distance = Math.max(vector_cam_pos.distanceTo(lensPosition), 1);
       projections[id] = {
         camera: instance._depthCam,
         priority: (instance.intensity / distance) * (1 + 4 * turned),
@@ -2702,10 +2694,11 @@ class Light {
     this._beamDummy.getWorldDirection(vector_beam.normalize());
     direction_buffer_attribute.setXYZ(this._id, vector_beam.x, vector_beam.y, vector_beam.z);
     direction_buffer_attribute.needsUpdate = true;
-    // The same origin the instance matrix puts the geometry at: the fragment
-    // shader measures its cone from here, and the drawn cone must agree.
+    // The lens, where the drawn cone starts: the fragment shader measures its
+    // cone from here, the lens's radius at it, so the two must agree. The
+    // frame's own origin is behind the lens, inside the body.
     this._beamDummy.getWorldPosition(vector_beam_pos);
-    vector_beam_pos.addScaledVector(vector_beam, this.beamOriginShift);
+    vector_beam_pos.addScaledVector(vector_beam, this.beamOriginShift + BEAM_START);
     position_buffer_attribute.setXYZ(
       this._id,
       vector_beam_pos.x,
@@ -2751,22 +2744,13 @@ class Light {
   }
 
   /**
-   * Grows a box to contain this light.
-   *
-   * A nominal cube rather than measured geometry: every light is drawn from the
-   * same low-poly model, and the selection box only has to read as "this one".
-   *
-   * @public
-   * @param {Object} box THREE.Box3 to expand, in world space
-   */
-  /**
    * Grows a box to contain the fixture's actual body.
    *
-   * `expandBounds` reports a nominal cube, which is the right thing for a
+   * `expandBounds` reports the body at rest, which is the right thing for a
    * selection outline -- it is stable whichever way the head is pointing. It
    * is the wrong thing for asking how low a fixture reaches, which is a
-   * question about the model. Each part's geometry box is transformed by the
-   * node that poses it, so the answer follows pan and tilt.
+   * question about the model as it is posed. Each part's geometry box is
+   * transformed by the node that poses it, so the answer follows pan and tilt.
    *
    * The box of a rotated box is bigger than the shape inside it, so this errs
    * outward: a structure placed from it may sit a centimetre high, never
@@ -2792,20 +2776,23 @@ class Light {
       });
   }
 
+  /**
+   * Grows a box to contain this light: its body at rest, wherever and
+   * however turned the fixture is placed. At rest, so the box stands still
+   * while a head pans and tilts inside it; the body's own, so it fits a bar
+   * as well as a head.
+   *
+   * @public
+   * @param {Object} box THREE.Box3 to expand, in world space
+   */
   expandBounds(box) {
-    const halfExtent = SELECTION_HALF_EXTENT * this._bodyScale;
-    boundsCorner.set(
-      this._position.x - halfExtent,
-      this._position.y - halfExtent,
-      this._position.z - halfExtent,
-    );
-    box.expandByPoint(boundsCorner);
-    boundsCorner.set(
-      this._position.x + halfExtent,
-      this._position.y + halfExtent,
-      this._position.z + halfExtent,
-    );
-    box.expandByPoint(boundsCorner);
+    const rest = this._restBounds || modelBounds;
+    if (rest.isEmpty()) return;
+    this._dummy.updateMatrixWorld();
+    // The shipped body's bounds are at the model's size; the fixture's frame
+    // carries the scale its profile gives it.
+    partBounds.copy(rest).applyMatrix4(this._dummy.matrixWorld);
+    box.union(partBounds);
   }
 
   /**
@@ -2870,6 +2857,7 @@ class Light {
     });
     modelHeight = partBounds.max.z - partBounds.min.z;
     modelBaseDepth = -partBounds.min.z;
+    modelBounds.copy(partBounds);
 
     THREE.BufferGeometry.prototype.copy.call(baseGeo, base.geometry);
     THREE.BufferGeometry.prototype.copy.call(yokeGeo, yoke.geometry);
@@ -3074,8 +3062,8 @@ class Light {
     const capGeometry = new THREE.CircleGeometry(BEAM_TOP_RADIUS, 40);
     const capMaterial = new THREE.MeshBasicMaterial({
       // No depth, or the beam fades against the very disc it comes out of --
-      // the surface fade reads the scene's depth, and this sits exactly at the
-      // beam's origin. It is a lens face, not an obstacle.
+      // the surface fade reads the scene's depth, and this sits exactly where
+      // the beam starts. It is a lens face, not an obstacle.
       depthWrite: false,
       side: THREE.DoubleSide,
     });
@@ -3161,7 +3149,7 @@ class Light {
     if (this._spotLight.visible) return false;
 
     this._spotLight.getWorldPosition(record.position);
-    this._targetDummy.getWorldPosition(vector_light_target);
+    this._aimDummy.getWorldPosition(vector_light_target);
     record.direction.copy(record.position).sub(vector_light_target).normalize();
     record.color.copy(this._spotLight.color);
     record.colorB.copy(this._wheelSplit > 0 ? this._colorB : this._spotLight.color);
@@ -3207,7 +3195,7 @@ class Light {
         1 / MOVER_DEPTH.rows,
       );
       this.rigidBeamMatrix();
-      record.tileOrigin.copy(rigidPosition);
+      record.tileOrigin.copy(lensPosition);
       record.axisX.set(1, 0, 0).applyQuaternion(rigidQuaternion);
       record.axisY.set(0, 1, 0).applyQuaternion(rigidQuaternion);
       record.tanHalf = Math.tan(Light.degToRad(this._angle))
@@ -3395,5 +3383,14 @@ function syncEnvironment() {
 }
 
 SceneEnv.on('changed', syncEnvironment);
+
+// A selected light is outlined, its body drawn as it always is. Its slot's
+// `highlight` in the body meshes says which; nothing selected, nothing to draw.
+addInstancedSource(() => {
+  if (!instances.some((light) => light._highlighted)) return [];
+  const meshes = [baseMesh, yokeMesh, headMesh].filter(Boolean);
+  bodySets.forEach((set) => meshes.push(...Object.values(set.meshes)));
+  return meshes;
+});
 
 export default Light;

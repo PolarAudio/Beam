@@ -3,6 +3,7 @@ import LEDField, { STANDOFF } from './led_field';
 import LEDPanel from './led_panel';
 import SceneManager from './scene_manager';
 import { gridPositions, gridPitch, gridSteps } from '../../models/DMX/generic/led_bar';
+import { setOutlined } from './selection_outline';
 
 /**
  * @file Renderer for a generic LED bar: a black body carrying a grid of
@@ -46,9 +47,6 @@ const PICK_MATERIAL = new THREE.MeshBasicMaterial({
 /** Scratch box, reused while growing a selection box. */
 const bodyBounds = new THREE.Box3();
 
-/** Outline shown while a bar is selected. */
-const HIGHLIGHT_MATERIAL = new THREE.LineBasicMaterial({ color: 0x1ca6bd });
-
 class LedBar {
   /**
    * @param {Object} data
@@ -84,20 +82,13 @@ class LedBar {
     this._pick.userData.ledBar = this;
     this._dummy.add(this._pick);
 
-    this._outline = new THREE.LineSegments(
-      new THREE.EdgesGeometry(PICK_GEOMETRY),
-      HIGHLIGHT_MATERIAL,
-    );
-    this._outline.visible = false;
-    this._dummy.add(this._outline);
-
     this.applyBodyScale();
     instances.add(this);
     LedBar.rebuild();
   }
 
   /**
-   * Sizes the pick proxy and outline to the bar they stand for.
+   * Sizes the pick proxy to the bar it stands for.
    *
    * @public
    */
@@ -105,7 +96,6 @@ class LedBar {
     const params = this._params;
     if (!params) return;
     this._pick.scale.set(params.length, params.width, params.height);
-    this._outline.scale.copy(this._pick.scale);
   }
 
   /**
@@ -197,13 +187,23 @@ class LedBar {
   }
 
   /**
+   * What the selection outline is drawn round: its pick box, which is the bar.
+   *
+   * @public
+   * @returns {Array<THREE.Mesh>}
+   */
+  outlineMeshes() {
+    return [this._pick];
+  }
+
+  /**
    * Marks this bar as the single selected fixture.
    *
    * @public
    * @param {Boolean} state whether it is selected
    */
   setSinglyHighlighted(state) {
-    this._outline.visible = !!state;
+    setOutlined(this, !!state, this.outlineMeshes());
   }
 
   /**
@@ -217,7 +217,7 @@ class LedBar {
    */
   set highlighted(state) {
     this._highlighted = !!state;
-    this._outline.visible = this._highlighted;
+    setOutlined(this, this._highlighted, this.outlineMeshes());
   }
 
   get highlighted() {
@@ -369,6 +369,7 @@ class LedBar {
    */
   static deleteInstance(instance) {
     instances.delete(instance);
+    setOutlined(instance, false);
     if (instance._dummy) SceneManager.remove(instance._dummy);
     // The field is rebuilt from scratch below, but a panel holds a render
     // target that nothing else would ever free.

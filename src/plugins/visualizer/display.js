@@ -5,6 +5,7 @@ import { createPanelMaterial } from './video_material';
 import { DEFAULT_DISPLAY_PARAMS, pixelFill, displayCurve } from '../../models/DMX/generic/display';
 import BodyFinish from './body_finish';
 import { castsContactShadow } from './contact_shadows';
+import { setOutlined } from './selection_outline';
 
 /**
  * @file Renderer for a generic display: a bezelled box with a picture on it.
@@ -26,13 +27,6 @@ import { castsContactShadow } from './contact_shadows';
 
 /** Every display in the scene, so the statics can sweep them. */
 const instances = new Set();
-
-/**
- * Unit box, scaled per display for the selection outline only. The casing
- * itself is built per instance by `buildCasing`, because a frame cannot be
- * scaled out of a cube without stretching its border.
- */
-const BOX_GEOMETRY = new THREE.BoxGeometry(1, 1, 1);
 
 /**
  * A point on the display's surface, in the fixture's own space.
@@ -280,9 +274,6 @@ const BODY = new BodyFinish({
  */
 const BLANK_MATERIAL = new THREE.MeshBasicMaterial({ color: 0x101418 });
 
-/** Outline shown while a display is selected. Matches the bar's and the projector's. */
-const HIGHLIGHT_MATERIAL = new THREE.LineBasicMaterial({ color: 0x1ca6bd });
-
 /** Scratch box, reused while growing a selection box. */
 const bodyBounds = new THREE.Box3();
 
@@ -323,13 +314,6 @@ class Display {
     this._screen.userData.pickOwner = this;
     this._dummy.add(this._screen);
 
-    this._outline = new THREE.LineSegments(
-      new THREE.EdgesGeometry(BOX_GEOMETRY),
-      HIGHLIGHT_MATERIAL,
-    );
-    this._outline.visible = false;
-    this._dummy.add(this._outline);
-
     this.applyGeometry();
     this.refresh();
     instances.add(this);
@@ -355,7 +339,6 @@ class Display {
     const curve = displayCurve(params, width + bezel * 2);
     this._body.geometry.dispose();
     this._body.geometry = buildCasing(width, height, depth, bezel, recess, curve);
-    this._outline.scale.set(width + bezel * 2, depth, height + bezel * 2);
 
     // On the floor of the recess, filling the opening exactly and bent on the
     // same curve. The walls meet it at right angles, so there is no pair of
@@ -559,11 +542,21 @@ class Display {
   }
 
   /**
+   * What the selection outline is drawn round: its casing and its screen.
+   *
+   * @public
+   * @returns {Array<THREE.Mesh>}
+   */
+  outlineMeshes() {
+    return [this._body, this._screen];
+  }
+
+  /**
    * @public
    * @param {Boolean} state
    */
   setSinglyHighlighted(state) {
-    this._outline.visible = !!state;
+    setOutlined(this, !!state, this.outlineMeshes());
   }
 
   /**
@@ -571,7 +564,7 @@ class Display {
    */
   set highlighted(state) {
     this._highlighted = !!state;
-    this._outline.visible = this._highlighted;
+    setOutlined(this, this._highlighted, this.outlineMeshes());
   }
 
   get highlighted() {
@@ -647,7 +640,7 @@ class Display {
     if (instance._material) instance._material.dispose();
     if (instance._body) instance._body.geometry.dispose();
     if (instance._screen) instance._screen.geometry.dispose();
-    if (instance._outline) instance._outline.geometry.dispose();
+    setOutlined(instance, false);
     if (instance._dummy) SceneManager.remove(instance._dummy);
   }
 

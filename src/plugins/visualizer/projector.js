@@ -6,6 +6,7 @@ import {
   DEFAULT_PROJECTOR_PARAMS, lensOrigin, throwAngles, throwFrustum, throwRange,
 } from '../../models/DMX/generic/projector';
 import BodyFinish from './body_finish';
+import { setOutlined } from './selection_outline';
 
 /**
  * @file Renderer for a generic projector: a box with a barrel on its front.
@@ -111,9 +112,6 @@ const BARREL_MATERIAL = new THREE.MeshStandardMaterial({
  */
 const GLASS_MATERIAL = new THREE.MeshBasicMaterial({ color: 0x1ca6bd });
 
-/** Outline shown while a projector is selected. Matches the bar's. */
-const HIGHLIGHT_MATERIAL = new THREE.LineBasicMaterial({ color: 0x1ca6bd });
-
 /** The throw, drawn only while selected -- see `showAids`. */
 const FRUSTUM_MATERIAL = new THREE.LineBasicMaterial({
   color: 0x1ca6bd,
@@ -199,13 +197,6 @@ class Projector {
     this._glass = new THREE.Mesh(GLASS_GEOMETRY, GLASS_MATERIAL);
     this._dummy.add(this._glass);
 
-    this._outline = new THREE.LineSegments(
-      new THREE.EdgesGeometry(BOX_GEOMETRY),
-      HIGHLIGHT_MATERIAL,
-    );
-    this._outline.visible = false;
-    this._dummy.add(this._outline);
-
     this._frustum = new THREE.LineSegments(new THREE.BufferGeometry(), FRUSTUM_MATERIAL);
     this._frustum.visible = false;
     this._dummy.add(this._frustum);
@@ -236,7 +227,6 @@ class Projector {
     // Width across, depth front-to-back, height up -- the box stands the way
     // the machine does.
     this._body.scale.set(width, depth, height);
-    this._outline.scale.copy(this._body.scale);
 
     // The model measures the lens from the centre of the front panel, seen by
     // someone facing it. The panel faces -Y, so that observer stands at -Y and
@@ -435,8 +425,18 @@ class Projector {
    * @param {Boolean} state
    */
   showAids(state) {
-    this._outline.visible = !!state;
+    setOutlined(this, !!state, this.outlineMeshes());
     this._frustum.visible = !!state;
+  }
+
+  /**
+   * What the selection outline is drawn round: its body, barrel, ring and lens.
+   *
+   * @public
+   * @returns {Array<THREE.Mesh>}
+   */
+  outlineMeshes() {
+    return [this._body, this._barrel, this._ring, this._glass];
   }
 
   /**
@@ -496,7 +496,7 @@ class Projector {
     if (!instance) return;
     instances.delete(instance);
     if (instance._frustum && instance._frustum.geometry) instance._frustum.geometry.dispose();
-    if (instance._outline && instance._outline.geometry) instance._outline.geometry.dispose();
+    setOutlined(instance, false);
     if (instance._dummy) SceneManager.remove(instance._dummy);
   }
 

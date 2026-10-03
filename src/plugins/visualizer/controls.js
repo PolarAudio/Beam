@@ -229,6 +229,15 @@ const CONTROL_MODES = {
 };
 
 /**
+ * The gizmo's own scene, drawn over the finished picture rather than in it:
+ * a handle is no part of the show, so no light, haze, bloom or tone curve
+ * touches it and no beam is drawn over it.
+ *
+ * @constant {Object}
+ */
+const GIZMO_SCENE = new THREE.Scene();
+
+/**
  * Bounding box material
  *
  * @constant {Object} boundingBoxMaterial
@@ -236,25 +245,11 @@ const CONTROL_MODES = {
 const boundingBoxMaterial = new THREE.MeshBasicMaterial({
   color: 'rgb(162, 45, 88)',
   transparent: true,
-  // Invisible: the corner brackets carry the selection. The mesh itself is
-  // kept because the gizmo and the transform maths attach to it.
+  // Invisible: the selection outline shows what is selected. The box is kept
+  // because the gizmo and the transform maths attach to it, and framing a
+  // selection fits the camera to it.
   opacity: 0,
   depthWrite: false,
-  side: THREE.DoubleSide,
-});
-/**
- * Bounding box edges material
- *
- * @constant {Object} boundingBoxEdgesMaterial
- */
-const boundingBoxEdgesMaterial = new THREE.LineBasicMaterial({
-  color: 0xffffff,
-  // WebGL ignores linewidth, so a line is one pixel whatever this says. Thin
-  // suits it anyway.
-  linewidth: 1,
-  transparent: true,
-  opacity: 0.85,
-  depthTest: false,
   side: THREE.DoubleSide,
 });
 /**
@@ -263,55 +258,6 @@ const boundingBoxEdgesMaterial = new THREE.LineBasicMaterial({
  * @constant {Object} boundingBoxGeometry
  */
 const boundingBoxGeometry = new THREE.BoxGeometry();
-
-/**
- * How far along each edge a corner bracket runs, as a fraction of that edge.
- *
- * @constant {Number}
- */
-const CORNER_BRACKET = 0.18;
-
-/**
- * Corner brackets for a unit cube: three short segments meeting at each of the
- * eight corners, rather than twelve full edges.
- *
- * Marking only the corners says where the selection reaches without drawing a
- * cage around what is inside it.
- *
- * @returns {Object} THREE.BufferGeometry of line segments
- */
-function buildCornerBrackets() {
-  const half = 0.5;
-  const run = CORNER_BRACKET;
-  const points = [];
-
-  [-half, half].forEach((x) => {
-    [-half, half].forEach((y) => {
-      [-half, half].forEach((z) => {
-        // Each arm heads back towards the middle of its own axis.
-        points.push(x, y, z, x - Math.sign(x) * run, y, z);
-        points.push(x, y, z, x, y - Math.sign(y) * run, z);
-        points.push(x, y, z, x, y, z - Math.sign(z) * run);
-      });
-    });
-  });
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(points, 3));
-  return geometry;
-}
-/**
- * Bounding box edges geometry
- *
- * @constant {Object} boundingBoxEdgesGeometry
- */
-const boundingBoxEdgesGeometry = buildCornerBrackets();
-/**
- * Bounding box edges 3D instance
- *
- * @constant {Object} boundingBoxEdges
- */
-const boundingBoxEdges = new THREE.LineSegments(boundingBoxEdgesGeometry, boundingBoxEdgesMaterial);
 /**
  * Default focus out camera position
  *
@@ -483,7 +429,6 @@ class Controls {
       // Instanciating bounding box mesh
       this.boundingBoxMesh = new THREE.Mesh(boundingBoxGeometry, boundingBoxMaterial);
       // Adding bounding box edges to bounding box mesh
-      this.boundingBoxMesh.add(boundingBoxEdges);
       this.animationId = null;
       this.focusTransitionDuration = 1000;
       this.autoFocus = null;
@@ -535,6 +480,22 @@ class Controls {
   }
 
   /**
+   * Draws the gizmo over the finished picture, unlit and in its own colours.
+   * Depth is cleared first, so it is always on top, as a handle should be.
+   *
+   * @public
+   * @param {Object} renderer THREE.WebGLRenderer
+   */
+  renderGizmo(renderer) {
+    if (!this.handle || !this.handle.object || !this.cameraHandle) return;
+    const { autoClear } = renderer;
+    renderer.autoClear = false;
+    renderer.clearDepth();
+    renderer.render(GIZMO_SCENE, this.cameraHandle);
+    renderer.autoClear = autoClear;
+  }
+
+  /**
    * Initialises controls
    *
    * @param {Object} camera Handle to camera instance
@@ -554,13 +515,6 @@ class Controls {
     const helper = this.handle.getHelper();
 
     helper.traverse((child) => {
-      // The gizmo is an overlay, not scenery. Anything that renders it into a
-      // shadow map or into a projector's depth atlas has it blocking light and
-      // printing its own arrows across whatever is behind it -- which is
-      // nonsense for a handle that is not part of the show. Set on every child
-      // rather than the helper, because it is the meshes that get gathered.
-      child.castShadow = false;
-      child.receiveShadow = false;
       if (child.material) {
         // X axis
         if (child.name.includes('X')) {
@@ -590,7 +544,9 @@ class Controls {
       }
     });
 
-    SceneManager.add(this.groupedInstances, helper); // Adding instances to scene
+    SceneManager.add(this.groupedInstances);
+    // Not in the show's scene: see `renderGizmo`.
+    GIZMO_SCENE.add(helper);
     // Picking: a click on a fixture selects it, a click on empty scene clears.
     el.addEventListener('pointerdown', this.handlePointerDown.bind(this));
     el.addEventListener('pointermove', this.handlePointerMove.bind(this));
@@ -1713,7 +1669,6 @@ class Controls {
 
       this.groupedInstances = new THREE.Group();
       this.boundingBoxMesh = new THREE.Mesh(boundingBoxGeometry, boundingBoxMaterial);
-      this.boundingBoxMesh.add(boundingBoxEdges); // Adding bounding box edges to bounding box mesh
 
       SceneManager.add(this.groupedInstances, this.boundingBoxMesh);
 
@@ -1721,8 +1676,8 @@ class Controls {
         this.groupedInstances.add(i._3DModel._dummy);
       });
 
-      // Each renderer reports the space it occupies: a head is a nominal cube,
-      // a bar is its actual body. A fixed half-metre around the origin drew a
+      // Each renderer reports the space it occupies: a light its body at rest,
+      // a bar its actual body. A fixed half-metre around the origin drew a
       // box far smaller than a metre-long bar, and made the already-framed test
       // in setFocus() ask about the wrong volume.
       this.boundingBox.makeEmpty();

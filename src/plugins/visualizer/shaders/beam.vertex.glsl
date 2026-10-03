@@ -105,7 +105,7 @@ void main() {
   float radialScale = sqrt(dot(xBasis, xBasis));
 
   // The frame the depth tile was drawn in: the tile camera sits at the
-  // beam's origin looking down its z, with its up along the beam's y, so the
+  // lens looking down the beam's z, with its up along the beam's y, so the
   // fragment shader can project a point into the tile from these two axes
   // and the direction alone, and no matrix has to travel per instance.
   vAxisX = normalize(xBasis);

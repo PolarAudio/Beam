@@ -353,6 +353,8 @@ const UNSCRAMBLE_FRAGMENT = `${SHADER_DEFINES + ADDRESSING /* glsl */}
 `;
 
 const PANEL_VERTEX = /* glsl */`
+  uniform float dimStartDistance;
+
   varying vec2 vUv;
   varying vec3 vNormalWorld;
   varying vec3 vToCamera;

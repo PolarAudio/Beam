@@ -106,11 +106,17 @@ vec2 prismOffset(int k, int facets, bool linear, float angle, float spread) {
 #define PRISM_FACETS_MAX 8
 
 /**
- * How much wider than the beam's cone its depth tile looks, as a ratio of the
- * half-angle's tangent. Must match `DEPTH_FOV_MARGIN` in light.js,
- * which draws the tile.
+ * How much wider than everything the beam lights its depth tile looks, as a
+ * ratio of the half-angle's tangent. Must match `DEPTH_FOV_MARGIN` in
+ * light.js, which draws the tile.
  */
 #define DEPTH_FOV_MARGIN 1.2
+
+/**
+ * From how far out the depth tile holds the lens's blur, in metres. Must
+ * match `DEPTH_BLUR_NEAR` in light.js.
+ */
+#define DEPTH_BLUR_NEAR 2.0
 
 /**
  * The height a beam stops at, in world units.
@@ -818,7 +824,10 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
   // for its whole stretch: a bright, curved sheet that jumped as the ray moved.
   // A ray crossing the beam side-on sees almost no change in irradiance, and
   // keeps the even spacing with each sample weighted by its own irradiance.
-  float tanHalf = tan(radians(vAngle)) * DEPTH_FOV_MARGIN * vSpread;
+  // The tile's half field of view, as `tileTanHalf` in light.js draws it:
+  // the field, spread by a prism, and the lens's blur from DEPTH_BLUR_NEAR out.
+  float tanHalf = (tan(radians(vAngle)) * vSpread
+    + r0 * max(abs(1.0 / DEPTH_BLUR_NEAR - vInvFocus), vInvFocus)) * DEPTH_FOV_MARGIN;
   // Where the field's cone would open from behind the lens, which the
   // samples are spaced by; a prism only widens the drawn cone.
   float apexBehind = r0 / max(m / vSpread, 1e-4);

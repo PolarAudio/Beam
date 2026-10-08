@@ -224,6 +224,19 @@ const FOCUS_NEAR = 1;
 const BLUR_REACH_NEAR = 0.5;
 
 /**
+ * From how far out a depth tile holds the lens's blur, in metres.
+ *
+ * Nearer the lens the blur's angle keeps growing, and holding it costs the
+ * tile its resolution: a narrow beam from a big lens would spread its 128
+ * texels over ten times its own width. From 2 m the same beam's tile is
+ * about three times its width, and a tile of an ordinary spot barely grows.
+ * Inside 2 m the blurred fringe outside the tile still passes what stands in
+ * it, which is rarely anything. Must match `DEPTH_BLUR_NEAR` in the beam
+ * shader.
+ */
+const DEPTH_BLUR_NEAR = 2;
+
+/**
  * How much wider full frost makes the beam: the field's half angle times
  * 1 plus this. Profiles do not say; frost turns a spot into a wash, and
  * half as wide again is Beam's figure.
@@ -265,12 +278,9 @@ const MOVER_DEPTH = new DepthAtlas({
 const DEPTH_TILE_BUDGET = 4;
 
 /**
- * How much wider than the beam's own cone its tile looks, as a ratio of the
- * half-angle's tangent.
- *
- * The cone starts at the lens ring rather than at a point, so close to the
- * lens its edge sits outside the stated angle. Samples that fall outside the
- * tile are taken as lit; the margin keeps that to the first metre or so.
+ * How much wider than everything the beam lights its tile looks, as a ratio
+ * of the half-angle's tangent: room for the texels at the tile's edge, which
+ * the depth test and the soft shadow read. See `tileTanHalf`.
  */
 const DEPTH_FOV_MARGIN = 1.2;
 
@@ -1878,6 +1888,27 @@ class Light {
   }
 
   /**
+   * The tangent of the depth tile's half field of view.
+   *
+   * A sample outside the tile counts as lit, so the tile has to hold
+   * everything the beam lights: the field, widened by a prism's spread, and
+   * the lens's blur on top of it, which spreads the edge by the lens radius
+   * times |1/z - 1/focus| in angle. A tile of the field alone let a short
+   * focus, or a big lens on a narrow beam, through every wall around the
+   * edge. The blur's angle grows without bound towards the lens, so it is
+   * held from `DEPTH_BLUR_NEAR` out. The beam shader computes the same
+   * number and the pool reads it from the record.
+   *
+   * @readonly
+   * @type {Number}
+   */
+  get tileTanHalf() {
+    const blur = this.lensRadius
+      * Math.max(Math.abs(1 / DEPTH_BLUR_NEAR - this._invFocus), this._invFocus);
+    return (Math.tan(Light.degToRad(this._angle)) * this.drawnSpread + blur) * DEPTH_FOV_MARGIN;
+  }
+
+  /**
    * Opens or closes the iris, from an iris channel.
    *
    * @public
@@ -2782,12 +2813,7 @@ class Light {
     const cam = this._depthCam;
     cam.matrixWorld.compose(lensPosition, rigidQuaternion, depthScale).multiply(depthBasis);
     cam.matrixWorldInverse.copy(cam.matrixWorld).invert();
-    // Wide enough for the whole drawn cone, which a prism widens by its
-    // spread: a sample outside the tile counts as lit, so a tile narrower
-    // than the cone would let the prism's copies through every wall.
-    const tanHalf = Math.tan(Light.degToRad(this._angle))
-      * DEPTH_FOV_MARGIN * this.drawnSpread;
-    cam.fov = 2 * Math.atan(tanHalf) * (180 / Math.PI);
+    cam.fov = 2 * Math.atan(this.tileTanHalf) * (180 / Math.PI);
     cam.aspect = 1;
     cam.near = MOVER_DEPTH.near;
     cam.far = MOVER_DEPTH.far;
@@ -3418,8 +3444,7 @@ class Light {
       record.tileOrigin.copy(lensPosition);
       record.axisX.set(1, 0, 0).applyQuaternion(rigidQuaternion);
       record.axisY.set(0, 1, 0).applyQuaternion(rigidQuaternion);
-      record.tanHalf = Math.tan(Light.degToRad(this._angle))
-        * DEPTH_FOV_MARGIN * this.drawnSpread;
+      record.tanHalf = this.tileTanHalf;
       // The lens's blur, which the pool takes at each surface's distance. It
       // spreads the edge past the field by the lens radius times
       // |1/distance - 1/focus| in angle, so the cone test reaches that far

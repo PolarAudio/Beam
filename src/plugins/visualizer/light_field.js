@@ -277,14 +277,15 @@ const FIELD_LIGHT_CHUNK = /* glsl */`
       if ( along <= 0.0 ) continue;
       vec4 packedGobo = texelFetch( lightField, ivec2( 7, i ), 0 );
       vec4 packedPrism = texelFetch( lightField, ivec2( 8, i ), 0 );
-      // The tile's half fov is the field's tangent times the margin, times
-      // the prism's spread while one is in; the field's own tangent is
-      // what the aperture coordinate is measured against.
+      vec4 packedLens = texelFetch( lightField, ivec2( 10, i ), 0 );
+      // The aperture coordinate is measured against the field's own tangent:
+      // the outer cone's, which a prism widens by its spread, taken back out.
+      // Not the tile's, which also holds the lens's blur.
       float drawnSpread = abs( packedPrism.x ) >= 2.0 ? 1.0 + packedPrism.z : 1.0;
-      float tanField = packedAxisX.w / ( FIELD_DEPTH_FOV_MARGIN * drawnSpread );
+      float cosOuter = max( packedLens.w, 1e-4 );
+      float tanField = sqrt( max( 1.0 - cosOuter * cosOuter, 0.0 ) ) / cosOuter / drawnSpread;
       vec2 aperture = vec2( dot( offset, tileAxisX ), dot( offset, tileAxisY ) ) / ( along * tanField );
       vec4 packedColorB = texelFetch( lightField, ivec2( 9, i ), 0 );
-      vec4 packedLens = texelFetch( lightField, ivec2( 10, i ), 0 );
       // The lens's blur at this surface, in field radii: the lens radius times
       // how far the surface is from the focus, over the field's radius here.
       float blur = packedLens.y * abs( 1.0 - along * packedLens.z ) / max( along * tanField, 1e-5 );
@@ -424,8 +425,6 @@ float fieldSoftShadow( vec4 tile, vec2 ndc, float centreBlocker, vec3 lifted, ve
   return lit / float( FIELD_SHADOW_FILTER );
 }
 
-// The tile looks wider than the field by this, as in light.js.
-#define FIELD_DEPTH_FOV_MARGIN 1.2
 // How much of the light a prism lets through, as in the beam shader.
 #define FIELD_PRISM_TRANSMISSION 0.88
 

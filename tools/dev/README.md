@@ -15,6 +15,23 @@ git ignores.
 | `npx electron png-tool.cjs diff\|crop\|stack\|row ...` | Compares and cuts PNGs; `diff` says how many pixels changed. |
 | `probes/show-state.js` | Open show, saved or not, item counts. |
 | `probes/camera-state.js` | Camera kind, place, target, lens shift. |
+| `regress/run.ps1 -Label x [-Against y]` | Visual regression set: restarts Beam, renders every scene at four haze levels, stops it, diffs against another set. |
+
+## Regression set
+
+`regress/` builds its scenes from the blank show each time -- shipped OFL
+profiles and generic kinds, nothing from the user's library -- so it is the
+one place a script drives the scene. Movers (front and looking up into the
+beams), LED bar and panel, laser, projector and strobe, each at haze 0, 25,
+50 and 100, into `out/regress/<label>/`.
+
+- The clock is frozen and stepped by hand, turbulence is 0, the canvas is
+  1280 x 720 and the room and bloom are pinned, so two runs of the same code
+  match to the pixel. A step not meant to change a scene must diff at 0.
+- It restarts the app and loads its own scenes over whatever was open; run it
+  only when nobody is working in Beam. `preferences.json` and
+  `window-state.json` are copied aside and put back.
+- `capture.ps1` takes a single shot from an app already running the prelude.
 
 ## How these are used
 

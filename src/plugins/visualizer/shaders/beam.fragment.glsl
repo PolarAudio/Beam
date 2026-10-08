@@ -139,11 +139,15 @@ vec2 prismOffset(int k, int facets, bool linear, float angle, float spread) {
 /**
  * How many points along a ray's lit stretch the radial profile is read at.
  *
- * Arithmetic only, no fetches: a smoothstep each. Four is enough for a
- * profile this smooth; the rim is set by where the chord vanishes, not by
- * the sample count.
+ * Arithmetic only, no fetches: a smoothstep each. They are spread over the
+ * stretch inside the lit outer surface and nowhere else, which is what lets
+ * four of them meet a sharp edge: the rim is where that stretch vanishes, and
+ * every sample sits inside it.
  */
 #define BEAM_PROFILE_SAMPLES 4
+
+/** A ray distance past anything in the scene, for spans open at one end. */
+const float BEAM_FAR_S = 1.0e6;
 
 /**
  * Draws one term as greyscale instead of the beam, from the debug panel:
@@ -559,6 +563,90 @@ float irradianceInverse(float g) {
 }
 
 /**
+ * @function coneSpan
+ * @brief where along a ray it is inside the cone r = a + b z, z0 <= z <= z1
+ * @param float a, b the cone's radius at z = 0 and its slope
+ * @param float z0, z1 the stretch of axis the cone stands for
+ * @param float oz, vz the ray's start and direction along the axis
+ * @param vec3 oR, vR the ray's start and direction across it
+ * @param out float sLo, sHi the span, in distance along the ray
+ * @returns bool whether the span is not empty
+ *
+ * |radial(s)| = a + b z(s) is a quadratic in s, solved outright: a chord is a
+ * continuous function of the ray everywhere, where a closest-approach point
+ * held inside the cone by a clamp draws a hard curve where the clamp engages.
+ *
+ * Which side of the roots is inside depends on the sign of A. A ray flatter
+ * than the wall (A > 0) is inside between them. A ray steeper than the wall
+ * (A < 0) -- every ray within the beam's half-angle of its axis, which is
+ * what looking down a beam is made of -- is inside outside the roots: it
+ * leaves the real nappe at one and enters the mirror nappe at the other.
+ * The real nappe is the side where the radius is positive, and the z clip
+ * removes the mirror one. Taking the stretch between the roots for such a ray
+ * shaded a disc of dark air the size of the cone around the lens.
+ */
+bool coneSpan(float a, float b, float z0, float z1, float oz, float vz, vec3 oR, vec3 vR,
+              out float sLo, out float sHi) {
+  sLo = 0.0;
+  sHi = 0.0;
+  float rz = a + b * oz;
+  float A = dot(vR, vR) - b * b * vz * vz;
+  float B = 2.0 * (dot(oR, vR) - b * vz * rz);
+  float C = dot(oR, oR) - rz * rz;
+  bool inside = false;
+  if (abs(A) > 1e-9) {
+    float disc = B * B - 4.0 * A * C;
+    if (disc > 0.0) {
+      float sq = sqrt(disc);
+      float sA = min((-B - sq) / (2.0 * A), (-B + sq) / (2.0 * A));
+      float sB = max((-B - sq) / (2.0 * A), (-B + sq) / (2.0 * A));
+      if (A > 0.0) {
+        sLo = sA;
+        sHi = sB;
+      } else if (rz + b * vz * sA > 0.0) {
+        sLo = -BEAM_FAR_S;
+        sHi = sA;
+      } else {
+        sLo = sB;
+        sHi = BEAM_FAR_S;
+      }
+      inside = true;
+    } else if (A < 0.0) {
+      sLo = -BEAM_FAR_S;
+      sHi = BEAM_FAR_S;
+      inside = true;
+    }
+  } else if (abs(B) > 1e-9) {
+    // Running parallel to the wall: one crossing, inside on one side of it.
+    float sRoot = -C / B;
+    if (B > 0.0) {
+      sLo = -BEAM_FAR_S;
+      sHi = sRoot;
+    } else {
+      sLo = sRoot;
+      sHi = BEAM_FAR_S;
+    }
+    inside = true;
+  } else {
+    sLo = -BEAM_FAR_S;
+    sHi = BEAM_FAR_S;
+    inside = C < 0.0;
+  }
+  if (!inside) return false;
+  // Clipped to the stretch of axis. Clipping a segment moves its ends
+  // continuously, so unlike clamping a point it introduces no corner.
+  if (abs(vz) > 1e-6) {
+    float sEnter = (z0 - oz) / vz;
+    float sLeave = (z1 - oz) / vz;
+    sLo = max(sLo, min(sEnter, sLeave));
+    sHi = min(sHi, max(sEnter, sLeave));
+  } else if (oz < z0 || oz > z1) {
+    return false;
+  }
+  return sHi > sLo;
+}
+
+/**
  * @function beamProfile
  * @brief how bright the cone is along this ray
  * @param vec3 viewDir unit vector from the eye towards it
@@ -587,12 +675,6 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
   // wall and says nothing about the cone's radius.
   float m = vSlope;
   float r0 = vLensRadius;
-  // The hull the lit beam stays inside: the image, m * z, widened by the
-  // lens's blur, r0 * |1 - z / focus|, is never wider than r0 plus the
-  // image and the blur's growth, the same cone the vertex shader draws.
-  // The stretch inside it is where light can be; the profile below says
-  // how much is.
-  float mHull = m + r0 * vInvFocus;
 
   // The ray, split into travel along the axis and travel across it.
   vec3 O = rayOrigin - beamPos;
@@ -601,121 +683,84 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
   vec3 oR = O - oz * axis;
   vec3 vR = viewDir - vz * axis;
 
-  // Where the ray crosses the cone's surface: |radial(s)| = r0 + m*z(s), which
-  // is a quadratic in s. Solved outright instead of inferred from a distance
-  // ratio -- the ratio needs the closest-approach point held inside the cone
-  // by a clamp, and a clamp is continuous without being smooth: the boundary
-  // where it engages is a hard curve across the screen. A chord is a
-  // continuous function of the ray everywhere.
-  float rz = r0 + mHull * oz;
-  float A = dot(vR, vR) - mHull * mHull * vz * vz;
-  float B = 2.0 * (dot(oR, vR) - mHull * vz * rz);
-  float C = dot(oR, oR) - rz * rz;
+  // Where light can be: the field's image, m z, widened on every side by the
+  // lens's blur, r0 |1 - z / focus|. That outer surface is two cones meeting
+  // at the focus, r0 + (m - r0/f) z before it and (m + r0/f) z - r0 past it,
+  // and the ray's lit stretch is its span through each -- two pieces where
+  // the surface bends outward at the focus and the ray grazes the bend. The
+  // samples below are spread over these spans only. Spread over the drawn
+  // hull, which is wider by up to a lens diameter, four of them reached a
+  // sharp edge at two different offsets and drew it twice.
+  float zFocus = vInvFocus > 0.0 ? min(1.0 / vInvFocus, vZFar) : vZFar;
+  float aLo;
+  float aHi;
+  float bLo = 0.0;
+  float bHi = 0.0;
+  bool hasA = coneSpan(r0, m - r0 * vInvFocus, 0.0, zFocus, oz, vz, oR, vR, aLo, aHi);
+  bool hasB = zFocus < vZFar
+    && coneSpan(-r0, m + r0 * vInvFocus, zFocus, vZFar, oz, vz, oR, vR, bLo, bHi);
 
-  float chord = 0.0;
-  float zMid = 0.0;
-  float sMid = 0.0;
-  float sLo = 0.0;
-  float sHi = 0.0;
-  bool inside = false;
-
-  // Where along the ray it is inside the cone. f(s) = A s^2 + B s + C is
-  // negative inside, and the shape of that set depends on the sign of A.
-  //
-  // A ray flatter than the wall (A > 0) is inside between the two roots. A
-  // ray steeper than the wall (A < 0) -- every ray within the beam's
-  // half-angle of its axis, which is what looking down a beam is made of --
-  // is inside *outside* the roots: it leaves the real nappe at one root and
-  // enters the mirror nappe behind the apex at the other, and the stretch
-  // between is outside both. Taking the stretch between the roots for such
-  // a ray shaded a disc of dark air the size of the cone around the lens.
-  // The real nappe is the side where the cone's radius is positive; the
-  // mirror nappe lies behind the lens and the z clip below removes it.
-  // With no real roots and A < 0 the ray is inside everywhere.
-  const float FAR_S = 1.0e6;
-  if (abs(A) > 1e-9) {
-    float disc = B * B - 4.0 * A * C;
-    if (disc > 0.0) {
-      float sq = sqrt(disc);
-      float sA = min((-B - sq) / (2.0 * A), (-B + sq) / (2.0 * A));
-      float sB = max((-B - sq) / (2.0 * A), (-B + sq) / (2.0 * A));
-      if (A > 0.0) {
-        sLo = sA;
-        sHi = sB;
-      } else if (rz + mHull * vz * sA > 0.0) {
-        sLo = -FAR_S;
-        sHi = sA;
-      } else {
-        sLo = sB;
-        sHi = FAR_S;
-      }
-      inside = true;
-    } else if (A < 0.0) {
-      sLo = -FAR_S;
-      sHi = FAR_S;
-      inside = true;
-    }
-  } else if (abs(B) > 1e-9) {
-    // Running parallel to the wall: one crossing, inside on one side of it.
-    float sRoot = -C / B;
-    if (B > 0.0) {
-      sLo = -FAR_S;
-      sHi = sRoot;
-    } else {
-      sLo = sRoot;
-      sHi = FAR_S;
-    }
-    inside = true;
-  } else {
-    sLo = -FAR_S;
-    sHi = FAR_S;
-    inside = C < 0.0;
+  // And only the part of it the eye can see lit: never behind the eye, below
+  // the floor, or past the first solid thing along this pixel.
+  float sNear = 0.0;
+  float sFar = BEAM_FAR_S;
+  // The floor, the world plane z = BEAM_FLOOR_Z. A plane from a raycast down
+  // the axis would not do -- the plane is infinite, so a beam clipping a
+  // truss would lose everything below it.
+  if (abs(viewDir.z) > 1e-6) {
+    float sFloor = (BEAM_FLOOR_Z - rayOrigin.z) / viewDir.z;
+    if (viewDir.z < 0.0) sFar = min(sFar, sFloor);
+    else sNear = max(sNear, sFloor);
+  } else if (rayOrigin.z < BEAM_FLOOR_Z) {
+    // Running level, below the floor: none of this ray is lit.
+    sFar = -1.0;
   }
-
-  if (inside) {
-    // Clipped to the length of cone that exists. Clipping a segment moves its
-    // ends continuously, so unlike clamping a point it introduces no corner.
-    if (abs(vz) > 1e-6) {
-      float zEnterS = (0.0 - oz) / vz;
-      float zLeaveS = (vZFar - oz) / vz;
-      sLo = max(sLo, min(zEnterS, zLeaveS));
-      sHi = min(sHi, max(zEnterS, zLeaveS));
-    } else if (oz < 0.0 || oz > vZFar) {
-      // Running level with the lens plane, outside the cone's length.
-      sHi = sLo;
-    }
-    // Never behind the eye.
-    sLo = max(sLo, 0.0);
-
-    // Never below the floor: the same operation as the clip above, against
-    // the world plane z = BEAM_FLOOR_Z. A plane from a raycast down the axis
-    // would not do -- the plane is infinite, so a beam clipping a truss
-    // would lose everything below it.
-    if (abs(viewDir.z) > 1e-6) {
-      float sFloor = (BEAM_FLOOR_Z - rayOrigin.z) / viewDir.z;
-      if (viewDir.z < 0.0) sHi = min(sHi, sFloor);
-      else sLo = max(sLo, sFloor);
-    } else if (rayOrigin.z < BEAM_FLOOR_Z) {
-      // Running level, below the floor: none of this ray is lit.
-      sLo = sHi;
-    }
-
-    // And never past the first solid thing the eye sees along this pixel.
-    // The stored depth is distance along the camera's axis; along the ray
-    // it is that over the cosine to the axis. 1.0 is the cleared far plane,
-    // open air; 0.0 means the texture carries no depth at all, and that has
-    // to read as no clip rather than as a surface at the near plane.
-    vec2 uv = gl_FragCoord.xy / vec2(textureSize(sceneDepth, 0));
-    float stored = texture2D(sceneDepth, uv).x;
-    if (stored > 0.0 && stored < 1.0) {
-      float along = max(dot(viewDir, cameraDir), 1e-3);
-      sHi = min(sHi, viewDistance(stored) / along);
-    }
-
-    chord = max(sHi - sLo, 0.0);
-    sMid = (sLo + sHi) * 0.5;
-    zMid = clamp(oz + vz * sMid, 0.0, vZFar);
+  // The stored depth is distance along the camera's axis; along the ray it
+  // is that over the cosine to the axis. 1.0 is the cleared far plane, open
+  // air; 0.0 means the texture carries no depth at all, and that has to read
+  // as no clip rather than as a surface at the near plane.
+  vec2 uv = gl_FragCoord.xy / vec2(textureSize(sceneDepth, 0));
+  float stored = texture2D(sceneDepth, uv).x;
+  if (stored > 0.0 && stored < 1.0) {
+    float along = max(dot(viewDir, cameraDir), 1e-3);
+    sFar = min(sFar, viewDistance(stored) / along);
   }
+  aLo = max(aLo, sNear);
+  aHi = min(aHi, sFar);
+  hasA = hasA && aHi > aLo;
+  bLo = max(bLo, sNear);
+  bHi = min(bHi, sFar);
+  hasB = hasB && bHi > bLo;
+
+  // In ray order, as one piece where they meet.
+  if (!hasA && hasB) {
+    aLo = bLo;
+    aHi = bHi;
+    hasA = true;
+    hasB = false;
+  }
+  if (hasA && hasB) {
+    if (bLo < aLo) {
+      float t0 = aLo;
+      float t1 = aHi;
+      aLo = bLo;
+      aHi = bHi;
+      bLo = t0;
+      bHi = t1;
+    }
+    if (bLo <= aHi) {
+      aHi = max(aHi, bHi);
+      hasB = false;
+    }
+  }
+  float lenA = hasA ? aHi - aLo : 0.0;
+  float lenB = hasB ? bHi - bLo : 0.0;
+
+  float chord = lenA + lenB;
+  float sLo = aLo;
+  float sHi = hasB ? bHi : aHi;
+  float sMid = (sLo + sHi) * 0.5;
+  float zMid = chord > 0.0 ? clamp(oz + vz * sMid, 0.0, vZFar) : 0.0;
   zAlong = zMid;
   sAlong = sMid;
   if (chord <= 0.0) {
@@ -781,15 +826,19 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
   float samples = float(BEAM_PROFILE_SAMPLES);
   // Distance from the cone's virtual apex at the ends of the lit stretch,
   // which is what the irradiance falls off with.
-  float uLo = clamp(oz + vz * sLo, 0.0, vZFar) + apexBehind;
-  float uHi = clamp(oz + vz * sHi, 0.0, vZFar) + apexBehind;
-  float gLo = irradianceIntegral(uLo);
-  float gHi = irradianceIntegral(uHi);
+  float gA0 = irradianceIntegral(clamp(oz + vz * aLo, 0.0, vZFar) + apexBehind);
+  float gA1 = irradianceIntegral(clamp(oz + vz * aHi, 0.0, vZFar) + apexBehind);
+  float gB0 = hasB ? irradianceIntegral(clamp(oz + vz * bLo, 0.0, vZFar) + apexBehind) : 0.0;
+  float gB1 = hasB ? irradianceIntegral(clamp(oz + vz * bHi, 0.0, vZFar) + apexBehind) : 0.0;
+  float shareA = abs(gA1 - gA0);
+  float shareB = abs(gB1 - gB0);
+  float gLo = gA0;
+  float gHi = hasB ? gB1 : gA1;
   // Spaced by the irradiance when it changes along the stretch by more than
   // a percent; a ray crossing side-on sees it nearly constant.
   bool alongIrradiance = abs(gHi - gLo) > 0.01 * abs(gHi + gLo) * 0.5 && abs(vz) > 1e-4;
   // The irradiance integral each sample stands for, when spaced by it.
-  float shareWeight = abs(gHi - gLo) / abs(vz) / samples;
+  float shareWeight = (shareA + shareB) / abs(vz) / samples;
   float sumWeight = 0.0;
   float sumLight = 0.0;
   float sumFar = 0.0;
@@ -803,13 +852,19 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
     float weight;
     float sampleStep;
     if (alongIrradiance) {
-      float uHere = irradianceInverse(mix(gLo, gHi, t));
+      // An equal share of the integral over both pieces, the gap skipped.
+      float share = (shareA + shareB) * t;
+      float g = share <= shareA
+        ? mix(gA0, gA1, share / max(shareA, 1e-12))
+        : mix(gB0, gB1, (share - shareA) / max(shareB, 1e-12));
+      float uHere = irradianceInverse(g);
       s = (uHere - apexBehind - oz) / vz;
       weight = shareWeight;
       // The stretch of ray this sample's share covers.
       sampleStep = min(shareWeight * uHere * uHere, chord);
     } else {
-      s = sLo + chord * t;
+      float into = chord * t;
+      s = into <= lenA ? aLo + into : bLo + (into - lenA);
       float uHere = clamp(oz + vz * s, 0.0, vZFar) + apexBehind;
       weight = chord / samples / (uHere * uHere);
       sampleStep = chord / samples;

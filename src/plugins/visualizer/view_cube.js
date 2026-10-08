@@ -15,23 +15,27 @@ import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUti
  * and a merged copy of the faces is drawn back-side-on behind them, which is
  * what fills the gaps at glancing angles and makes it read as solid.
  *
+ * It is drawn on a canvas of its own, pinned to the panel's top-right corner
+ * rather than the scene canvas's. In studio mode the scene canvas is
+ * letterboxed to the recording's frame, and a cube drawn into it moved with
+ * the letterbox; on its own canvas it stays put, and it is never in a
+ * recording.
+ *
  * The rounded-rectangle geometry is by @hofk:
  * https://discourse.threejs.org/t/plane-mesh-with-rounded-corners-that-can-have-an-image-texture/46892/2
  */
 
-/** Size of the gizmo's square, in pixels. */
-/** Side of the gizmo's square viewport, in pixels. */
-const DIM = 130;
+/** Side of the gizmo's square, in pixels. */
+const DIM = 105;
 /**
  * How far the gizmo is held off the corner, in pixels.
  *
  * Applied to both edges: inset from one and flush against the other reads as
- * a mistake rather than a margin. Whatever this is, `locate` has to agree with
- * `update` about it -- the hit test and the render are two descriptions of the
- * same square, and a gizmo you can see but not hit is worse than one in the
- * corner.
+ * a mistake rather than a margin.
  */
 const MARGIN = 14;
+/** How far a press may travel and still be a click on a face, in pixels. */
+const CLICK_SLOP_PX = 4;
 
 const OPTIONS = {
   resolution: 512,
@@ -182,12 +186,16 @@ function drawFaceAtlas() {
 class ViewCube {
   /**
    * @param {Object} camera the scene camera the cube reflects
-   * @param {Object} domElement canvas the gizmo is drawn over
+   * @param {Object} domElement the scene canvas, whose panel holds the cube
+   * @param {Object} handlers `{ pick(hit), orbit(dx, dy) }`: a click on a face
+   *   or corner, and a drag in pixels
    */
-  constructor(camera, domElement) {
+  constructor(camera, domElement, handlers = {}) {
     this.camera = camera;
     this.domElement = domElement;
+    this.handlers = handlers;
     this.hovered = null;
+    this.mountCanvas();
 
     this.scene = new THREE.Scene();
     // Fixed and perspective, so the cube keeps its own sense of depth however
@@ -273,10 +281,10 @@ class ViewCube {
    * @returns {Boolean} whether the pointer is over the gizmo at all
    */
   locate(event) {
-    const rect = this.domElement.getBoundingClientRect();
-    const left = rect.left + this.domElement.offsetWidth - DIM - MARGIN;
-    const x = (event.clientX - left) / DIM;
-    const y = (event.clientY - rect.top - MARGIN) / DIM;
+    const rect = this.canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return false;
+    const x = (event.clientX - rect.left) / rect.width;
+    const y = (event.clientY - rect.top) / rect.height;
     if (x < 0 || x > 1 || y < 0 || y > 1) return false;
     this.pointer.set(x * 2 - 1, -(y * 2) + 1);
     return true;
@@ -361,22 +369,101 @@ class ViewCube {
    * @param {Object} renderer THREE.WebGLRenderer
    */
   render(renderer) {
+    this.place();
+    if (this.canvas.style.display === 'none') return;
     // Turned to match the camera, so a face points at the viewer exactly when
     // looking down that axis.
     this.root.quaternion.copy(this.camera.quaternion).invert();
     this.root.updateMatrixWorld();
+    // Drawn as the scene's renderer would have drawn it.
+    this.renderer.outputColorSpace = renderer.outputColorSpace;
+    this.renderer.toneMapping = renderer.toneMapping;
+    this.renderer.toneMappingExposure = renderer.toneMappingExposure;
+    this.renderer.render(this.scene, this.gizmoCamera);
+  }
 
-    const x = this.domElement.offsetWidth - DIM - MARGIN;
-    // Viewport coordinates run from the bottom-left, so the top of the canvas
-    // is its height less the gizmo's own size, and the margin comes off that
-    // rather than being added to it.
-    const y = this.domElement.offsetHeight - DIM - MARGIN;
+  /**
+   * Creates the cube's own canvas and renderer, in the scene canvas's panel.
+   *
+   * @private
+   */
+  mountCanvas() {
+    this.canvas = document.createElement('canvas');
+    Object.assign(this.canvas.style, {
+      position: 'absolute',
+      width: `${DIM}px`,
+      height: `${DIM}px`,
+      right: `${MARGIN}px`,
+      zIndex: 2,
+    });
+    const panel = this.domElement.parentElement;
+    if (getComputedStyle(panel).position === 'static') panel.style.position = 'relative';
+    panel.appendChild(this.canvas);
+    this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, alpha: true, antialias: true });
+    this.renderer.setPixelRatio(window.devicePixelRatio || 1);
+    this.renderer.setSize(DIM, DIM, false);
 
-    renderer.getViewport(this.viewport);
-    renderer.clearDepth();
-    renderer.setViewport(x, y, DIM, DIM);
-    renderer.render(this.scene, this.gizmoCamera);
-    renderer.setViewport(this.viewport.x, this.viewport.y, this.viewport.z, this.viewport.w);
+    this.downAt = null;
+    this.dragged = false;
+    this.canvas.addEventListener('pointermove', (event) => this.onPointerMove(event));
+    this.canvas.addEventListener('pointerleave', () => {
+      if (!this.downAt) this.clearHover();
+    });
+    this.canvas.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+      this.canvas.setPointerCapture(event.pointerId);
+      this.downAt = { x: event.clientX, y: event.clientY };
+      this.lastAt = { x: event.clientX, y: event.clientY };
+      this.dragged = false;
+    });
+    this.canvas.addEventListener('pointerup', (event) => {
+      const down = this.downAt;
+      this.downAt = null;
+      if (this.canvas.hasPointerCapture(event.pointerId)) {
+        this.canvas.releasePointerCapture(event.pointerId);
+      }
+      if (!down || this.dragged) return;
+      const hit = this.handleClick(event);
+      if (hit && this.handlers.pick) this.handlers.pick(hit);
+    });
+  }
+
+  /**
+   * Hovers, or, with the button held, turns the view: dragging the cube
+   * orbits as dragging the scene does.
+   *
+   * @private
+   * @param {Object} event pointer event
+   */
+  onPointerMove(event) {
+    if (!this.downAt) {
+      this.canvas.style.cursor = this.handlePointerMove(event) ? 'pointer' : 'grab';
+      return;
+    }
+    const travelled = Math.hypot(event.clientX - this.downAt.x, event.clientY - this.downAt.y);
+    if (travelled > CLICK_SLOP_PX) this.dragged = true;
+    if (!this.dragged) return;
+    const dx = event.clientX - this.lastAt.x;
+    const dy = event.clientY - this.lastAt.y;
+    this.lastAt = { x: event.clientX, y: event.clientY };
+    if (this.handlers.orbit) this.handlers.orbit(dx, dy);
+  }
+
+  /**
+   * Keeps the canvas at the top-right of the panel, just under its header,
+   * and hidden with the scene canvas.
+   *
+   * @private
+   */
+  place() {
+    const shown = this.domElement.offsetWidth > 0 && this.domElement.offsetHeight > 0;
+    const display = shown ? '' : 'none';
+    if (this.canvas.style.display !== display) this.canvas.style.display = display;
+    if (!shown) return;
+    const header = this.domElement.previousElementSibling;
+    const top = (header ? header.offsetTop + header.offsetHeight : 0) + MARGIN;
+    const css = `${top}px`;
+    if (this.canvas.style.top !== css) this.canvas.style.top = css;
   }
 
   /**
@@ -385,6 +472,8 @@ class ViewCube {
    * @public
    */
   dispose() {
+    this.renderer.dispose();
+    this.canvas.remove();
     this.planes.forEach((plane) => {
       plane.material.map.dispose();
       plane.material.dispose();

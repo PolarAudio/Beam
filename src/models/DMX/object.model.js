@@ -7,6 +7,28 @@ import withTransform from './scene_item.transform';
 import { SCENE_ITEM_KINDS, rowId } from './scene_item';
 import { itemLabel, splitSavedName } from './item_naming';
 
+/** The smallest scale an axis may take: zero would collapse the model. */
+const MIN_SCALE = 0.001;
+
+/**
+ * A scale as `{ x, y, z }`, from a number (all three alike, as older shows
+ * save it) or from an object.
+ *
+ * @param {Object|Number} [scale]
+ * @returns {Object}
+ */
+function scaleOf(scale) {
+  const axis = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n !== 0 ? Math.max(Math.abs(n), MIN_SCALE) : 1;
+  };
+  if (scale !== null && typeof scale === 'object') {
+    return { x: axis(scale.x), y: axis(scale.y), z: axis(scale.z) };
+  }
+  const all = scale === undefined ? 1 : axis(scale);
+  return { x: all, y: all, z: all };
+}
+
 /**
  * @file A 3D model standing in the scene.
  *
@@ -39,7 +61,8 @@ class SceneObject extends withTransform(Object) {
    * @param {String} [data.name] what the item list calls it
    * @param {Object} [data.position] absolute, metres
    * @param {Object} [data.rotation] absolute, radians
-   * @param {Number} [data.scale] uniform, on top of the model's own units
+   * @param {Object|Number} [data.scale] per axis `{ x, y, z }`, on top of
+   *   the model's own units; a single number scales all three alike
    */
   constructor(data = {}) {
     super();
@@ -88,7 +111,7 @@ class SceneObject extends withTransform(Object) {
       y: (data.rotation || {}).y || 0,
       z: (data.rotation || {}).z || 0,
     };
-    this._scale = data.scale === undefined ? 1 : data.scale;
+    this._scale = scaleOf(data.scale);
 
     /**
      * Owning structure, or null. Same rule as a fixture: a member still holds
@@ -167,7 +190,7 @@ class SceneObject extends withTransform(Object) {
     }
     this.transformNode.updateMatrixWorld();
     box.union(local.clone()
-      .applyMatrix4(new THREE.Matrix4().makeScale(this._scale, this._scale, this._scale))
+      .applyMatrix4(new THREE.Matrix4().makeScale(this._scale.x, this._scale.y, this._scale.z))
       .applyMatrix4(this.transformNode.matrixWorld));
   }
 
@@ -271,7 +294,7 @@ class SceneObject extends withTransform(Object) {
       hidden: this._hidden || undefined,
       position: { ...this._position },
       rotation: { ...this._rotation },
-      scale: this._scale,
+      scale: { ...this._scale },
     };
     // An inline object's geometry is these numbers, so the show has to keep
     // them: there is no library entry to resolve it against on reload.
@@ -378,13 +401,127 @@ class SceneObject extends withTransform(Object) {
     this.sync();
   }
 
+  /**
+   * Scale along the model's own axes, `{ x, y, z }`. A single number sets
+   * all three.
+   *
+   * @type {Object}
+   */
   get scale() {
     return this._scale;
   }
 
   set scale(scale) {
-    this._scale = Number(scale) || 1;
+    this._scale = scaleOf(scale);
     this.sync();
+  }
+
+  /**
+   * The model's own size along its axes, in metres, as the file gives it
+   * with the import's units applied: its bounding box. Null until loaded.
+   *
+   * @type {Object|null} `{ x, y, z }`
+   */
+  get modelSize() {
+    const local = SceneObjects.boundsOf(this.renderKey);
+    if (!local || local.isEmpty()) return null;
+    const size = local.getSize(new THREE.Vector3());
+    return { x: size.x, y: size.y, z: size.z };
+  }
+
+  /**
+   * The placed size along each axis, in metres: the model's own size times
+   * the scale. Setting one changes that axis's scale to match; nothing is
+   * set before the model has loaded.
+   */
+  get sizeX() { return this.sizeAlong('x'); }
+
+  set sizeX(value) { this.writeSize('x', value); }
+
+  get sizeY() { return this.sizeAlong('y'); }
+
+  set sizeY(value) { this.writeSize('y', value); }
+
+  get sizeZ() { return this.sizeAlong('z'); }
+
+  set sizeZ(value) { this.writeSize('z', value); }
+
+  /**
+   * @private
+   * @param {String} axis 'x', 'y' or 'z'
+   * @returns {Number|null}
+   */
+  sizeAlong(axis) {
+    const own = this.modelSize;
+    return own ? own[axis] * this._scale[axis] : null;
+  }
+
+  /**
+   * @private
+   * @param {String} axis 'x', 'y' or 'z'
+   * @param {Number} value metres
+   */
+  writeSize(axis, value) {
+    const own = this.modelSize;
+    const metres = Number(value);
+    if (!own || !(own[axis] > 0) || !(metres > 0)) return;
+    this.writeScale(axis, metres / own[axis]);
+  }
+
+  /**
+   * Whether the model is at its own size on every axis.
+   *
+   * @type {Boolean}
+   */
+  get isOriginalSize() {
+    return this._scale.x === 1 && this._scale.y === 1 && this._scale.z === 1;
+  }
+
+  /**
+   * Puts the model back to its own size.
+   *
+   * @public
+   */
+  restoreSize() {
+    Controls.detach(this);
+    this.scale = 1;
+    Controls.attach(this);
+  }
+
+  /**
+   * Sets one axis of the scale, the gizmo following as it does for a typed
+   * position.
+   *
+   * @private
+   * @param {String} axis 'x', 'y' or 'z'
+   * @param {Number} value
+   */
+  writeScale(axis, value) {
+    Controls.detach(this);
+    this.scale = { ...this._scale, [axis]: value };
+    Controls.attach(this);
+  }
+
+  /**
+   * Draws the model at a scale without keeping it, for a gizmo drag in
+   * progress. The drag's end sets `scale`.
+   *
+   * @public
+   * @param {Object} scale `{ x, y, z }`
+   */
+  previewScale(scale) {
+    if (!this._placement) return;
+    SceneObjects.move(this._placement, { scale: scaleOf(scale) });
+  }
+
+  /**
+   * Whether this can be scaled by axis: a model from a file. A created shape
+   * is sized by its own dimensions instead.
+   *
+   * @type {Boolean}
+   */
+  get isScalable() {
+    return !this.isInline;
   }
 
   /**

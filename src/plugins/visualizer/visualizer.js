@@ -34,8 +34,6 @@ const LED_FIXTURE_BAR_CAPACITY = 256;
  */
 const LED_FIXTURE_LED_CAPACITY = 0;
 
-/** How far a press may travel and still count as a click on the gizmo. */
-const VIEW_CUBE_CLICK_SLOP_PX = 4;
 
 /**
  * How far a look-around drag turns the view: a screen height is a full turn.
@@ -49,16 +47,47 @@ const LOOK_TURN_PER_HEIGHT = Math.PI * 2;
 const LOOK_MIN_POLAR = Math.PI * 0.02;
 const LOOK_MAX_POLAR = Math.PI * 0.98;
 
-/** `PointerEvent.button` values the modified drags are hung off. */
+/** `PointerEvent.button` values the hand-held drags are hung off. */
 const MIDDLE_BUTTON = 1;
 const RIGHT_BUTTON = 2;
 
-/** What a shift-drag is doing: turning the view, or lifting the whole rig. */
+/**
+ * What a hand-held drag is doing: turning the view, lifting the whole rig, or
+ * panning it under the pointer.
+ */
 const DRAG_LOOK = 'look';
 const DRAG_LIFT = 'lift';
+const DRAG_PAN = 'pan';
+const DRAG_ORBIT = 'orbit';
+
+/** Scratch for the orbit's pivot and turns. */
+const orbitPivot = new THREE.Vector3();
+const orbitTurn = new THREE.Quaternion();
+const orbitAxis = new THREE.Vector3();
+const orbitForward = new THREE.Vector3();
+const orbitNdc = new THREE.Vector2();
+const orbitRay = new THREE.Raycaster();
+const WORLD_UP = new THREE.Vector3(0, 0, 1);
+
+/**
+ * How much nearer the wheel brings the camera to what is under the cursor,
+ * per pixel of wheel travel: a notch, about 100 pixels, closes 15% of the
+ * distance.
+ */
+const WHEEL_RATE = 0.0016;
+/** A wheel line, for a mouse that reports in lines, in pixels. */
+const WHEEL_LINE_PX = 33;
+/** Scratch for the wheel's aim point, its step, and the view's forward. */
+const wheelPoint = new THREE.Vector3();
+const wheelStep = new THREE.Vector3();
+const wheelForward = new THREE.Vector3();
 
 /** Scratch for the look vector, so a drag allocates nothing per move. */
 const lookVector = new THREE.Vector3();
+/** Scratch for the pan's screen axes and step. */
+const panRight = new THREE.Vector3();
+const panUp = new THREE.Vector3();
+const panStep = new THREE.Vector3();
 import SceneEnv from './scene_env';
 import { hazeCycle, setHazeCycle } from './haze_noise';
 import {
@@ -1465,41 +1494,67 @@ class Visualizer {
     // Never proxied: the visualizer handle hangs off the reactive show, so
     // anything assigned to it is wrapped, and three reads Object3D internals
     // that a proxy cannot hand back unchanged.
-    this.viewCube = markRaw(new ViewCube(this.camera, this.domElement));
-    this.domElement.addEventListener('pointermove', (event) => {
-      const over = this.viewCube.handlePointerMove(event);
-      this.domElement.style.cursor = over ? 'pointer' : '';
-    });
-    this.domElement.addEventListener('pointerleave', () => this.viewCube.clearHover());
-    // A press on the gizmo is left to travel: OrbitControls orbits on any drag
-    // over the canvas, and the cube mirrors the camera, so dragging it round
-    // needs no code of its own. Only a press that goes nowhere is a face
-    // click, which is decided on release.
-    this.domElement.addEventListener('pointerdown', (event) => {
-      this.viewCubeDownAt = this.viewCube.handleClick(event)
-        ? { x: event.clientX, y: event.clientY }
-        : null;
-    }, true);
-
-    this.domElement.addEventListener('pointerup', (event) => {
-      const down = this.viewCubeDownAt;
-      this.viewCubeDownAt = null;
-      if (!down) return;
-      const travelled = Math.hypot(event.clientX - down.x, event.clientY - down.y);
-      if (travelled > VIEW_CUBE_CLICK_SLOP_PX) return;
-      const hit = this.viewCube.handleClick(event);
-      if (!hit) return;
-      // The event still has to reach OrbitControls so it can end its drag
-      // cleanly; the scene's own picking is told to sit this one out instead,
-      // otherwise clicking the gizmo would also clear the selection behind it.
-      Controls.ignoreNextPointerUp = true;
-      if (hit.view) Controls.setView(hit.view);
-      else Controls.setViewDirection(hit.direction);
-    }, true);
+    this.viewCube = markRaw(new ViewCube(this.camera, this.domElement, {
+      pick: (hit) => {
+        if (hit.view) Controls.setView(hit.view);
+        else Controls.setViewDirection(hit.direction);
+      },
+      orbit: (dx, dy) => this.orbitBy(dx, dy),
+    }));
   }
 
   /**
-   * The two drags shift adds: turn the view, and lift the whole rig.
+   * Turns the view about the orbit centre by a pointer drag, as dragging the
+   * scene does: the same rate and direction, and the same limits. The cube
+   * sits on its own canvas, so its drags do not reach the orbit control.
+   *
+   * @public
+   * @param {Number} dx pixels across
+   * @param {Number} dy pixels down
+   */
+  orbitBy(dx, dy) {
+    const orbit = Controls.controlHandle;
+    if (!orbit) return;
+    cancelAnimationFrame(Controls.rafID);
+    Controls.flying = false;
+    const rate = ((2 * Math.PI) / (this.domElement.clientHeight || 1)) * (orbit.rotateSpeed || 1);
+    const offset = this.camera.position.clone().sub(orbit.target);
+    const radius = offset.length();
+    if (radius < 1e-6) return;
+    const minPolar = Math.max(orbit.minPolarAngle || 0, 1e-3);
+    const maxPolar = Math.min(orbit.maxPolarAngle ?? Math.PI, Math.PI - 1e-3);
+    const azimuth = Math.atan2(offset.y, offset.x) - dx * rate;
+    const polar = THREE.MathUtils.clamp(Math.acos(offset.z / radius) - dy * rate, minPolar, maxPolar);
+    offset.set(
+      radius * Math.sin(polar) * Math.cos(azimuth),
+      radius * Math.sin(polar) * Math.sin(azimuth),
+      radius * Math.cos(polar),
+    );
+    this.camera.position.copy(orbit.target).add(offset);
+    this.camera.lookAt(orbit.target);
+    orbit.update();
+  }
+
+  /**
+   * The drags held by hand: the middle-drag pan, and the two shift adds --
+   * turn the view, and lift the whole rig.
+   *
+   * Every one of them holds the pointer while it runs (pointer lock): the
+   * cursor is hidden and the drag reads the mouse's own movement, so it has
+   * no screen edge to stop at. On release the cursor is back where it was
+   * pressed.
+   *
+   * A right-drag orbits about whatever is under the pointer when it is
+   * pressed, and that point stays under the pointer -- see `orbitAbout`. The
+   * controls' own orbit turns about their target, which sits on the optical
+   * axis: off screen once the lens is shifted.
+   *
+   * A middle-drag slides the picture in screen space, as if it were 2D: a
+   * lens shift. The camera neither moves nor turns, so nothing changes but
+   * where the picture sits in the panel -- see `shiftLens`. In studio mode,
+   * where the picture is the recording and a shift would not be kept, it pans
+   * the camera in the screen plane instead, the grabbed point under the
+   * pointer.
    *
    * Shift and right-drag turns the view without moving the camera; shift and
    * middle-drag translates it vertically. Both are held by hand because the
@@ -1532,11 +1587,41 @@ class Visualizer {
     this.lookingFrom = null;
 
     window.addEventListener('pointerdown', (event) => {
-      if (!event.shiftKey || event.target !== this.domElement) return;
-      const mode = (event.button === RIGHT_BUTTON && DRAG_LOOK)
-        || (event.button === MIDDLE_BUTTON && DRAG_LIFT);
+      if (event.target !== this.domElement) return;
+      let mode = null;
+      if (event.shiftKey) {
+        mode = (event.button === RIGHT_BUTTON && DRAG_LOOK)
+          || (event.button === MIDDLE_BUTTON && DRAG_LIFT);
+      } else if (event.button === RIGHT_BUTTON) {
+        mode = DRAG_ORBIT;
+        const press = { clientX: event.clientX, clientY: event.clientY, currentTarget: this.domElement };
+        if (!Controls.scenePointAt(press, orbitPivot)) {
+          // At the sky: a point along the pointer's ray, as far as the target.
+          const rect = this.domElement.getBoundingClientRect();
+          orbitNdc.set(
+            (((event.clientX - rect.left) / (rect.width || 1)) * 2) - 1,
+            (-((event.clientY - rect.top) / (rect.height || 1)) * 2) + 1,
+          );
+          orbitRay.setFromCamera(orbitNdc, this.camera);
+          orbitRay.ray.at(this.camera.position.distanceTo(this.controls.target), orbitPivot);
+        }
+      } else if (event.button === MIDDLE_BUTTON) {
+        mode = DRAG_PAN;
+        // A camera pan moves at the depth of what is under the pointer, so
+        // that is what follows it exactly.
+        if (this.recordFrame) {
+          Controls.setPivotFromPointer({
+            clientX: event.clientX,
+            clientY: event.clientY,
+            currentTarget: this.domElement,
+          });
+        }
+      }
       if (!mode) return;
+      cancelAnimationFrame(Controls.rafID);
+      Controls.flying = false;
       this.lookingFrom = { x: event.clientX, y: event.clientY, mode };
+      this.holdPointer();
       event.stopPropagation();
       event.preventDefault();
     }, true);
@@ -1544,19 +1629,42 @@ class Visualizer {
     window.addEventListener('pointermove', (event) => {
       if (!this.lookingFrom) return;
       const height = this.domElement.clientHeight || 1;
-      const dx = ((event.clientX - this.lookingFrom.x) / height) * LOOK_TURN_PER_HEIGHT;
-      const dy = ((event.clientY - this.lookingFrom.y) / height) * LOOK_TURN_PER_HEIGHT;
-      const pixels = event.clientY - this.lookingFrom.y;
+      // Held, the cursor does not move, and the mouse's movement is the drag.
+      const held = document.pointerLockElement === this.domElement;
+      const pixelsX = held ? event.movementX : event.clientX - this.lookingFrom.x;
+      const pixels = held ? event.movementY : event.clientY - this.lookingFrom.y;
+      const dx = (pixelsX / height) * LOOK_TURN_PER_HEIGHT;
+      const dy = (pixels / height) * LOOK_TURN_PER_HEIGHT;
       this.lookingFrom.x = event.clientX;
       this.lookingFrom.y = event.clientY;
       if (this.lookingFrom.mode === DRAG_LOOK) this.lookAround(dx, dy);
+      else if (this.lookingFrom.mode === DRAG_ORBIT) this.orbitAbout(orbitPivot, pixelsX, pixels);
+      else if (this.lookingFrom.mode === DRAG_PAN && this.recordFrame) this.panView(pixelsX, pixels);
+      else if (this.lookingFrom.mode === DRAG_PAN) this.shiftLens(pixelsX, pixels);
       else this.liftView(pixels);
       event.stopPropagation();
     }, true);
 
     window.addEventListener('pointerup', () => {
+      if (!this.lookingFrom) return;
       this.lookingFrom = null;
+      if (document.pointerLockElement === this.domElement) document.exitPointerLock();
     }, true);
+  }
+
+  /**
+   * Holds the pointer for a camera drag. Where it cannot be held the drag
+   * still runs, from the cursor's position, and stops at the screen's edge.
+   *
+   * @private
+   */
+  holdPointer() {
+    try {
+      const held = this.domElement.requestPointerLock();
+      if (held && held.catch) held.catch(() => {});
+    } catch (err) {
+      // Not available here; the drag reads the cursor instead.
+    }
   }
 
   /**
@@ -1593,12 +1701,11 @@ class Visualizer {
   /**
    * Lifts the camera and its target together, straight up the world.
    *
-   * A plain middle-drag walks the floor, which is right for crossing a room
-   * and useless for rising above it. This is the vertical move, on its own
-   * gesture rather than traded against the first.
+   * A plain middle-drag pans in the screen plane, which tilts with the view.
+   * This is the move straight up the world, whatever the view's angle.
    *
    * The rate is the one `OrbitControls` pans at -- the world distance a pixel
-   * covers at the target's depth -- so a lift and a walk move ground under the
+   * covers at the target's depth -- so a lift and a pan move ground under the
    * pointer at the same speed. Dragging down raises the camera, the same
    * grab-the-world direction as the pan.
    *
@@ -1617,27 +1724,158 @@ class Visualizer {
   }
 
   /**
+   * The wheel: moves the camera toward whatever is under the cursor, or away
+   * from it, along the cursor's own line of sight.
+   *
+   * The point under the cursor stays under it and the view keeps its angle.
+   * Each step covers a share of the distance left, so the camera can get as
+   * close as wanted and never passes through. Pointing at the sky, it aims at
+   * the orbit target's depth. The target is then put at the depth of the
+   * point aimed at, on the view's axis, so the view cube's drag and the
+   * controls' own sums have something sensible to turn about.
+   *
+   * @public
+   */
+  prepareWheel() {
+    this.domElement.addEventListener('wheel', (event) => {
+      event.preventDefault();
+      cancelAnimationFrame(Controls.rafID);
+      Controls.flying = false;
+      const pixels = event.deltaY * (event.deltaMode === 1 ? WHEEL_LINE_PX : 1);
+      this.wheelToward(event, pixels);
+    }, { passive: false });
+  }
+
+  /**
+   * One wheel move, toward the point under the pointer.
+   *
+   * @public
+   * @param {Object} event wheel event
+   * @param {Number} pixels wheel travel, positive away from the scene
+   */
+  wheelToward(event, pixels) {
+    const press = { clientX: event.clientX, clientY: event.clientY, currentTarget: this.domElement };
+    const rect = this.domElement.getBoundingClientRect();
+    orbitNdc.set(
+      (((event.clientX - rect.left) / (rect.width || 1)) * 2) - 1,
+      (-((event.clientY - rect.top) / (rect.height || 1)) * 2) + 1,
+    );
+    orbitRay.setFromCamera(orbitNdc, this.camera);
+    if (!Controls.scenePointAt(press, wheelPoint)) {
+      orbitRay.ray.at(Math.max(this.camera.position.distanceTo(this.controls.target), 1), wheelPoint);
+    }
+    const distance = this.camera.position.distanceTo(wheelPoint);
+    if (!(distance > 1e-6)) return;
+    // Nearer by a share of what is left; further by the share that undoes it.
+    const keep = Math.exp(pixels * WHEEL_RATE);
+    const next = Math.min(distance * keep, this.controls.maxDistance || Infinity);
+    wheelStep.subVectors(wheelPoint, this.camera.position).multiplyScalar(1 - next / distance);
+    this.camera.position.add(wheelStep);
+    this.camera.updateMatrixWorld();
+    wheelForward.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
+    const depth = Math.max(wheelForward.dot(wheelStep.subVectors(wheelPoint, this.camera.position)), 0.05);
+    this.controls.target.copy(this.camera.position).addScaledVector(wheelForward, depth);
+    this.controls.update();
+  }
+
+  /**
+   * Turns the camera rigidly about a point: yaw about the world's up, pitch
+   * about the camera's own horizontal. The point keeps its place in the
+   * camera's frame, so it stays under the pointer, and the horizon stays
+   * level. The rate and directions are the orbit control's; pitch stops short
+   * of straight up and straight down.
+   *
+   * @public
+   * @param {Object} pivot THREE.Vector3, world
+   * @param {Number} pixelsX horizontal drag since the last move
+   * @param {Number} pixelsY vertical drag since the last move
+   */
+  orbitAbout(pivot, pixelsX, pixelsY) {
+    const rate = ((2 * Math.PI) / (this.domElement.clientHeight || 1)) * (this.controls.rotateSpeed || 1);
+    const turn = (axis, angle) => {
+      orbitTurn.setFromAxisAngle(axis, angle);
+      this.camera.position.sub(pivot).applyQuaternion(orbitTurn).add(pivot);
+      this.controls.target.sub(pivot).applyQuaternion(orbitTurn).add(pivot);
+      this.camera.quaternion.premultiply(orbitTurn);
+    };
+    turn(WORLD_UP, -pixelsX * rate);
+    // Pitch about the camera's horizontal, unless it would carry the view
+    // past the limits the orbit control keeps.
+    orbitAxis.set(1, 0, 0).applyQuaternion(this.camera.quaternion);
+    const pitch = -pixelsY * rate;
+    orbitTurn.setFromAxisAngle(orbitAxis, pitch);
+    orbitForward.set(0, 0, -1).applyQuaternion(this.camera.quaternion).applyQuaternion(orbitTurn);
+    const polar = Math.acos(THREE.MathUtils.clamp(orbitForward.z, -1, 1));
+    if (polar > LOOK_MIN_POLAR && polar < LOOK_MAX_POLAR) turn(orbitAxis, pitch);
+    this.camera.updateMatrixWorld();
+    this.controls.update();
+  }
+
+  /**
+   * Slides the picture by a drag, in screen pixels: a lens shift.
+   *
+   * The camera's frustum is offset rather than the camera moved, so every
+   * pixel is projected exactly as before and only the window onto the picture
+   * moves. Picking, zoom and every pass read the same projection, so they keep
+   * lining up. Any flight of the camera clears it -- a view-cube face, a
+   * frame, a recalled view -- since those aim the camera afresh.
+   *
+   * @public
+   * @param {Number} pixelsX horizontal drag since the last move
+   * @param {Number} pixelsY vertical drag since the last move
+   */
+  shiftLens(pixelsX, pixelsY) {
+    const width = this.domElement.clientWidth || 1;
+    const height = this.domElement.clientHeight || 1;
+    const { view } = this.camera;
+    const shifted = view && view.enabled;
+    const x = (shifted ? (view.offsetX * width) / view.fullWidth : 0) - pixelsX;
+    const y = (shifted ? (view.offsetY * height) / view.fullHeight : 0) - pixelsY;
+    this.camera.setViewOffset(width, height, x, y, width, height);
+  }
+
+  /**
+   * Moves the camera and its target together in the screen plane, so the
+   * scene follows the pointer at the target's depth and the view keeps its
+   * angle.
+   *
+   * @public
+   * @param {Number} pixelsX horizontal drag since the last move
+   * @param {Number} pixelsY vertical drag since the last move
+   */
+  panView(pixelsX, pixelsY) {
+    const height = this.domElement.clientHeight || 1;
+    const distance = this.camera.position.distanceTo(this.controls.target);
+    const perPixel = (2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2)
+      * distance) / height;
+    this.camera.updateMatrixWorld();
+    panRight.setFromMatrixColumn(this.camera.matrixWorld, 0);
+    panUp.setFromMatrixColumn(this.camera.matrixWorld, 1);
+    panStep.copy(panRight).multiplyScalar(-pixelsX * perPixel)
+      .addScaledVector(panUp, pixelsY * perPixel);
+    this.camera.position.add(panStep);
+    this.controls.target.add(panStep);
+    this.controls.update();
+  }
+
+  /**
    * Prepares Visualizer's camera controls
    *
    * @public
    */
   prepareControls() {
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-    // Pan along the ground, which is how you cross a room. Three's default,
-    // true, slides the camera up the screen on a vertical drag instead.
-    this.controls.screenSpacePanning = false;
-    // Zoom towards whatever is under the pointer instead of towards the orbit
-    // target. This is the single thing that makes the camera feel aimed rather
-    // than fought: with a fixed pivot you slide *past* the fixture you are
-    // closing on, because the point you are converging towards is somewhere
-    // behind it. Off by default in three.
-    this.controls.zoomToCursor = true;
+    // The wheel is done by hand -- see `prepareWheel`. The controls' zoom
+    // closes on their target, and stops dead once it is reached.
+    this.controls.enableZoom = false;
     // Weight. Without damping every drag stops dead on mouse-up, which reads as
     // twitchy on a large scene; the update loop that makes it work is already
     // running below.
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
-    this.controls.minDistance = 0.2;
+    // Below the wheel's own nearest target depth, so the controls never push
+    // the camera back off something it has been brought close to.
+    this.controls.minDistance = 0.01;
     // Far enough out for a building being mapped: a hundred metres is inside
     // a big room.
     this.controls.maxDistance = 400;
@@ -1647,14 +1885,17 @@ class Visualizer {
     // the gimbal flip at straight-up.
     this.controls.maxPolarAngle = Math.PI * 0.98;
     // Left is reserved for picking and rubber-band selection, so the camera
-    // moves on the other two: middle pans, right orbits.
+    // moves on the other two, both by hand in `prepareLookAround`: right
+    // orbits about the point under the pointer, middle shifts the picture.
+    // The controls keep the wheel.
     this.controls.mouseButtons = {
       LEFT: null,
-      MIDDLE: THREE.MOUSE.PAN,
-      RIGHT: THREE.MOUSE.ROTATE,
+      MIDDLE: null,
+      RIGHT: null,
     };
 
     this.prepareLookAround();
+    this.prepareWheel();
     this.controls.autoRotate = this.autoRotate;
     this.controls.autoRotateSpeed = 2.5
     AnimationManager.add(() => {
@@ -1691,6 +1932,18 @@ class Visualizer {
       // with `gl_FragCoord` in the beam shader without a scale factor.
       if (finalComposer) finalComposer.setSize(width, height);
       this.camera.aspect = aspect;
+      // A lens shift is kept in proportion to the panel.
+      const { view } = this.camera;
+      if (view && view.enabled) {
+        this.camera.setViewOffset(
+          width,
+          height,
+          (view.offsetX * width) / view.fullWidth,
+          (view.offsetY * height) / view.fullHeight,
+          width,
+          height,
+        );
+      }
       this.camera.updateProjectionMatrix();
     }
   }
@@ -1721,6 +1974,8 @@ class Visualizer {
 
   set viewpoint(value) {
     if (!value || !this.camera) return;
+    // A recalled view is aimed afresh, so any lens shift goes with it.
+    Controls.clearLensShift();
     const { position, target } = value;
     if (position) this.camera.position.set(position.x, position.y, position.z);
     if (target && this.controls) this.controls.target.set(target.x, target.y, target.z);
@@ -1836,6 +2091,8 @@ class Visualizer {
     // hitch the footage for no reason.
     const resized = !previous || previous.width !== width || previous.height !== height;
     this.recordFrame = { width, height, fov };
+    // The recording is never shifted.
+    Controls.clearLensShift();
 
     if (resized) {
       this.renderer.setPixelRatio(1);
@@ -1958,10 +2215,11 @@ class Visualizer {
     Recorder.frameDrawn();
 
     // Over the finished image, and after Perf.end() so their own cost is not
-    // counted against the scene it is reporting on. Not while recording: the
-    // move gizmo and the view cube are aids, and would sit in the footage.
+    // counted against the scene it is reporting on. The move gizmo is not
+    // drawn while recording: it is an aid, and would sit in the footage. The
+    // view cube has its own canvas, so it is never in the footage.
     if (!helpers.recording) Controls.renderGizmo(this.renderer);
-    if (this.viewCube && !helpers.recording) this.viewCube.render(this.renderer);
+    if (this.viewCube) this.viewCube.render(this.renderer);
   }
 }
 

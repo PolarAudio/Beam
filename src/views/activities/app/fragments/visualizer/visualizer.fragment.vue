@@ -35,6 +35,20 @@
         color="var(--accent-blue)"
         @click="setGizmoMode('rotate')"
       />
+      <uk-button
+        v-show="!hidden"
+        :key="`scale-${gizmoMode}-${modeTick}`"
+        square
+        icon-only
+        label="Scale (S)"
+        :value="false"
+        toggleable
+        :disabled="!canScale"
+        :model-value="gizmoMode === 'scale'"
+        icon="scale"
+        color="var(--accent-blue)"
+        @click="setGizmoMode('scale')"
+      />
       <div
         v-show="!hidden"
         class="tool_divider"
@@ -202,7 +216,8 @@ export default {
       snapEnabled: true,
       houseLights: true,
       /**
-       * Which transform tool the gizmo is in, 'translate' or 'rotate'. Held
+       * Which transform tool the gizmo is in: 'translate', 'rotate' or
+       * 'scale'. Held
        * here rather than read straight off the visualizer so the buttons have
        * something reactive to light up from.
        */
@@ -233,6 +248,20 @@ export default {
      */
     hasSelection() {
       return Selection.items.length > 0;
+    },
+    /**
+     * Whether the scale tool applies: the selection is one model from a
+     * file. Fixtures, created shapes and several items together do not scale
+     * by axis.
+     *
+     * @property {Boolean} canScale
+     */
+    canScale() {
+      if (Selection.items.length !== 1) return false;
+      const [entry] = Selection.items;
+      if (entry.kind !== 'object') return false;
+      const object = [...(this.$show.objects || [])].find((o) => o.uid === entry.uid);
+      return !!(object && object.isScalable);
     },
     /**
      * Whether there is anything to paste.
@@ -374,7 +403,7 @@ export default {
     this.houseLights = this.$show.visualizerHandle.houseLights;
     this.autoRotate = this.$show.visualizerHandle.autoRotate;
     this.gizmoMode = this.$show.visualizerHandle.gizmoMode;
-    // T and R still switch tools, so the buttons follow the keys as well as
+    // T, R and S still switch tools, so the buttons follow the keys as well as
     // drive them.
     EventBus.on('gizmo_mode', this.setGizmoModeFromScene);
   },
@@ -418,21 +447,23 @@ export default {
       EventBus.emit('delete_requested', Selection.items.map((entry) => ({ ...entry })));
     },
     /**
-     * Switches the transform gizmo between its two tools.
+     * Switches the transform gizmo between its tools. The scene may refuse
+     * Scale for a selection that cannot take it, so the button shows what the
+     * scene settled on.
      *
      * @public
-     * @param {String} mode 'translate' or 'rotate'
+     * @param {String} mode 'translate', 'rotate' or 'scale'
      */
     setGizmoMode(mode) {
       this.modeTick += 1;
-      this.gizmoMode = mode;
       this.$show.visualizerHandle.gizmoMode = mode;
+      this.gizmoMode = this.$show.visualizerHandle.gizmoMode;
     },
     /**
      * Follows a tool change the scene made on its own, from the keyboard.
      *
      * @public
-     * @param {String} mode 'translate' or 'rotate'
+     * @param {String} mode 'translate', 'rotate' or 'scale'
      */
     setGizmoModeFromScene(mode) {
       this.gizmoMode = mode;

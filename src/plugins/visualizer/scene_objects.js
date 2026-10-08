@@ -551,7 +551,7 @@ function writeInstance(model, index, placement) {
   scratch.position.set(placement.position.x, placement.position.y, placement.position.z);
   scratch.euler.set(placement.rotation.x, placement.rotation.y, placement.rotation.z);
   scratch.quaternion.setFromEuler(scratch.euler);
-  scratch.scale.setScalar(drawnScale(placement));
+  drawnScale(placement);
   scratch.matrix.compose(scratch.position, scratch.quaternion, scratch.scale);
   model.highlight.setX(index, placement.highlighted ? 1 : 0);
   model.highlight.needsUpdate = true;
@@ -583,12 +583,29 @@ function writeInstance(model, index, placement) {
  * again is one matrix write. A collapsed instance draws nothing, casts
  * nothing and blocks no light.
  *
+ * Written into `scratch.scale`, which is returned.
+ *
  * @param {Object} placement
- * @returns {Number}
+ * @returns {THREE.Vector3}
  */
 function drawnScale(placement) {
-  if (placement.owner && placement.owner.isHidden) return 0;
-  return placement.scale === undefined ? 1 : placement.scale;
+  if (placement.owner && placement.owner.isHidden) return scratch.scale.setScalar(0);
+  const { scale } = placement;
+  return scratch.scale.set(scale.x, scale.y, scale.z);
+}
+
+/**
+ * A placement's scale as `{ x, y, z }`, from a number or an object.
+ *
+ * @param {Object|Number} [scale]
+ * @returns {Object}
+ */
+function scaleVector(scale) {
+  if (scale !== null && typeof scale === 'object') {
+    return { x: scale.x ?? 1, y: scale.y ?? 1, z: scale.z ?? 1 };
+  }
+  const all = scale === undefined ? 1 : Number(scale) || 1;
+  return { x: all, y: all, z: all };
 }
 
 /**
@@ -606,7 +623,7 @@ async function place(descriptor, transform = {}) {
     index: model.placements.length,
     position: { x: 0, y: 0, z: 0, ...(transform.position || {}) },
     rotation: { x: 0, y: 0, z: 0, ...(transform.rotation || {}) },
-    scale: transform.scale === undefined ? 1 : transform.scale,
+    scale: scaleVector(transform.scale),
   };
   if (placement.index >= model.capacity) grow(model);
   model.placements.push(placement);
@@ -626,7 +643,7 @@ function move(placement, transform = {}) {
   if (!model) return;
   Object.assign(placement.position, transform.position || {});
   Object.assign(placement.rotation, transform.rotation || {});
-  if (transform.scale !== undefined) placement.scale = transform.scale;
+  if (transform.scale !== undefined) placement.scale = scaleVector(transform.scale);
   writeInstance(model, placement.index, placement);
 }
 
@@ -799,7 +816,7 @@ function syncFromOwners() {
       dummy.updateMatrixWorld();
       dummy.getWorldPosition(scratch.position);
       dummy.getWorldQuaternion(scratch.quaternion);
-      scratch.scale.setScalar(drawnScale(placement));
+      drawnScale(placement);
       scratch.matrix.compose(scratch.position, scratch.quaternion, scratch.scale);
       model.meshes.forEach((mesh) => {
         mesh.setMatrixAt(index, scratch.matrix);

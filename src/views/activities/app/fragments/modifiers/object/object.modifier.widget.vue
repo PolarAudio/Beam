@@ -22,18 +22,6 @@
         v-model.lazy="placementName"
         label="Name"
       />
-      <!-- This placement's size, on top of the model's own units. The model
-           in the library is not changed. -->
-      <uk-num-input
-        v-model="placementScale"
-        :disabled="object.locked"
-        :precision="2"
-        :step="0.1"
-        :min="0.01"
-        :max="100"
-        style="width: 100px"
-        label="Scale"
-      />
       <span class="object_widget_section">Library model</span>
       <span class="object_widget_note">
         {{ object.model }}
@@ -104,7 +92,6 @@
 
 <script>
 import confirm from '@/plugins/confirm';
-import Controls from '@/plugins/visualizer/controls';
 import ObjectParamsForm from './object.params.form.vue';
 
 /**
@@ -169,25 +156,6 @@ export default {
       set(value) {
         if (!this.object) return;
         this.$show.renameItem(this.object, String(value || '').trim() || this.object.model);
-      },
-    },
-    /**
-     * A library placement's uniform scale. Written with the gizmo let go and
-     * taken hold of again, as a position is, so the selection box is refitted
-     * to the new size.
-     *
-     * @type {Number}
-     */
-    placementScale: {
-      get() {
-        return this.object ? this.object.scale : 1;
-      },
-      set(value) {
-        const scale = Number(value);
-        if (!this.object || !Number.isFinite(scale) || scale <= 0) return;
-        Controls.detach(this.object);
-        this.object.scale = scale;
-        Controls.attach(this.object);
       },
     },
     /**

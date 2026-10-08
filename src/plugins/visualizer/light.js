@@ -996,10 +996,38 @@ class Light {
     // or not they changed.
     if (this._writtenMatrices) this._writtenMatrices.forEach((m) => m.elements.fill(NaN));
     this._matrixNeedsUpdate = true;
+    this.rewriteSlot();
   }
 
   get id() {
     return this._id;
+  }
+
+  /**
+   * Writes everything this light keeps in the per-instance buffers into its
+   * slot.
+   *
+   * The buffers are indexed by slot, and a light moved down one by a deletion
+   * carries none of it along: the slot it lands in holds the optics of the
+   * light that was there until something rewrites them. Intensity, lens colour,
+   * position and direction are written every frame and need nothing here.
+   *
+   * @private
+   */
+  rewriteSlot() {
+    if (this._color) {
+      color_buffer_attribute.setXYZ(this._id, this._color.r, this._color.g, this._color.b);
+      color_buffer_attribute.needsUpdate = true;
+      this.writeColorB();
+    }
+    if (Number.isFinite(this._angle)) {
+      angle_buffer_attribute.setX(this._id, this._angle);
+      angle_buffer_attribute.needsUpdate = true;
+    }
+    emissive_buffer_attribute.setX(this._id, this._highlighted ? 1.0 : 0.0);
+    emissive_buffer_attribute.needsUpdate = true;
+    // The focus and inner cone, then the gobos, prism and iris.
+    this.applyLensEdge();
   }
 
   /**

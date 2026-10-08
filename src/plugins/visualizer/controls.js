@@ -604,14 +604,10 @@ class Controls {
     }
 
     if (e.key === 'Escape') {
-      this.mode = CONTROL_MODES.DISCRETE;
-      this.showHelpers();
-      this.handle.setMode('translate');
-      this.detachAll();
-      // Escape is an explicit request to reset the view, not a side effect of
-      // selecting, so it stands whatever auto-focus is set to.
-      this.setFocus(false, { force: true });
-      this.clearAllHighlighting();
+      // Deselects and nothing else, as a click on empty scene does: the view
+      // stays where it is, so a crowded scene with no empty space to click
+      // can still be cleared without losing the framing.
+      this.deselectAll();
     } else if (e.key.toLowerCase() === 't') {
       this.gizmoMode = GIZMO_MODES.TRANSLATE;
     } else if (e.key.toLowerCase() === 'r') {

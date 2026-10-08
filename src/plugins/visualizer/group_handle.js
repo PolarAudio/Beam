@@ -69,8 +69,7 @@ class GroupHandle {
   }
 
   /**
-   * A group draws no marker of its own: the selection's corner brackets
-   * already bound exactly the same space, so anything here would double up.
+   * A group draws no marker of its own: its members carry the outline.
    *
    * @public
    */
@@ -101,8 +100,18 @@ class GroupHandle {
     dummy.updateMatrixWorld();
   }
 
+  /**
+   * A group has no body to outline, so its selection is shown on its
+   * members. Clearing a group that was not selected passes nothing on, so a
+   * member selected on its own account stays selected.
+   */
   set highlighted(state) {
-    this._highlighted = !!state;
+    const next = !!state;
+    if (!next && !this._highlighted) return;
+    this._highlighted = next;
+    this._group.members.forEach((member) => {
+      if (member && member.highlight) member.highlight(next, false);
+    });
   }
 
   get highlighted() {

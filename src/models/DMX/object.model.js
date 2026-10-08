@@ -172,18 +172,16 @@ class SceneObject extends withTransform(Object) {
   }
 
   /**
-   * Selection highlighting.
-   *
-   * The geometry is shared across every placement of a model, so tinting it
-   * would tint all of them. Until instances carry their own highlight
-   * attribute -- as moving heads do -- the selection box is the only thing
-   * saying which one is picked, and these exist to move the gizmo.
+   * Selection highlighting: the placement is marked for the outline, and the
+   * gizmo moves onto it when asked.
    *
    * @public
    * @param {Boolean} state whether this object is selected
    * @param {Boolean} [centerControls] whether to move the gizmo onto it
    */
   highlight(state, centerControls = false) {
+    this._highlighted = !!state;
+    if (this._placement) SceneObjects.setHighlighted(this._placement, state);
     if (!centerControls) return;
     if (state) {
       Controls.attach(this);
@@ -200,6 +198,9 @@ class SceneObject extends withTransform(Object) {
    * @param {Boolean} [centerControls] whether to move the gizmo onto it
    */
   highlightSingle(state, centerControls = false) {
+    SceneObjects.clearHighlighting();
+    this._highlighted = !!state;
+    if (this._placement) SceneObjects.setHighlighted(this._placement, state);
     if (state && centerControls) {
       Controls.detachAll();
       Controls.attach(this);
@@ -416,6 +417,7 @@ class SceneObject extends withTransform(Object) {
       });
       // So a raycast that lands on the instance can find its way back here.
       this._placement.owner = this;
+      if (this._highlighted) SceneObjects.setHighlighted(this._placement, true);
       this.applyHidden();
       this.unresolved = false;
       return true;

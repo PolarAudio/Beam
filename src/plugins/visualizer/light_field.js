@@ -188,6 +188,8 @@ const uniforms = {
   lightFieldDepthFar: { value: 1 },
   lightFieldDepthBias: { value: 0.05 },
   lightFieldDepthTile: { value: 128 },
+  // 1 softens the depth tile's shadows by the lens's size, 0 keeps them hard.
+  lightFieldSoftShadow: { value: 1 },
   // The gobo patterns, one atlas, set with the depth atlas.
   lightFieldGobo: { value: null },
 };
@@ -308,9 +310,18 @@ const FIELD_LIGHT_CHUNK = /* glsl */`
       float allowance = lightFieldDepthBias + min( texel * 1.5 * slope, texel * 8.0 );
       vec2 ndc = vec2( -dot( lifted, tileAxisX ), dot( lifted, tileAxisY ) ) / ( alongLifted * packedAxisX.w );
       if ( all( lessThan( abs( ndc ), vec2( 1.0 ) ) ) ) {
-        vec2 tileUv = packedTile.xy + ( ndc * 0.5 + 0.5 ) * packedTile.zw;
-        float seen = unpackRGBAToDepth( texture2D( lightFieldDepth, tileUv ) ) * lightFieldDepthFar;
-        if ( alongLifted > seen + allowance ) continue;
+        float seen = fieldDepthAt( packedTile, ndc );
+        bool blocked = alongLifted > seen + allowance;
+        if ( lightFieldSoftShadow > 0.5 && packedLens.y > 0.0 ) {
+          float lit = fieldSoftShadow(
+            packedTile, ndc, blocked ? seen : -1.0, lifted, geometryNormal,
+            tileAxisX, tileAxisY, tileAxisZ, packedAxisX.w, packedLens.y, texel
+          );
+          if ( lit <= 0.0 ) continue;
+          attenuation *= lit;
+        } else if ( blocked ) {
+          continue;
+        }
       }
     } else {
       // The cone's own edge, not the reach the cone test above allowed for.
@@ -336,7 +347,82 @@ uniform sampler2D lightFieldDepth;
 uniform float lightFieldDepthFar;
 uniform float lightFieldDepthBias;
 uniform float lightFieldDepthTile;
+uniform float lightFieldSoftShadow;
 uniform sampler2D lightFieldGobo;
+
+// Soft shadows. The lens is a disc, not a point: a surface point sees the part
+// of it no blocker hides, and that share is the light it gets. Seen from the
+// lens centre, a blocker at distance d hides the lens from a point at z across
+// an angle of R (1/d - 1/z), so that is how wide the depth tile is read around
+// the point. The search for blockers allows for one as near as SHADOW_NEAR;
+// both reads are capped at SHADOW_MAX_TEXELS of the tile.
+#define FIELD_SHADOW_SEARCH 8
+#define FIELD_SHADOW_FILTER 16
+#define FIELD_SHADOW_NEAR 0.5
+#define FIELD_SHADOW_MAX_TEXELS 12.0
+
+// The distance along the beam to the first thing the lens sees at ndc.
+float fieldDepthAt( vec4 tile, vec2 ndc ) {
+  vec2 inside = clamp( ndc, vec2( -1.0 + 1.0 / lightFieldDepthTile ), vec2( 1.0 - 1.0 / lightFieldDepthTile ) );
+  vec2 uv = tile.xy + ( inside * 0.5 + 0.5 ) * tile.zw;
+  return unpackRGBAToDepth( texture2D( lightFieldDepth, uv ) ) * lightFieldDepthFar;
+}
+
+// Sample i of n spread evenly over the unit disc, the pattern turned by a
+// per-pixel angle so the few samples blur into grain rather than stripes.
+vec2 fieldDisc( int i, int n, float turn ) {
+  float r = sqrt( ( float( i ) + 0.5 ) / float( n ) );
+  float a = float( i ) * 2.39996323 + turn;
+  return r * vec2( cos( a ), sin( a ) );
+}
+
+// Whether the surface, extended as a plane, is behind the tile at ndc. The
+// plane through the point, not the point's own distance, so a floor seen at a
+// slant does not shadow itself across the width of the read.
+bool fieldPlaneBlocked( vec4 tile, vec2 ndc, vec3 lifted, vec3 normal, vec3 ax, vec3 ay, vec3 az, float tanHalf, float allowance, inout float seen ) {
+  seen = fieldDepthAt( tile, ndc );
+  vec3 ray = az - ndc.x * tanHalf * ax + ndc.y * tanHalf * ay;
+  float facing = dot( ray, normal );
+  float plane = dot( lifted, normal );
+  float along = dot( lifted, az );
+  float receiver = abs( facing ) > 1e-4 ? plane / facing : along;
+  if ( receiver <= 0.0 ) receiver = along;
+  return receiver > seen + allowance;
+}
+
+// The share of the lens the point sees, 0 to 1. centreBlocker is the depth
+// seen at the point itself when that blocks it, else negative.
+float fieldSoftShadow( vec4 tile, vec2 ndc, float centreBlocker, vec3 lifted, vec3 normal, vec3 ax, vec3 ay, vec3 az, float tanHalf, float lensRadius, float texel ) {
+  float z = dot( lifted, az );
+  float lensNdc = lensRadius / tanHalf;
+  float texelNdc = 2.0 / lightFieldDepthTile;
+  float maxNdc = FIELD_SHADOW_MAX_TEXELS * texelNdc;
+  float allowance = lightFieldDepthBias + texel * 1.5;
+
+  float searchNdc = min( lensNdc * max( 1.0 / FIELD_SHADOW_NEAR - 1.0 / z, 0.0 ), maxNdc );
+  float blockerSum = 0.0;
+  float blockers = 0.0;
+  if ( centreBlocker >= 0.0 ) { blockerSum += centreBlocker; blockers += 1.0; }
+  float seen;
+  // Interleaved gradient noise.
+  float turn = 6.28318531 * fract( 52.9829189 * fract( dot( gl_FragCoord.xy, vec2( 0.06711056, 0.00583715 ) ) ) );
+  for ( int i = 0; i < FIELD_SHADOW_SEARCH; i++ ) {
+    if ( fieldPlaneBlocked( tile, ndc + fieldDisc( i, FIELD_SHADOW_SEARCH, turn ) * searchNdc, lifted, normal, ax, ay, az, tanHalf, allowance, seen ) ) {
+      blockerSum += seen;
+      blockers += 1.0;
+    }
+  }
+  if ( blockers == 0.0 ) return 1.0;
+  if ( blockers > float( FIELD_SHADOW_SEARCH ) ) return 0.0;
+
+  float d = blockerSum / blockers;
+  float radius = clamp( lensNdc * ( 1.0 / d - 1.0 / z ), 0.5 * texelNdc, maxNdc );
+  float lit = 0.0;
+  for ( int i = 0; i < FIELD_SHADOW_FILTER; i++ ) {
+    if ( !fieldPlaneBlocked( tile, ndc + fieldDisc( i, FIELD_SHADOW_FILTER, turn ) * radius, lifted, normal, ax, ay, az, tanHalf, allowance, seen ) ) lit += 1.0;
+  }
+  return lit / float( FIELD_SHADOW_FILTER );
+}
 
 // The tile looks wider than the field by this, as in light.js.
 #define FIELD_DEPTH_FOV_MARGIN 1.2

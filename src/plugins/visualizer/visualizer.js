@@ -82,7 +82,7 @@ import ContactShadows from './contact_shadows';
 import LaserEffect from './laser_pass';
 import Strobe from './strobe';
 import StrobeWashEffect from './strobe_wash';
-import { SelectionOutlineEffect, setSceneDepth as setOutlineDepth } from './selection_outline';
+import { SelectionOutlineEffect } from './selection_outline';
 import Recorder from './recorder';
 import {
   EffectComposer,
@@ -1944,7 +1944,6 @@ class Visualizer {
       // end against each other, which is right. A beam is air, not a wall.
       if (finalComposer && finalComposer.stableDepthTexture) {
         Light.setSceneDepth(finalComposer.stableDepthTexture, this.camera);
-        setOutlineDepth(finalComposer.stableDepthTexture, this.camera);
       }
       if (finalComposer) {
         finalComposer.render();

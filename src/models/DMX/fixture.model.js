@@ -1216,6 +1216,11 @@ class Fixture extends withTransform(Proxify) {
         // The file's own body, read when the type was loaded; the shipped
         // one where a moving head's file has no meshes.
         body: type.body || null,
+        // The lens the file states, which the shipped body draws and the
+        // lens's blur is measured in; null where the file leaves the
+        // spec's default, so the shipped lens scales with the body.
+        lensRadius: inputs.beam && inputs.beam.explicit.includes('BeamRadius')
+          ? inputs.beam.beamRadius : null,
       };
       this.createLight(spec, moving);
       this._lightSpec = moving ? null : spec;

@@ -963,8 +963,13 @@ class Light {
      */
     this._body = data.body || null;
     this._bodyScale = this._body ? 1 : Light.bodyScaleFor(data.bodyHeight);
-    /** How wide the lens is against the shipped one's; see `mountBody`. */
-    this._lensScale = this._bodyScale;
+    /**
+     * How wide the lens is against the shipped one's: the file's stated lens
+     * where the shipped body is drawn, else as the body scales; a file's own
+     * body sets it in `mountBody`.
+     */
+    this._lensScale = !this._body && data.lensRadius > 0
+      ? data.lensRadius / BEAM_TOP_RADIUS : this._bodyScale;
     /** Whether the lens face is a rectangle rather than a disc. */
     this._rectLens = false;
     /** Where the body reaches below the origin, and the pick box; see `mountBody`. */
@@ -2765,9 +2770,12 @@ class Light {
    * budget, and tells the beams which tiles are theirs.
    *
    * Dark beams submit nothing: a tile no one can see is not worth a pass.
-   * Priority is how much the beam matters on screen -- its intensity, how
-   * near it is, and how far it has turned since its tile was drawn -- so a
-   * chase spends the budget on the beams the eye is on.
+   * Dark is the dimmer at nought, not the shutter closed: a strobe is closed
+   * between flashes, and a tile dropped then is missing on the frame the
+   * flash lights, which goes through every surface. Priority is how much the
+   * beam matters on screen -- its dimmer, how near it is, and how far it has
+   * turned since its tile was drawn -- so a chase spends the budget on the
+   * beams the eye is on.
    *
    * @public
    * @param {Object} renderer THREE.WebGLRenderer
@@ -2785,14 +2793,15 @@ class Light {
     const projections = [];
     instances.forEach((instance) => {
       const id = instance._id;
-      if (id >= MOVER_DEPTH.maxProjections || instance.intensity <= 0 || instance._hidden) return;
+      const dimmer = instance._intensity || 0;
+      if (id >= MOVER_DEPTH.maxProjections || dimmer <= 0 || instance._hidden) return;
       instance.updateDepthCamera();
       instance._beamDummy.getWorldDirection(vector_beam);
       const turned = 1 - Math.max(vector_beam.dot(instance._depthDir), 0);
       const distance = Math.max(vector_cam_pos.distanceTo(lensPosition), 1);
       projections[id] = {
         camera: instance._depthCam,
-        priority: (instance.intensity / distance) * (1 + 4 * turned),
+        priority: (dimmer / distance) * (1 + 4 * turned),
       };
     });
     const drawn = MOVER_DEPTH.render(renderer, scene, projections, DEPTH_TILE_BUDGET);

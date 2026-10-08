@@ -108,6 +108,7 @@ const FRAGMENT = /* glsl */`
   uniform mat4 projInverse;
   uniform mat4 camWorld;
   uniform vec3 camPos;
+  uniform bool camOrtho;
   uniform float hazeMetres;
   uniform float drift;
   uniform float density;
@@ -179,6 +180,12 @@ const FRAGMENT = /* glsl */`
   }
 
   void mainImage(const in vec4 inputColor, const in vec2 uv, const in float depth, out vec4 outputColor) {
+    // An orthographic view has no eye, so no air between it and the surface:
+    // the room's haze is left out, and the beams keep their own.
+    if (camOrtho) {
+      outputColor = inputColor;
+      return;
+    }
     // Rebuild the world position this pixel is looking at. The depth buffer is
     // all the pass gets, so the ray has to come back out of it.
     vec4 clip = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
@@ -240,6 +247,7 @@ export default class AmbientHazeEffect extends Effect {
         ['projInverse', new THREE.Uniform(new THREE.Matrix4())],
         ['camWorld', new THREE.Uniform(new THREE.Matrix4())],
         ['camPos', new THREE.Uniform(new THREE.Vector3())],
+        ['camOrtho', new THREE.Uniform(false)],
         ['hazeMetres', new THREE.Uniform(SceneEnv.hazeScale)],
         ['fieldDepth', new THREE.Uniform(AMBIENT_HAZE_FIELD_DEPTH)],
         ['drift', new THREE.Uniform(0)],
@@ -286,6 +294,7 @@ export default class AmbientHazeEffect extends Effect {
       uniforms.get('projInverse').value.copy(camera.projectionMatrixInverse);
       uniforms.get('camWorld').value.copy(camera.matrixWorld);
       uniforms.get('camPos').value.setFromMatrixPosition(camera.matrixWorld);
+      uniforms.get('camOrtho').value = !!camera.isOrthographicCamera;
     }
 
     // A new place in the tile and a new turn of its values every frame. The

@@ -360,7 +360,10 @@ const PANEL_VERTEX = /* glsl */`
   void main() {
     vUv = uv;
     vec4 world = modelMatrix * vec4(position, 1.0);
-    vToCamera = cameraPosition - world.xyz;
+    // Orthographic: the view's direction, at a length that does not dim.
+    vToCamera = isOrthographic
+      ? vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2]) * dimStartDistance
+      : cameraPosition - world.xyz;
     vNormalWorld = normalize(mat3(modelMatrix) * normal);
     gl_Position = projectionMatrix * viewMatrix * world;
   }
@@ -522,6 +525,7 @@ const PANEL_GLOW_VERTEX = /* glsl */`
 
   varying vec3 vLocal;
   varying vec3 vLocalCamera;
+  varying vec3 vLocalView;
 
   void main() {
     // The proxy is a unit box sized by uniform rather than by scale, so the
@@ -529,6 +533,9 @@ const PANEL_GLOW_VERTEX = /* glsl */`
     // into fixture metres rather than into unit-box space.
     vLocal = position * 2.0 * boxHalf;
     vLocalCamera = (inverse(modelMatrix) * vec4(cameraPosition, 1.0)).xyz;
+    // The view's direction in fixture metres, for an orthographic camera,
+    // whose rays all run along it.
+    vLocalView = (inverse(modelMatrix) * vec4(-vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2]), 0.0)).xyz;
     gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(vLocal, 1.0);
   }
 `;
@@ -569,6 +576,7 @@ const PANEL_GLOW_FRAGMENT = `${hazeShaderPrelude() /* glsl */}
 
   varying vec3 vLocal;
   varying vec3 vLocalCamera;
+  varying vec3 vLocalView;
 
   /** Distance from a point to the fixture's body. Negative inside it. */
   float bodyDistance(vec3 p) {
@@ -579,6 +587,11 @@ const PANEL_GLOW_FRAGMENT = `${hazeShaderPrelude() /* glsl */}
   void main() {
     vec3 ro = vLocalCamera;
     vec3 rd = normalize(vLocal - ro);
+    if (isOrthographic) {
+      // Parallel rays: this one starts outside the box, behind the fragment.
+      rd = normalize(vLocalView);
+      ro = vLocal - rd * 2.0 * length(boxHalf);
+    }
 
     // Live reach, clamped to the box that was actually built to hold it.
     float r = min(

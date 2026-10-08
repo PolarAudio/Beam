@@ -6,7 +6,7 @@
   >
     <uk-flex
       class="header"
-      gap="12"
+      gap="4"
     >
       <h3>Visualizer</h3>
       <uk-button
@@ -72,6 +72,22 @@
         label="Fit to view"
         icon="fit"
         @click="$show.visualizerHandle.frameAll()"
+      />
+      <!-- Parallel projection, as a technical drawing's plan or elevation.
+           Editing only: studio and recordings are perspective. -->
+      <uk-button
+        v-show="!hidden"
+        :key="`ortho-${orthographic}-${modeTick}`"
+        square
+        icon-only
+        label="Orthographic"
+        :value="false"
+        toggleable
+        :disabled="studioActive"
+        :model-value="orthographic"
+        icon="ortho"
+        color="var(--accent-blue)"
+        @click="toggleOrthographic"
       />
       <uk-button
         v-show="!hidden"
@@ -222,6 +238,8 @@ export default {
        * something reactive to light up from.
        */
       gizmoMode: 'translate',
+      /** Whether the view is orthographic, mirrored for the button. */
+      orthographic: false,
       /**
        * Bumped on every mode click, purely to re-key the two mode buttons.
        * uk-button flips its own toggle on click, so without a remount the
@@ -331,6 +349,9 @@ export default {
       const handle = this.$show.visualizerHandle;
       if (!handle) return;
       if (value) {
+        // Studio is perspective.
+        handle.orthographic = false;
+        this.orthographic = false;
         // Editor mode's live camera is always the editor camera, so what is on
         // screen now belongs to it.
         Studio.captureInto(Studio.SCENE_CAMERA_ID, handle.viewpoint);
@@ -465,6 +486,13 @@ export default {
      * @public
      * @param {String} mode 'translate', 'rotate' or 'scale'
      */
+    toggleOrthographic() {
+      const handle = this.$show.visualizerHandle;
+      if (!handle) return;
+      this.modeTick += 1;
+      handle.orthographic = !handle.orthographic;
+      this.orthographic = handle.orthographic;
+    },
     setGizmoModeFromScene(mode) {
       this.gizmoMode = mode;
     },
@@ -713,7 +741,7 @@ export default {
 .tool_divider {
   width: 1px;
   align-self: stretch;
-  margin: 6px 4px;
+  margin: 6px 6px;
   background: var(--primary-dark);
 }
 .visualizer.hidden .header {

@@ -57,6 +57,7 @@ const FRAGMENT = /* glsl */`
   uniform mat4 projInverse;
   uniform mat4 camWorld;
   uniform vec3 camPos;
+  uniform bool camOrtho;
   uniform sampler2D figureAtlas;
   uniform sampler2D depthAtlas;
   uniform mat4 laserMatrix[SLOTS];
@@ -82,12 +83,16 @@ const FRAGMENT = /* glsl */`
     vec4 viewPos = projInverse * clip;
     viewPos /= viewPos.w;
     vec3 world = (camWorld * viewPos).xyz;
+    // The eye this pixel's ray starts from. In orthographic every ray runs
+    // along the view from its own point on the camera's plane.
+    vec3 camForward = -normalize(camWorld[2].xyz);
+    vec3 eye = camOrtho ? world - camForward * dot(world - camPos, camForward) : camPos;
 
     // The surface's facing, from how the reconstructed position moves across
     // the screen, turned to face the eye -- the cross product's sign follows
     // screen winding, not the surface's outside.
     vec3 surfaceNormal = normalize(cross(dFdx(world), dFdy(world)));
-    if (dot(surfaceNormal, camPos - world) < 0.0) surfaceNormal = -surfaceNormal;
+    if (dot(surfaceNormal, eye - world) < 0.0) surfaceNormal = -surfaceNormal;
 
     vec3 total = vec3(0.0);
     for (int i = 0; i < SLOTS; i++) {
@@ -165,6 +170,7 @@ class LaserEffect extends Effect {
         ['projInverse', new THREE.Uniform(new THREE.Matrix4())],
         ['camWorld', new THREE.Uniform(new THREE.Matrix4())],
         ['camPos', new THREE.Uniform(new THREE.Vector3())],
+        ['camOrtho', new THREE.Uniform(false)],
         ['figureAtlas', new THREE.Uniform(null)],
         ['depthAtlas', new THREE.Uniform(null)],
         ['laserMatrix', new THREE.Uniform(laserMatrix)],
@@ -218,6 +224,7 @@ class LaserEffect extends Effect {
       uniforms.get('projInverse').value.copy(camera.projectionMatrixInverse);
       uniforms.get('camWorld').value.copy(camera.matrixWorld);
       uniforms.get('camPos').value.setFromMatrixPosition(camera.matrixWorld);
+      uniforms.get('camOrtho').value = !!camera.isOrthographicCamera;
     }
 
     const live = this.lasers.slice(0, SLOTS);

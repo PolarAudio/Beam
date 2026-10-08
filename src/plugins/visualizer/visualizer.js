@@ -8,7 +8,7 @@ import Stats from 'stats.js';
 import ModelInstancer from './model_instancer';
 import SceneManager from './scene_manager';
 import AnimationManager from './animation_manager';
-import Controls from './controls';
+import Controls, { ORTHO_STANDOFF, ORTHO_REFERENCE_FOV, setOrthoHalfHeight } from './controls';
 import ViewCube from './view_cube';
 import Light from './light';
 import InfiniteGridHelper from './grid';
@@ -59,6 +59,13 @@ const DRAG_LOOK = 'look';
 const DRAG_LIFT = 'lift';
 const DRAG_PAN = 'pan';
 const DRAG_ORBIT = 'orbit';
+const DRAG_WALK = 'walk';
+
+/** Scratch for the walk: the grabbed point, its level, and where the ray meets it. */
+const walkGrab = new THREE.Vector3();
+const walkPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+const walkMeet = new THREE.Vector3();
+const walkStep = new THREE.Vector3();
 
 /** Scratch for the orbit's pivot and turns. */
 const orbitPivot = new THREE.Vector3();
@@ -77,6 +84,9 @@ const WORLD_UP = new THREE.Vector3(0, 0, 1);
 const WHEEL_RATE = 0.0016;
 /** A wheel line, for a mouse that reports in lines, in pixels. */
 const WHEEL_LINE_PX = 33;
+/** The smallest and largest an orthographic view may be, half its height in metres. */
+const ORTHO_MIN_HALF = 0.02;
+const ORTHO_MAX_HALF = 1000;
 /** Scratch for the wheel's aim point, its step, and the view's forward. */
 const wheelPoint = new THREE.Vector3();
 const wheelStep = new THREE.Vector3();
@@ -131,6 +141,10 @@ import {
  * wrapped in a reactive Proxy break rendering.
  */
 let finalComposer = null;
+/** The passes that are given the camera, kept so a camera swap reaches them. */
+let renderPass = null;
+let laserPass = null;
+let mainPass = null;
 
 /** The projection pass, module-scoped for the same reason the composer is. */
 let projectorEffect = null;
@@ -1347,7 +1361,8 @@ class Visualizer {
       multisampling: MSAA_SAMPLES,
     });
 
-    finalComposer.addPass(new RenderPass(SceneManager, this.camera));
+    renderPass = new RenderPass(SceneManager, this.camera);
+    finalComposer.addPass(renderPass);
 
     if (USE_BLOOM) {
       bloomEffect = new BloomEffect({
@@ -1392,7 +1407,8 @@ class Visualizer {
     // The projector deliberately stays behind bloom: its brightness is
     // calibrated in lux against a real rig, and a glow would change how every
     // mapping show looks.
-    finalComposer.addPass(new EffectPass(this.camera, laserEffect));
+    laserPass = new EffectPass(this.camera, laserEffect);
+    finalComposer.addPass(laserPass);
     // Last, after the tone curve: the outline is a mark on the picture, not
     // light in the scene, and its orange is the orange it is drawn in.
     selectionOutlineEffect = new SelectionOutlineEffect(this.camera);
@@ -1400,7 +1416,8 @@ class Visualizer {
       ? [projectorEffect, ambientHazeEffect, strobeWashEffect, bloomEffect, toneMapping]
       : [projectorEffect, ambientHazeEffect, strobeWashEffect, toneMapping];
     effects.push(selectionOutlineEffect);
-    finalComposer.addPass(new EffectPass(this.camera, ...effects));
+    mainPass = new EffectPass(this.camera, ...effects);
+    finalComposer.addPass(mainPass);
 
     // A depth-reading effect -- the ambient haze, here -- makes the composer
     // build a third render target and blit the scene's depth into it every
@@ -1472,8 +1489,11 @@ class Visualizer {
     const width = this.domElement.offsetWidth;
     const height = this.domElement.clientHeight;
     const aspect = width / height;
-    this.camera = new THREE.PerspectiveCamera(45, aspect, 0.01, 1000);
+    this.camera = new THREE.PerspectiveCamera(ORTHO_REFERENCE_FOV, aspect, 0.01, 1000);
     this.camera.up.set(0, 0, 1);
+    this.perspectiveCamera = this.camera;
+    // Made on first use, and kept: see `orthographic`.
+    this.orthoCamera = null;
     // Only where the camera sits for the instant before a show is framed:
     // `frameDefault` decides the real opening view from what the show actually
     // contains, rather than from a rig that happened to be here once.
@@ -1549,6 +1569,11 @@ class Visualizer {
    * controls' own orbit turns about their target, which sits on the optical
    * axis: off screen once the lens is shifted.
    *
+   * Ctrl and middle-drag walks: the camera moves along the floor at its
+   * height and angle, and the spot grabbed stays under the pointer -- see
+   * `walkTo`. Grabbed near the horizon, a short drag covers a long way;
+   * near the feet, a little. This is the way down a long street.
+   *
    * A middle-drag slides the picture in screen space, as if it were 2D: a
    * lens shift. The camera neither moves nor turns, so nothing changes but
    * where the picture sits in the panel -- see `shiftLens`. In studio mode,
@@ -1605,6 +1630,11 @@ class Visualizer {
           orbitRay.setFromCamera(orbitNdc, this.camera);
           orbitRay.ray.at(this.camera.position.distanceTo(this.controls.target), orbitPivot);
         }
+      } else if (event.button === MIDDLE_BUTTON && (event.ctrlKey || event.metaKey)) {
+        if (this.grabFloor(event)) {
+          mode = DRAG_WALK;
+          this.walkCursor = { x: event.clientX, y: event.clientY };
+        }
       } else if (event.button === MIDDLE_BUTTON) {
         mode = DRAG_PAN;
         // A camera pan moves at the depth of what is under the pointer, so
@@ -1637,7 +1667,14 @@ class Visualizer {
       const dy = (pixels / height) * LOOK_TURN_PER_HEIGHT;
       this.lookingFrom.x = event.clientX;
       this.lookingFrom.y = event.clientY;
-      if (this.lookingFrom.mode === DRAG_LOOK) this.lookAround(dx, dy);
+      if (this.lookingFrom.mode === DRAG_WALK) {
+        // The pointer is held still, so where it would be is kept here.
+        this.walkCursor.x += pixelsX;
+        this.walkCursor.y += pixels;
+        this.walkTo(this.walkCursor);
+      } else if (this.lookingFrom.mode === DRAG_LOOK && this.orthographic) {
+        this.orbitAbout(this.controls.target.clone(), pixelsX, pixels);
+      } else if (this.lookingFrom.mode === DRAG_LOOK) this.lookAround(dx, dy);
       else if (this.lookingFrom.mode === DRAG_ORBIT) this.orbitAbout(orbitPivot, pixelsX, pixels);
       else if (this.lookingFrom.mode === DRAG_PAN && this.recordFrame) this.panView(pixelsX, pixels);
       else if (this.lookingFrom.mode === DRAG_PAN) this.shiftLens(pixelsX, pixels);
@@ -1714,9 +1751,10 @@ class Visualizer {
    */
   liftView(pixels) {
     const height = this.domElement.clientHeight || 1;
-    const distance = this.camera.position.distanceTo(this.controls.target);
-    const perPixel = (2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2)
-      * distance) / height;
+    const perPixel = this.orthographic
+      ? (2 * (this.camera.top / (this.camera.zoom || 1))) / height
+      : (2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2)
+        * this.camera.position.distanceTo(this.controls.target)) / height;
     const lift = pixels * perPixel;
     this.camera.position.z += lift;
     this.controls.target.z += lift;
@@ -1760,6 +1798,10 @@ class Visualizer {
       (((event.clientX - rect.left) / (rect.width || 1)) * 2) - 1,
       (-((event.clientY - rect.top) / (rect.height || 1)) * 2) + 1,
     );
+    if (this.orthographic) {
+      this.zoomOrtho(orbitNdc, pixels);
+      return;
+    }
     orbitRay.setFromCamera(orbitNdc, this.camera);
     if (!Controls.scenePointAt(press, wheelPoint)) {
       orbitRay.ray.at(Math.max(this.camera.position.distanceTo(this.controls.target), 1), wheelPoint);
@@ -1775,6 +1817,181 @@ class Visualizer {
     wheelForward.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
     const depth = Math.max(wheelForward.dot(wheelStep.subVectors(wheelPoint, this.camera.position)), 0.05);
     this.controls.target.copy(this.camera.position).addScaledVector(wheelForward, depth);
+    this.controls.update();
+  }
+
+  /**
+   * The wheel in orthographic: moving nearer changes nothing there, so the
+   * frustum is made smaller or larger instead, about the point under the
+   * cursor, which stays where it is on screen.
+   *
+   * @private
+   * @param {THREE.Vector2} ndc the cursor, -1..1
+   * @param {Number} pixels wheel travel, positive away from the scene
+   */
+  zoomOrtho(ndc, pixels) {
+    const camera = this.camera;
+    camera.updateMatrixWorld();
+    const before = new THREE.Vector3(ndc.x, ndc.y, 0).unproject(camera);
+    const half = camera.top / (camera.zoom || 1);
+    const next = THREE.MathUtils.clamp(half * Math.exp(pixels * WHEEL_RATE), ORTHO_MIN_HALF, ORTHO_MAX_HALF);
+    setOrthoHalfHeight(camera, next * (camera.zoom || 1));
+    camera.updateMatrixWorld();
+    const after = new THREE.Vector3(ndc.x, ndc.y, 0).unproject(camera);
+    const shift = before.sub(after);
+    camera.position.add(shift);
+    this.controls.target.add(shift);
+    this.controls.update();
+  }
+
+  /**
+   * Whether the view is orthographic: parallel projection, as a technical
+   * drawing's elevation or plan, with nothing shrinking with distance.
+   *
+   * Setting it swaps the camera for the other kind, looking the same way at
+   * the same orbit target, with the picture the same size there: the
+   * orthographic frustum is as tall as the perspective view at the target.
+   * Studio and recording are perspective only, so it cannot be set while a
+   * recording frame is held.
+   *
+   * @type {Boolean}
+   */
+  get orthographic() {
+    return !!(this.camera && this.camera.isOrthographicCamera);
+  }
+
+  set orthographic(on) {
+    const want = !!on;
+    if (want === this.orthographic || !this.camera || !this.controls) return;
+    if (want && this.recordFrame) return;
+    Controls.cancelFly();
+    const from = this.camera;
+    const { target } = this.controls;
+    from.updateMatrixWorld();
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(from.quaternion);
+    const tan = Math.tan(THREE.MathUtils.degToRad(ORTHO_REFERENCE_FOV) / 2);
+    const width = this.domElement.offsetWidth || 1;
+    const height = this.domElement.clientHeight || 1;
+    const aspect = width / height;
+    const view = from.view && from.view.enabled ? { ...from.view } : null;
+
+    let to;
+    if (want) {
+      if (!this.orthoCamera) {
+        this.orthoCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, ORTHO_STANDOFF * 10);
+        this.orthoCamera.up.set(0, 0, 1);
+      }
+      to = this.orthoCamera;
+      const half = Math.max(from.position.distanceTo(target), 0.05) * tan;
+      to.top = half;
+      to.bottom = -half;
+      to.left = -half * aspect;
+      to.right = half * aspect;
+      to.zoom = 1;
+      to.position.copy(target).addScaledVector(forward, -ORTHO_STANDOFF);
+    } else {
+      to = this.perspectiveCamera;
+      const distance = (from.top / (from.zoom || 1)) / tan;
+      to.aspect = aspect;
+      to.position.copy(target).addScaledVector(forward, -distance);
+    }
+    to.quaternion.copy(from.quaternion);
+    // The lens shift goes with the view.
+    if (view) {
+      from.clearViewOffset();
+      to.setViewOffset(view.fullWidth, view.fullHeight, view.offsetX, view.offsetY, view.width, view.height);
+    } else if (to.view && to.view.enabled) {
+      to.clearViewOffset();
+    }
+    to.updateProjectionMatrix();
+    to.updateMatrixWorld();
+    this.useCamera(to);
+    this.controls.update();
+  }
+
+  /**
+   * Hands a camera to everything that draws or moves through one.
+   *
+   * @private
+   * @param {THREE.Camera} camera
+   */
+  useCamera(camera) {
+    this.camera = camera;
+    Controls.cameraHandle = camera;
+    if (Controls.handle) Controls.handle.camera = camera;
+    this.controls.object = camera;
+    Light.setCamera(camera);
+    if (this.viewCube) this.viewCube.camera = camera;
+    Perf.watchCamera(camera);
+    [renderPass, laserPass, mainPass].forEach((pass) => {
+      if (pass) pass.mainCamera = camera;
+    });
+    [ambientHazeEffect, projectorEffect, laserEffect, selectionOutlineEffect].forEach((effect) => {
+      if (effect) effect.camera = camera;
+    });
+  }
+
+  /**
+   * Keeps an orthographic camera at its standoff behind the orbit target.
+   * Along its own axis an orthographic camera can stand anywhere without the
+   * picture changing, so this costs nothing to look at and keeps the scene
+   * clear of the near plane whatever the moves before it did.
+   *
+   * @private
+   */
+  keepOrthoStandoff() {
+    if (!this.orthographic) return;
+    const forward = orbitForward.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
+    this.camera.position.copy(this.controls.target).addScaledVector(forward, -ORTHO_STANDOFF);
+  }
+
+  /**
+   * The editor's perspective field of view, whichever camera is in use.
+   *
+   * @type {Number} degrees
+   */
+  get fov() {
+    return this.perspectiveCamera ? this.perspectiveCamera.fov : ORTHO_REFERENCE_FOV;
+  }
+
+  /**
+   * Picks the spot a walk holds on to: what is under the pointer, on a level
+   * plane through it -- the floor, or the top of whatever stands there.
+   *
+   * @private
+   * @param {Object} event the press
+   * @returns {Boolean} false at the sky, where there is nothing to hold
+   */
+  grabFloor(event) {
+    const press = { clientX: event.clientX, clientY: event.clientY, currentTarget: this.domElement };
+    if (!Controls.scenePointAt(press, walkGrab)) return false;
+    walkPlane.constant = -walkGrab.z;
+    return true;
+  }
+
+  /**
+   * Moves the camera along the floor so the grabbed spot sits under the
+   * pointer. Only the camera's place changes, never its height or angle. A
+   * pointer above the horizon, or one that would reach past the farthest the
+   * camera may be, leaves the camera where it is.
+   *
+   * @public
+   * @param {Object} cursor `{ x, y }`, client pixels
+   */
+  walkTo(cursor) {
+    const rect = this.domElement.getBoundingClientRect();
+    orbitNdc.set(
+      (((cursor.x - rect.left) / (rect.width || 1)) * 2) - 1,
+      (-((cursor.y - rect.top) / (rect.height || 1)) * 2) + 1,
+    );
+    this.camera.updateMatrixWorld();
+    orbitRay.setFromCamera(orbitNdc, this.camera);
+    if (!orbitRay.ray.intersectPlane(walkPlane, walkMeet)) return;
+    if (this.camera.position.distanceTo(walkMeet) > (this.controls.maxDistance || Infinity)) return;
+    walkStep.subVectors(walkGrab, walkMeet);
+    walkStep.z = 0;
+    this.camera.position.add(walkStep);
+    this.controls.target.add(walkStep);
     this.controls.update();
   }
 
@@ -1900,6 +2117,7 @@ class Visualizer {
     this.controls.autoRotateSpeed = 2.5
     AnimationManager.add(() => {
       this.controls.update();
+      this.keepOrthoStandoff();
     });
   }
 
@@ -1931,7 +2149,13 @@ class Visualizer {
       // Sized to the drawing buffer, so the depth texture it carries lines up
       // with `gl_FragCoord` in the beam shader without a scale factor.
       if (finalComposer) finalComposer.setSize(width, height);
-      this.camera.aspect = aspect;
+      if (this.orthographic) {
+        const half = this.camera.top;
+        this.camera.left = -half * aspect;
+        this.camera.right = half * aspect;
+      } else {
+        this.camera.aspect = aspect;
+      }
       // A lens shift is kept in proportion to the panel.
       const { view } = this.camera;
       if (view && view.enabled) {
@@ -1964,7 +2188,14 @@ class Visualizer {
    *         target: {x: Number, y: Number, z: Number}}}
    */
   get viewpoint() {
-    const p = this.camera.position;
+    // Orthographic: where a perspective camera would stand to show the same,
+    // so a viewpoint is always one a studio camera can use.
+    const p = this.orthographic && this.controls
+      ? this.controls.target.clone().addScaledVector(
+        orbitForward.set(0, 0, -1).applyQuaternion(this.camera.quaternion),
+        -Controls.orthoDistance(),
+      )
+      : this.camera.position;
     const t = this.controls ? this.controls.target : { x: 0, y: 0, z: 0 };
     return {
       position: { x: p.x, y: p.y, z: p.z },
@@ -1982,6 +2213,13 @@ class Visualizer {
     // `update` is what re-derives the camera's orientation from the target, so
     // without it the camera moves but goes on facing wherever it faced before.
     if (this.controls) this.controls.update();
+    // Orthographic: the distance becomes the frustum's size.
+    if (this.orthographic && this.controls) {
+      const distance = this.camera.position.distanceTo(this.controls.target);
+      setOrthoHalfHeight(this.camera, distance * Math.tan(THREE.MathUtils.degToRad(ORTHO_REFERENCE_FOV) / 2));
+      this.keepOrthoStandoff();
+      this.controls.update();
+    }
   }
 
   /**
@@ -2078,6 +2316,8 @@ class Visualizer {
    */
   beginRecordingFrame({ width, height, fov }) {
     if (!this.renderer || !this.camera) return;
+    // A recording is perspective.
+    this.orthographic = false;
     const previous = this.recordFrame;
     if (!previous) {
       this.beforeRecord = {

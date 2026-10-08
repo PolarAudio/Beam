@@ -205,7 +205,11 @@ const EMITTER_VERTEX = `${SHADER_DEFINES + TEXEL_LOOKUP /* glsl */}
     vBeamCutoff = beamCutoff;
 
     vec4 worldPosition = modelMatrix * instanceMatrix * vec4(position, 1.0);
-    vToCamera = cameraPosition - worldPosition.xyz;
+    // Orthographic has no eye to be near: the direction is the view's, and
+    // the length is the distance at which dimming has not begun.
+    vToCamera = isOrthographic
+      ? vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2]) * dimStartDistance
+      : cameraPosition - worldPosition.xyz;
 
     // Emitters dim as the camera closes in, so their glare recedes and the
     // individual LEDs stay readable up close. Not physical -- a real emitter
@@ -292,7 +296,9 @@ const GLOW_VERTEX = `${SHADER_DEFINES + TEXEL_LOOKUP /* glsl */}
 
     vec4 worldCentre = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
     vec3 emitDir = normalize(mat3(modelMatrix) * mat3(instanceMatrix) * vec3(0.0, 0.0, 1.0));
-    vec3 toCamera = normalize(cameraPosition - worldCentre.xyz);
+    vec3 toCamera = isOrthographic
+      ? vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2])
+      : normalize(cameraPosition - worldCentre.xyz);
     float facing = max(dot(emitDir, toCamera), 0.0);
 
     // Scattered light is far less directional than the die, and needs

@@ -320,6 +320,42 @@ const FIT_FILL = 0.92;
  */
 const MIN_FRAME_RADIUS = 0.6;
 /**
+ * How far behind the orbit target an orthographic camera stands, in metres.
+ *
+ * Where an orthographic camera sits along its axis changes nothing in the
+ * picture; it only has to be clear of the scene, so nothing is cut by the
+ * near plane. Every move puts it back here.
+ *
+ * @constant {Number}
+ */
+export const ORTHO_STANDOFF = 200;
+/**
+ * The field of view an orthographic view is sized against: its frustum is as
+ * tall as a perspective view this wide would show at the orbit target, so
+ * framing and the switch between the two keep the picture the same size.
+ *
+ * @constant {Number}
+ */
+export const ORTHO_REFERENCE_FOV = 45;
+
+/**
+ * Sets an orthographic camera's frustum to a half-height in metres, keeping
+ * its aspect.
+ *
+ * @param {THREE.OrthographicCamera} camera
+ * @param {Number} half metres from the middle of the view to its top
+ */
+export function setOrthoHalfHeight(camera, half) {
+  const height = camera.top - camera.bottom;
+  const aspect = height > 0 ? (camera.right - camera.left) / height : 1;
+  camera.top = half;
+  camera.bottom = -half;
+  camera.left = -half * aspect;
+  camera.right = half * aspect;
+  camera.updateProjectionMatrix();
+}
+
+/**
  * The nearest a view-cube click leaves the camera to what it turns about, in
  * metres, so a camera sitting on its pivot still gets somewhere to look from.
  *
@@ -1296,9 +1332,8 @@ class Controls {
   framingDistance(box = this.boundingBox, fill = FRAME_FILL) {
     box.getBoundingSphere(framingSphere);
     const radius = Math.max(framingSphere.radius, MIN_FRAME_RADIUS);
-    const halfFov = THREE.MathUtils.degToRad(this.cameraHandle.fov || 50) / 2;
-    const spread = Math.tan(halfFov) * fill;
-    const aspect = this.cameraHandle.aspect || 1;
+    const spread = this.viewTan() * fill;
+    const aspect = this.viewAspect();
     return Math.max(radius / spread, radius / (spread * aspect));
   }
 
@@ -1319,11 +1354,26 @@ class Controls {
    * @param {Number} [options.fov] field of view to arrive at, degrees
    * @param {Function} [options.onDone] called once, on arrival
    */
-  flyTo(endPos, endTarget, options = {}) {
+  flyTo(endPosition, endTarget, options = {}) {
     if (!this.cameraHandle) return;
     cancelAnimationFrame(this.rafID);
     // A flight aims the camera afresh, so a lens shift goes with it.
     this.clearLensShift();
+    // Orthographic: the distance asked for becomes the frustum's size, and the
+    // camera goes to its standoff along the same direction.
+    const ortho = this.isOrtho();
+    let endPos = endPosition;
+    let startHalf = 0;
+    let endHalf = 0;
+    if (ortho) {
+      const back = endPosition.clone().sub(endTarget);
+      const distance = back.length();
+      if (distance > 1e-6) back.divideScalar(distance);
+      else back.copy(this.cameraHandle.position).sub(this.controlHandle.target).normalize();
+      startHalf = this.cameraHandle.top / (this.cameraHandle.zoom || 1);
+      endHalf = distance > 1e-6 ? distance * this.viewTan() : startHalf;
+      endPos = endTarget.clone().addScaledVector(back, ORTHO_STANDOFF);
+    }
     this.cameraHandle.updateMatrixWorld();
     const startPos = new THREE.Vector3();
     startPos.setFromMatrixPosition(this.cameraHandle.matrixWorld);
@@ -1365,7 +1415,9 @@ class Controls {
         startTPos.y + dTY * progress,
         startTPos.z + dTZ * progress,
       );
-      if (endFov !== null) {
+      if (ortho) {
+        setOrthoHalfHeight(this.cameraHandle, startHalf + (endHalf - startHalf) * progress);
+      } else if (endFov !== null) {
         this.cameraHandle.fov = startFov + (endFov - startFov) * progress;
         this.cameraHandle.updateProjectionMatrix();
       }
@@ -1466,12 +1518,66 @@ class Controls {
       : this.controlHandle.target.clone();
     this.cameraHandle.updateMatrixWorld();
     const eye = new THREE.Vector3().setFromMatrixPosition(this.cameraHandle.matrixWorld);
-    const distance = Math.max(eye.distanceTo(centre), MIN_VIEW_DISTANCE);
+    // Orthographic: the distance whose view is as big as the frustum, so the
+    // picture keeps its size.
+    const distance = this.isOrtho()
+      ? this.orthoDistance()
+      : Math.max(eye.distanceTo(centre), MIN_VIEW_DISTANCE);
     const unit = direction.clone().normalize();
     this.flyTo(
       this.aboveFloor(centre.clone().addScaledVector(unit, distance)),
       centre,
     );
+  }
+
+  /**
+   * Whether the view is orthographic.
+   *
+   * @public
+   * @returns {Boolean}
+   */
+  isOrtho() {
+    return !!(this.cameraHandle && this.cameraHandle.isOrthographicCamera);
+  }
+
+  /**
+   * Tangent of half the view's height angle: the camera's own, or the one an
+   * orthographic view is sized against.
+   *
+   * @public
+   * @returns {Number}
+   */
+  viewTan() {
+    const fov = this.isOrtho() ? ORTHO_REFERENCE_FOV : (this.cameraHandle.fov || 50);
+    return Math.tan(THREE.MathUtils.degToRad(fov) / 2);
+  }
+
+  /**
+   * The view's width over its height.
+   *
+   * @public
+   * @returns {Number}
+   */
+  viewAspect() {
+    const camera = this.cameraHandle;
+    if (!camera) return 1;
+    if (this.isOrtho()) {
+      const height = camera.top - camera.bottom;
+      return height > 0 ? (camera.right - camera.left) / height : 1;
+    }
+    return camera.aspect || 1;
+  }
+
+  /**
+   * The distance at which a perspective view would be as big as the
+   * orthographic frustum is now.
+   *
+   * @public
+   * @returns {Number} metres
+   */
+  orthoDistance() {
+    const camera = this.cameraHandle;
+    return (camera.top / (camera.zoom || 1)) / this.viewTan();
   }
 
   /**

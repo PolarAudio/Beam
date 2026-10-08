@@ -213,6 +213,7 @@ const FRAGMENT = /* glsl */`
   uniform vec3 lensPos[SLOTS];
   uniform vec4 blendEdges[SLOTS];
   uniform vec3 camPos;
+  uniform bool camOrtho;
   uniform float hazeMetres;
   uniform float drift;
   uniform float hazeDensity;
@@ -396,6 +397,10 @@ const FRAGMENT = /* glsl */`
     vec4 viewPos = projInverse * clip;
     viewPos /= viewPos.w;
     vec3 world = (camWorld * viewPos).xyz;
+    // The eye this pixel's ray starts from. In orthographic every ray runs
+    // along the view from its own point on the camera's plane.
+    vec3 camForward = -normalize(camWorld[2].xyz);
+    vec3 eye = camOrtho ? world - camForward * dot(world - camPos, camForward) : camPos;
 
     // The surface's facing, from how the reconstructed position moves across
     // the screen. A projector's picture falls off with the angle it strikes at,
@@ -404,7 +409,7 @@ const FRAGMENT = /* glsl */`
     // Turned to face the eye. The cross product's sign follows the triangle's
     // winding on screen, not the surface's outside, and every surface we can
     // see faces us -- so this makes the sign mean something.
-    if (dot(surfaceNormal, camPos - world) < 0.0) surfaceNormal = -surfaceNormal;
+    if (dot(surfaceNormal, eye - world) < 0.0) surfaceNormal = -surfaceNormal;
 
     vec3 total = vec3(0.0);
     if (hasSurface) {
@@ -474,7 +479,7 @@ const FRAGMENT = /* glsl */`
     // it at the eye the more the projector faces the camera, by the same
     // phase function and amount as the movers.
     if (hazeDensity > 0.0) {
-      vec3 ray = world - camPos;
+      vec3 ray = world - eye;
       float reach = min(length(ray), SHAFT_MAX);
       vec3 direction = normalize(ray);
 
@@ -483,16 +488,16 @@ const FRAGMENT = /* glsl */`
         if (i >= liveCount) break;
         float near;
         float far;
-        if (!frustumSpan(i, camPos, direction, reach, near, far)) continue;
+        if (!frustumSpan(i, eye, direction, reach, near, far)) continue;
         float stride = (far - near) / float(SHAFT_SAMPLES);
         vec3 lit = vec3(0.0);
         for (int k = 0; k < SHAFT_SAMPLES; k++) {
           float t = near + (float(k) + 0.5) * stride;
-          vec3 at = camPos + direction * t;
+          vec3 at = eye + direction * t;
           vec3 light = shaftSample(i, at, at + direction * stride);
           if (light.r + light.g + light.b > 0.0) lit += light * shaftField(at);
         }
-        vec3 throwDir = normalize(camPos + direction * (near + far) * 0.5 - lensPos[i]);
+        vec3 throwDir = normalize(eye + direction * (near + far) * 0.5 - lensPos[i]);
         float phase = hazePhase(dot(throwDir, -direction), scatterAmount);
         scattered += lit * stride * phase;
       }
@@ -559,6 +564,7 @@ class ProjectorEffect extends Effect {
         ['hasPicture', new THREE.Uniform(0)],
         ['scatterAmount', new THREE.Uniform(SHAFT_SCATTER_AMOUNT)],
         ['camPos', new THREE.Uniform(new THREE.Vector3())],
+        ['camOrtho', new THREE.Uniform(false)],
         ['hazeMetres', new THREE.Uniform(SceneEnv.hazeScale)],
         ['drift', new THREE.Uniform(0)],
         ['hazeDensity', new THREE.Uniform(0)],
@@ -602,6 +608,7 @@ class ProjectorEffect extends Effect {
       uniforms.get('projInverse').value.copy(camera.projectionMatrixInverse);
       uniforms.get('camWorld').value.copy(camera.matrixWorld);
       uniforms.get('camPos').value.setFromMatrixPosition(camera.matrixWorld);
+      uniforms.get('camOrtho').value = !!camera.isOrthographicCamera;
     }
 
     // `hazeAmount`, not `roomHaze`: a projector lighting its own cone is a

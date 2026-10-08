@@ -440,7 +440,9 @@ function makeBeamMaterial() {
         // why a beam pointing away from you still reads brighter than the same
         // beam crossing your view. Two Henyey-Greenstein lobes give all three.
         vec3 travel = normalize(vWorld - beamOrigin);
-        vec3 toEye = normalize(cameraPosition - vWorld);
+        vec3 toEye = isOrthographic
+          ? vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2])
+          : normalize(cameraPosition - vWorld);
         float cosTheta = dot(travel, toEye);
         float lobes = mix(hg(cosTheta, PHASE_FORWARD), hg(cosTheta, PHASE_BACKWARD),
           PHASE_BACK_WEIGHT);

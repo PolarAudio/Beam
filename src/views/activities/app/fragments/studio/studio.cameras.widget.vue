@@ -135,7 +135,7 @@ export default {
     addCamera() {
       const handle = this.$show.visualizerHandle;
       if (!handle) return;
-      Studio.addCamera({ ...handle.viewpoint, fov: handle.camera.fov });
+      Studio.addCamera({ ...handle.viewpoint, fov: handle.fov });
       // Cameras are show data but live outside the proxy that notices edits.
       this.$show.touch();
     },

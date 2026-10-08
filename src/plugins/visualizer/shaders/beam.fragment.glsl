@@ -170,6 +170,13 @@ uniform float time;          // Current time
 uniform float vertexCount;   // Per instance vertex count
 uniform vec3 cameraDir;      // Camera direction
 uniform vec3 cameraPos;
+uniform bool cameraOrtho;    // Orthographic: every view ray parallel to cameraDir
+
+// Where this pixel's view ray starts: the eye in perspective; in orthographic,
+// the point on the camera's plane behind the fragment, since every ray runs
+// along cameraDir from its own place on that plane. Distance along the ray
+// is then the same depth the depth buffer holds.
+vec3 rayOrigin;
 
 varying vec3 vPosition;      // Vertex local position
 varying vec3 beamPos;        // Vertex local position
@@ -300,6 +307,8 @@ vec3 safeNormalize(vec3 v) {
  * @returns float distance along the view axis
  */
 float viewDistance(float depth) {
+  // An orthographic depth buffer is linear between the planes.
+  if (cameraOrtho) return cameraNear + depth * (cameraFar - cameraNear);
   float ndc = depth * 2.0 - 1.0;
   return (2.0 * cameraNear * cameraFar)
     / (cameraFar + cameraNear - ndc * (cameraFar - cameraNear));
@@ -586,7 +595,7 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
   float mHull = m + r0 * vInvFocus;
 
   // The ray, split into travel along the axis and travel across it.
-  vec3 O = cameraPos - beamPos;
+  vec3 O = rayOrigin - beamPos;
   float oz = dot(O, axis);
   float vz = dot(viewDir, axis);
   vec3 oR = O - oz * axis;
@@ -683,10 +692,10 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
     // would not do -- the plane is infinite, so a beam clipping a truss
     // would lose everything below it.
     if (abs(viewDir.z) > 1e-6) {
-      float sFloor = (BEAM_FLOOR_Z - cameraPos.z) / viewDir.z;
+      float sFloor = (BEAM_FLOOR_Z - rayOrigin.z) / viewDir.z;
       if (viewDir.z < 0.0) sHi = min(sHi, sFloor);
       else sLo = max(sLo, sFloor);
-    } else if (cameraPos.z < BEAM_FLOOR_Z) {
+    } else if (rayOrigin.z < BEAM_FLOOR_Z) {
       // Running level, below the floor: none of this ray is lit.
       sLo = sHi;
     }
@@ -845,7 +854,7 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
     float profileHere = sides.x + sides.y;
     float spread = 1.0 / (z + apexBehind);
     float extinction = exp(-extinctionPerMetre * z);
-    float field = hazeField(cameraPos + viewDir * s);
+    float field = hazeField(rayOrigin + viewDir * s);
     // The irradiance here per candela: from the lens's centre, as the pool
     // has it, and as much thinner as the blur is wider than the image, so
     // every slice of the beam carries the same light. Both forms of it are
@@ -897,7 +906,15 @@ void main() {
     return;
   }
 
-  vec3 viewDir = safeNormalize(vAbsoluteWorldPosition.xyz - cameraPos);
+  vec3 viewDir;
+  if (cameraOrtho) {
+    viewDir = cameraDir;
+    vec3 here = vAbsoluteWorldPosition.xyz;
+    rayOrigin = here - cameraDir * dot(here - cameraPos, cameraDir);
+  } else {
+    viewDir = safeNormalize(vAbsoluteWorldPosition.xyz - cameraPos);
+    rayOrigin = cameraPos;
+  }
   float zAlong;
   float sAlong;
   float farShare;

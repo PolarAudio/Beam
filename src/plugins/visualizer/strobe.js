@@ -169,7 +169,9 @@ const GLOW_VERTEX = /* glsl */`
 
     vec4 worldCentre = modelMatrix * vec4(0.0, 0.0, 0.0, 1.0);
     vec3 emitDir = normalize(mat3(modelMatrix) * vec3(0.0, -1.0, 0.0));
-    vec3 toCamera = normalize(cameraPosition - worldCentre.xyz);
+    vec3 toCamera = isOrthographic
+      ? vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2])
+      : normalize(cameraPosition - worldCentre.xyz);
     float facing = max(dot(emitDir, toCamera), 0.0);
 
     // Scattered light needs something to scatter off: in clear air this goes
@@ -742,7 +744,8 @@ class Strobe {
    */
   static cameraWash(camera, out) {
     out.setRGB(0, 0, 0);
-    if (!instances.size) return out;
+    // A flash at the eye needs an eye; an orthographic view has none.
+    if (!instances.size || camera.isOrthographicCamera) return out;
     camera.getWorldPosition(cameraPosition);
     camera.getWorldDirection(cameraDirection);
     instances.forEach((strobe) => strobe.addWash(cameraPosition, cameraDirection, out));

@@ -1622,6 +1622,7 @@ class Light {
     u.sceneDepth.value = texture;
     u.cameraNear.value = camera.near;
     u.cameraFar.value = camera.far;
+    u.cameraOrtho.value = !!camera.isOrthographicCamera;
   }
 
   /**
@@ -3198,6 +3199,9 @@ class Light {
         depthRows: { value: MOVER_DEPTH.rows },
         depthFar: { value: MOVER_DEPTH.far },
         depthBias: { value: DEPTH_BIAS },
+        cameraOrtho: {
+          value: false,
+        },
         cameraNear: {
           type: 'f',
           value: 0.01,
@@ -3280,6 +3284,18 @@ class Light {
     boundingBoxMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     boundingBoxMesh.instanceMatrix.needsUpdate = true;
     boundingBoxMesh.visible = false;
+  }
+
+  /**
+   * The camera the beams are seen through, when the view swaps between
+   * perspective and orthographic.
+   *
+   * @public
+   * @static
+   * @param {THREE.Camera} camera
+   */
+  static setCamera(camera) {
+    camera_handle = camera;
   }
 
   static prepareInstanciation(camera, scene) {

@@ -104,6 +104,30 @@ const BEAM_MAX_ANGLE = 80;
 const WHEEL_SLOTS_PER_SECOND = 7.5;
 
 /**
+ * How a gobo wheel settles when it reaches a slot: momentum carries it past,
+ * and the slack in the drive lets it ring back and forth before it stops,
+ * which moves the gobo a little along its arc and turns it a little with
+ * the wheel. Amplitude in slots, the ring's rate in Hz, its decay's time
+ * constant in seconds.
+ */
+const WHEEL_SETTLE = { amplitude: 0.05, rate: 7, decay: 0.06 };
+
+/**
+ * How far the gate travels along the gobo wheel's arc for one slot, in field
+ * radii: the slot circle's radius times the turn per slot, for the 100 mm
+ * wheel the shaders take every wheel to be (GOBO_WHEEL_RADIUS and GOBO_STEP
+ * in beam.fragment.glsl).
+ */
+const GOBO_SLOT_ARC = 3.04 * 0.7759;
+
+/**
+ * The shape of a shake: the swing's sine raised to this power, sign kept.
+ * Under 1 the wheel dashes across the middle and hangs at each end, as a
+ * stepper drive throws it; 1 is a plain sine.
+ */
+const SHAKE_SHAPE = 0.4;
+
+/**
  * Colours for colour-wheel slots a profile names but gives no value, by the
  * word in the name. Checked in order, so "minus green" wins over "green" and
  * "pink" over "red". Gel numbers are not looked up: the word is what the
@@ -171,13 +195,33 @@ function gelColour(slot) {
 const GOBO_DEFOCUS_MAX = GOBO_BLUR_LEVELS - 1;
 
 /**
- * The penumbra a focus channel sweeps, fully in to fully out. Not from the
- * profile: OFL states no edge softness, so these are Beam's. Focused is
- * nearly a hard edge, as a well-focused spot throws; out is soft to the
- * middle of the radius.
+ * The edge of a lens that can be focused, at its focus: hard, as a focused
+ * spot throws. A gobo's pattern can reach 99 % of the radius and stays
+ * crisp there, which a softer edge would eat. Defocus
+ * is not a softer penumbra but the lens's own blur, `FOCUS_NEAR` below. Fully
+ * soft is where frost takes the edge.
  */
-const PENUMBRA_FOCUSED = 0.05;
+const PENUMBRA_FOCUSED = 0.01;
 const PENUMBRA_DEFOCUSED = 1.0;
+
+/**
+ * The nearest a lens focuses, in metres; the farthest is infinity. A focus
+ * channel runs between them evenly in 1 / distance, as a focus ring does.
+ *
+ * Focus is a distance: the lens images the gate there, and everything nearer
+ * or farther is blurred by the lens radius times |1 - distance / focus|. The
+ * blur is the whole of defocus -- the pool's edge, the gobo's sharpness and
+ * the shape of the beam in the air, which narrows from the lens onto the
+ * image at the focus and widens past it.
+ */
+const FOCUS_NEAR = 1;
+
+/**
+ * The nearest surface whose blur the pool's cone test allows for, in metres:
+ * the blur's angle grows without bound towards the lens, and nothing a pool
+ * lands on is nearer than this.
+ */
+const BLUR_REACH_NEAR = 0.5;
 
 /**
  * How much wider full frost makes the beam: the field's half angle times
@@ -299,8 +343,9 @@ const PLAUSIBLE_LUMENS_PER_WATT = [5, 150];
 /** Light spreads as the inverse square of the distance. */
 const SPOTLIGHT_PHYSICALLY_CORRECT_DECAY = 2.0;
 /**
- * The pool's penumbra for a fixture without a focus channel. A focus
- * channel sweeps its own range, `PENUMBRA_DEFOCUSED` to `PENUMBRA_FOCUSED`.
+ * The pool's penumbra for a fixture whose lens cannot be focused, which is
+ * taken as focused at infinity. One that can be focused has
+ * `PENUMBRA_FOCUSED` and the lens's blur.
  *
  * Shapes the beam in the air as well, through `writeBeamProfile`. Half:
  * a plateau to the middle of the radius, a slope from there to the edge.
@@ -861,6 +906,11 @@ class Light {
     this._baseAngle = null;
     this._basePenumbra = SPOTLIGHT_PHYSICALLY_CORRECT_PENUMBRA;
     /**
+     * Where the lens is focused, as 1 / distance in 1/m: 0 is infinity,
+     * which is where a lens that cannot be focused is taken to be.
+     */
+    this._invFocus = 0;
+    /**
      * Frost, 0 none to 1 full, from a frost channel or a frost slot on a
      * wheel; `_frostWheel` names the wheel that set it. `_frostEffect` is a
      * ramp or pulse running it, or null.
@@ -1261,6 +1311,7 @@ class Light {
     this._frostEffect = null;
     this.applyFrost(0);
     this._basePenumbra = SPOTLIGHT_PHYSICALLY_CORRECT_PENUMBRA;
+    this._invFocus = 0;
     this.applyLensEdge();
     this.strobeEffect = 'Open';
     this.strobeRandom = false;
@@ -1399,7 +1450,7 @@ class Light {
     const defocus = Light.goboDefocusFor(this._basePenumbra);
     this._spotLight.penumbra = penumbra;
     this._goboDefocus = defocus + (GOBO_DEFOCUS_MAX + 1 - defocus) * f;
-    Light.writeBeamProfile(this._id, penumbra);
+    Light.writeBeamProfile(this._id, penumbra, this._invFocus);
     this.writeOptics();
   }
 
@@ -1475,25 +1526,15 @@ class Light {
   }
 
   /**
-   * Focus, 0 fully out to 100 fully in.
-   *
-   * One penumbra, written to two renderers: the SpotLight's, which softens
-   * the pool of light this fixture throws on to surfaces, and the visible
-   * shaft's in `beam.fragment.glsl`, whose falloff is the same curve so the
-   * air and the pool end at the same place with the same edge.
+   * A focus channel, 0 to 100: the lens's nearest focus to infinity, evenly
+   * in 1 / distance, as a focus ring turns.
    *
    * @type {Number}
    */
   set focus(focus) {
-    // The whole channel sweeps the edge from fully soft to nearly hard, on
-    // its own range rather than down from the no-channel default: tied to
-    // that, lowering the default to cure overlapping pools shrank the sweep
-    // to almost nothing.
     const dial = Math.min(Math.max(Number(focus) || 0, 0), 100) / 100;
-    const penumbra = PENUMBRA_DEFOCUSED + (PENUMBRA_FOCUSED - PENUMBRA_DEFOCUSED) * dial;
-    this._basePenumbra = penumbra;
     this._focus = focus;
-    this.applyLensEdge();
+    this.setInvFocus((1 - dial) / FOCUS_NEAR);
     (this._lamps || []).forEach((lamp) => { lamp.focus = focus; });
   }
 
@@ -1502,20 +1543,63 @@ class Light {
   }
 
   /**
-   * Puts a fixture's radial falloff into the instance buffer: the inner
-   * cone, as a fraction of the field, inside which the beam is full.
+   * A lens focused by hand: the distance it is focused at, in metres, held
+   * to the lens's nearest.
    *
-   * The same number three derives from the SpotLight's penumbra for the
-   * pool, `angle * (1 - penumbra)` over `angle`. A penumbra past 1 folds
-   * over rather than clamping to nothing, exactly as three's cosine does,
-   * so the default 1.2 gives a full core out to a fifth of the radius.
+   * @type {Number}
+   */
+  set focusDistance(metres) {
+    const distance = Number(metres);
+    this.setInvFocus(distance > 0 ? 1 / Math.max(distance, FOCUS_NEAR) : 0);
+    (this._lamps || []).forEach((lamp) => { lamp.focusDistance = metres; });
+  }
+
+  get focusDistance() {
+    return this._invFocus > 0 ? 1 / this._invFocus : Infinity;
+  }
+
+  /**
+   * Focuses the lens, as 1 / distance; a lens being focused has the focused
+   * edge, and its blur does the rest.
+   *
+   * @private
+   * @param {Number} invFocus 1/m, 0 infinity
+   */
+  setInvFocus(invFocus) {
+    this._invFocus = invFocus;
+    this._basePenumbra = PENUMBRA_FOCUSED;
+    this.applyLensEdge();
+  }
+
+  /**
+   * The lens's radius, in metres: where the beam leaves it and what its blur
+   * is measured in.
+   *
+   * @readonly
+   * @type {Number}
+   */
+  get lensRadius() {
+    return BEAM_TOP_RADIUS * this._lensScale;
+  }
+
+  /**
+   * Puts a fixture's radial falloff and its focus into the instance buffer:
+   * the inner cone, as a fraction of the field, inside which the beam is full
+   * before the lens's blur, and the focus as 1 / distance.
+   *
+   * The inner cone is the number three derives from the SpotLight's penumbra
+   * for the pool, `angle * (1 - penumbra)` over `angle`. A penumbra past 1
+   * folds over rather than clamping to nothing, exactly as three's cosine
+   * does.
    *
    * @public
    * @param {Number} id instance id
    * @param {Number} penumbra the SpotLight's, 0 a hard edge, 1 all falloff
+   * @param {Number} [invFocus] 1 / focus distance, 1/m; 0 infinity
    */
-  static writeBeamProfile(id, penumbra) {
+  static writeBeamProfile(id, penumbra, invFocus = 0) {
     const inner = Math.min(Math.abs(1 - penumbra), 0.99);
+    angle_buffer_attribute.setY(id, invFocus);
     angle_buffer_attribute.setZ(id, inner);
     angle_buffer_attribute.needsUpdate = true;
   }
@@ -1558,9 +1642,12 @@ class Light {
         slot: 0,
         position: 0,
         angle: 0,
-        // A gobo shake in progress, or null: `{ rate, amplitude, onSlot,
-        // phase, offset }`; see `setWheelShake`.
+        // A gobo shake in progress, or null: `{ rate, amplitude, phase,
+        // offset }`; see `setWheelShake`.
         shake: null,
+        // A gobo wheel ringing as it settles on the slot it reached, or
+        // null: `{ slot, t, direction }`; see `WHEEL_SETTLE`.
+        settle: null,
         speedRpm: 0,
         wheelSpeedRpm: 0,
       };
@@ -1642,15 +1729,17 @@ class Light {
   }
 
   /**
-   * Shakes a wheel on one of its slots: the gobo swings quickly to and fro
-   * about its place, the whole wheel rocking, or, where the profile says the
-   * slot shakes, the gobo turning to and fro in its holder. Speed is the
-   * fixture's slow to fast; the swing is the profile's angle where it gives
-   * one.
+   * Shakes a wheel on one of its slots: the whole wheel rocks, so the gobo
+   * swings quickly to and fro along its arc about its place, turning with
+   * the wheel. That is a shake whether the profile says the slot or the wheel
+   * shakes: a gobo turning in its holder reads as a wobble, not a shake.
+   * Speed is the fixture's slow to fast; the swing is the file's amplitude
+   * or the profile's angle where it gives one.
    *
    * @public
    * @param {String} wheelName
-   * @param {Object} values `{ slotNumber, shakeSpeed, shakeAngle, isShaking }`
+   * @param {Object} values `{ slotNumber, shakeSpeed, rate, shakeAmplitude, shakeAngle }`,
+   *   the amplitude the peak swing in percent of the image
    */
   setWheelShake(wheelName, values) {
     const wheel = this._wheels[wheelName];
@@ -1665,17 +1754,18 @@ class Light {
     const rate = Number.isFinite(values.rate)
       ? Math.max(values.rate, 0)
       : range.min + (Math.min(Math.max(percent, 0), 100) / 100) * (range.max - range.min);
-    const onSlot = values.isShaking === 'slot';
     const degrees = Number.isFinite(values.shakeAngle) && values.shakeAngle > 0
       ? values.shakeAngle : null;
-    // Rocking the wheel, the swing is a share of a slot: the profile's angle
-    // as a share of the wheel's turn, else a fifth of a slot. Turning in the
-    // holder, the swing is an angle: the profile's, else 20 degrees.
+    // The swing as a share of a slot: the file's amplitude, a share of the
+    // image two field radii across, over the gate's travel per slot; else
+    // the profile's angle as a share of the wheel's turn; else a fifth.
     let amplitude = degrees ? (degrees / 360) * wheel.slots.length : 0.2;
-    if (onSlot) amplitude = Light.degToRad(degrees || 20);
+    if (Number.isFinite(values.shakeAmplitude) && values.shakeAmplitude > 0) {
+      amplitude = ((values.shakeAmplitude / 100) * 2) / GOBO_SLOT_ARC;
+    }
     const phase = wheel.shake ? wheel.shake.phase : 0;
     wheel.shake = {
-      rate, amplitude, onSlot, phase, offset: 0,
+      rate, amplitude, phase, offset: 0,
     };
     this.writeOptics();
   }
@@ -1833,15 +1923,13 @@ class Light {
       if (!count) return;
       let travelled = false;
       if (wheel.shake) {
-        // Swinging about the slot. Rocking the wheel moves its position,
-        // which the slide draws; turning in the holder moves the gobo's
-        // angle, which `goboPack` adds on.
+        // Rocking about the slot: the wheel's position swings, and the
+        // shaders carry the gobo along its arc with it, in SHAKE_SHAPE.
         const { shake } = wheel;
         shake.phase = (shake.phase + shake.rate * Math.PI * 2 * dt) % (Math.PI * 2);
-        shake.offset = shake.amplitude * Math.sin(shake.phase);
-        wheel.position = shake.onSlot
-          ? wheel.slot
-          : (((wheel.slot + shake.offset) % count) + count) % count;
+        const swing = Math.sin(shake.phase);
+        shake.offset = shake.amplitude * Math.sign(swing) * Math.abs(swing) ** SHAKE_SHAPE;
+        wheel.position = (((wheel.slot + shake.offset) % count) + count) % count;
         travelled = true;
       } else if (wheel.wheelSpeedRpm !== 0) {
         // Scrolling: the whole wheel turns, the target going with it.
@@ -1849,13 +1937,34 @@ class Light {
         wheel.position = ((wheel.position % count) + count) % count;
         wheel.slot = wheel.position;
         travelled = true;
+      } else if (wheel.settle && wheel.settle.slot === wheel.slot) {
+        // Arrived, and ringing about the slot: past it in the direction it
+        // came, back, and smaller each time.
+        const { settle } = wheel;
+        settle.t += dt;
+        let ring = 0;
+        if (settle.t < WHEEL_SETTLE.decay * 6) {
+          ring = WHEEL_SETTLE.amplitude * settle.direction
+            * Math.exp(-settle.t / WHEEL_SETTLE.decay)
+            * Math.sin(Math.PI * 2 * WHEEL_SETTLE.rate * settle.t);
+        } else {
+          wheel.settle = null;
+        }
+        wheel.position = (((wheel.slot + ring) % count) + count) % count;
+        travelled = true;
       } else if (wheel.position !== wheel.slot) {
-        // Travelling to a chosen slot, the shorter way round.
+        // Travelling to a chosen slot, the shorter way round. A gobo wheel
+        // settles when it gets there.
+        wheel.settle = null;
         let d = wheel.slot - wheel.position;
         d = (((d % count) + count * 1.5) % count) - count / 2;
         const step = WHEEL_SLOTS_PER_SECOND * dt;
-        if (Math.abs(d) <= step) wheel.position = wheel.slot;
-        else wheel.position = (((wheel.position + Math.sign(d) * step) % count) + count) % count;
+        if (Math.abs(d) <= step) {
+          wheel.position = wheel.slot;
+          if (wheel.kind === 'gobo') wheel.settle = { slot: wheel.slot, t: 0, direction: Math.sign(d) };
+        } else {
+          wheel.position = (((wheel.position + Math.sign(d) * step) % count) + count) % count;
+        }
         travelled = true;
       }
       if (travelled) {
@@ -1917,8 +2026,7 @@ class Light {
       const whole = Math.floor(wheel.position);
       const frac = wheel.position - whole;
       const index = ((whole % count) + count) % count;
-      const angle = wheel.angle
-        + (wheel.shake && wheel.shake.onSlot ? wheel.shake.offset : 0);
+      const { angle } = wheel;
       if (n === 0 && frac > 0.001 && frac < 0.999) {
         pack[0] = Light.goboPatternAt(wheel, index) + frac;
         pack[1] = angle;
@@ -3259,6 +3367,15 @@ class Light {
       record.axisY.set(0, 1, 0).applyQuaternion(rigidQuaternion);
       record.tanHalf = Math.tan(Light.degToRad(this._angle))
         * DEPTH_FOV_MARGIN * this.drawnSpread;
+      // The lens's blur, which the pool takes at each surface's distance. It
+      // spreads the edge past the field by the lens radius times
+      // |1/distance - 1/focus| in angle, so the cone test reaches that far
+      // for any surface from `BLUR_REACH_NEAR` out.
+      record.lensRadius = this.lensRadius;
+      record.invFocus = this._invFocus;
+      const reach = Math.tan(outer)
+        + record.lensRadius * (1 / BLUR_REACH_NEAR + this._invFocus);
+      record.cosReach = Math.cos(Math.atan(reach));
     }
     return true;
   }

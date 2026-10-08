@@ -224,25 +224,30 @@ class MovingHead extends Light {
   /**
    * Sets how fast pan and tilt move, from a pan/tilt speed channel.
    *
-   * A speed is a percent, slow to fast, of the fixture's top speeds. A
-   * duration is the time every move takes whatever its size, pan and tilt
-   * arriving together; zero is as fast as the head goes.
+   * A speed is a percent, slow to fast, of the fixture's top speeds, with
+   * the slow end assumed. A share is a measured fraction of the top speeds,
+   * as a fixture file states it. A duration is the time every move takes
+   * whatever its size, pan and tilt arriving together; zero is as fast as
+   * the head goes.
    *
    * @public
-   * @param {Object|null} value `{ speed, duration }`, one of them stated, or
-   *   null for full speed
+   * @param {Object|null} value `{ speed, share, duration }`, one of them
+   *   stated, or null for full speed
    */
   setPanTiltSpeed(value) {
     const speed = value && Number.isFinite(value.speed) ? value.speed : null;
+    const share = value && Number.isFinite(value.share) ? value.share : null;
     const duration = value && Number.isFinite(value.duration) ? value.duration : null;
-    if (speed === null && duration === null) {
+    if (speed === null && share === null && duration === null) {
       this._panTiltSpeed = null;
     } else if (duration !== null) {
       this._panTiltSpeed = { share: 1, duration: Math.max(duration, 0) };
+    } else if (share !== null) {
+      this._panTiltSpeed = { share: Math.min(Math.max(share, 0), 1), duration: 0 };
     } else {
-      const share = Math.min(Math.max(speed, 0), 100) / 100;
+      const fraction = Math.min(Math.max(speed, 0), 100) / 100;
       this._panTiltSpeed = {
-        share: PAN_TILT_SLOWEST + share * (1 - PAN_TILT_SLOWEST),
+        share: PAN_TILT_SLOWEST + fraction * (1 - PAN_TILT_SLOWEST),
         duration: 0,
       };
     }

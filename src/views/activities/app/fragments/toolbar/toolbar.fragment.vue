@@ -8,6 +8,15 @@
     <uk-spacer />
     <p>{{ saveState ? "" : "*" }} {{ project }}</p>
     <uk-spacer />
+    <p
+      v-if="sending"
+      class="sending"
+      :class="{ contested: otherSenders.length }"
+      title="Beam is sending DMX. Preferences > Art-Net to receive again."
+      @click="artnetPopupState = true"
+    >
+      {{ sendingLabel }}
+    </p>
 
     <visualizer-popup v-model="visualizerPopupState" />
     <license-popup v-model="licensePopupState" />
@@ -60,6 +69,9 @@ export default {
        */
       artnetPopupState: false,
       videoPopupState: false,
+      /** Whether Beam is in sender mode, and who else is on its universes. */
+      sending: false,
+      otherSenders: [],
       /**
        * New project popup state
        */
@@ -247,6 +259,16 @@ export default {
       ],
     };
   },
+  computed: {
+    /** The sender-mode marker, naming anyone else on Beam's universes. */
+    sendingLabel() {
+      if (!this.otherSenders.length) return 'Sending DMX';
+      const others = this.otherSenders
+        .map(({ name, universes }) => `${name} on universe ${universes.join(', ')}`)
+        .join('; ');
+      return `Sending DMX. Also sending: ${others}`;
+    },
+  },
   mounted() {
     this.$show.on('saveState', (state) => {
       this.saveState = state;
@@ -276,6 +298,10 @@ export default {
     });
     EventBus.on('app_ready', () => {
       this.project = this.$show.documentTitle;
+    });
+    EventBus.on('dmx_mode', ({ sending, otherSenders }) => {
+      this.sending = sending;
+      this.otherSenders = otherSenders || [];
     });
     // The debug panel's button, so both ask the same question.
     EventBus.on('reset_defaults', () => this.resetToDefaults());
@@ -507,6 +533,18 @@ export default {
 .tap_container:hover, .state_container:hover {
   background: var(--secondary-darker);
   cursor: pointer;
+}
+.sending {
+  padding: 2px 8px;
+  margin-right: 8px;
+  border-radius: 3px;
+  background: var(--accent-sea-green);
+  color: var(--primary-dark);
+  cursor: pointer;
+}
+.sending.contested {
+  background: #ce2d5e;
+  color: white;
 }
 .colored_dot {
   height: 10px;

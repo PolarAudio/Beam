@@ -90,7 +90,8 @@ const SCENE_INTENSITY_PER_UNIT = CANDELA_PER_UNIT * LUX_SCALE;
  * Eleven:
  *
  *   0: position.xyz, range
- *   1: direction.xyz, cosine of the cone's outer edge
+ *   1: direction.xyz, cosine of how far out the light can reach: the cone's
+ *      outer edge, widened by the lens's blur for a light with a tile
  *   2: colour.rgb (already scaled by intensity), cosine of the penumbra
  *   3: the depth tile's rect in the atlas, x y width height
  *   4: the tile camera's x axis, world; tangent of its half fov
@@ -101,7 +102,8 @@ const SCENE_INTENSITY_PER_UNIT = CANDELA_PER_UNIT * LUX_SCALE;
  *      none); w the gobo defocus from the focus, in baked blur levels
  *   9: the colour past a colour wheel split, rgb scaled by intensity; w the
  *      split, 0 none
- *  10: how far the iris is open, 1 fully to 0 closed; yzw unused
+ *  10: how far the iris is open, 1 fully to 0 closed; the lens radius, m;
+ *      1 / focus distance, 1/m, 0 infinity; cosine of the cone's outer edge
  *
  * `direction` is stored three's way round -- `normalize(position - target)`,
  * pointing back up the beam rather than along it -- so that the angle test
@@ -161,6 +163,11 @@ const record = {
   /** The colour past a colour wheel split, and the split, 0 none. */
   colorB: new THREE.Color(),
   split: 0,
+  /** The lens radius, m, and 1 / its focus distance, 1/m; 0 no blur. */
+  lensRadius: 0,
+  invFocus: 0,
+  /** The cosine of the light's reach past its cone, null for the cone itself. */
+  cosReach: null,
   /** How far the iris is open, 1 fully to 0 closed. */
   iris: 1,
 };
@@ -275,8 +282,11 @@ const FIELD_LIGHT_CHUNK = /* glsl */`
       float tanField = packedAxisX.w / ( FIELD_DEPTH_FOV_MARGIN * drawnSpread );
       vec2 aperture = vec2( dot( offset, tileAxisX ), dot( offset, tileAxisY ) ) / ( along * tanField );
       vec4 packedColorB = texelFetch( lightField, ivec2( 9, i ), 0 );
-      float packedIris = texelFetch( lightField, ivec2( 10, i ), 0 ).x;
-      vec2 sides = fieldStencil( aperture, packedOrigin.w, packedGobo, packedPrism, packedColorB.w, packedIris );
+      vec4 packedLens = texelFetch( lightField, ivec2( 10, i ), 0 );
+      // The lens's blur at this surface, in field radii: the lens radius times
+      // how far the surface is from the focus, over the field's radius here.
+      float blur = packedLens.y * abs( 1.0 - along * packedLens.z ) / max( along * tanField, 1e-5 );
+      vec2 sides = fieldStencil( aperture, packedOrigin.w, packedGobo, packedPrism, packedColorB.w, packedLens.x, blur );
       float shape = sides.x + sides.y;
       if ( shape <= 0.0 ) continue;
       attenuation *= shape;
@@ -303,7 +313,9 @@ const FIELD_LIGHT_CHUNK = /* glsl */`
         if ( alongLifted > seen + allowance ) continue;
       }
     } else {
-      attenuation *= getSpotAttenuation( packedDirection.w, packedColor.w, angleCos );
+      // The cone's own edge, not the reach the cone test above allowed for.
+      float cosOuter = texelFetch( lightField, ivec2( 10, i ), 0 ).w;
+      attenuation *= getSpotAttenuation( cosOuter, packedColor.w, angleCos );
       if ( attenuation <= 0.0 ) continue;
     }
 
@@ -394,18 +406,37 @@ float fieldSplit( vec2 p, float split, float defocus ) {
 // side of any colour split, and past it. The falloff from the inner cone to
 // the field, through every gobo in the beam; with a prism, the mean over the
 // prism's displaced copies, split included.
+// A gobo wheel turns on its own centre, as in the beam shader: every wheel is
+// taken as 100 mm across, slots 38 mm out, gobos 25 mm across, so the slot
+// circle is 3.04 field radii from the centre and one slot is a turn of
+// 0.7759 rad, holes 2.3 field radii apart.
+#define FIELD_GOBO_WHEEL_RADIUS 3.04
+#define FIELD_GOBO_STEP 0.7759
+
+// Where a point of the gate falls in a gobo the wheel has turned by turn
+// radians away from the gate: carried round the wheel's centre, so shifted
+// along an arc and turned by the same angle. The shaft is at +y in the gate,
+// below the optical axis in the projected image, as in the beam shader.
+vec2 fieldGoboOnWheel( vec2 p, float turn ) {
+  vec2 centre = vec2( 0.0, FIELD_GOBO_WHEEL_RADIUS );
+  vec2 d = p - centre;
+  float c = cos( turn );
+  float s = sin( turn );
+  return vec2( c * d.x + s * d.y, -s * d.x + c * d.y ) + centre;
+}
+
 // Every gobo in the beam at a point of the aperture. A wheel between two
 // slots carries the fraction of the way it has gone in the first pattern
-// number: the old gobo slides out along the wheel and the next slides in,
-// each through its own round hole, the holes 2.3 field radii apart.
+// number: the old gobo turns out of the gate on the wheel and the next turns
+// in, each through its own round hole.
 float fieldGobos( vec2 p, vec4 gobo, float defocus ) {
   float frac = fract( gobo.x );
   if ( frac <= 0.0 ) {
     return fieldGobo( p, gobo.xy, defocus ) * fieldGobo( p, gobo.zw, defocus );
   }
   float soft = 0.02 + 0.08 * defocus;
-  vec2 pa = p + vec2( frac * 2.3, 0.0 );
-  vec2 pb = p - vec2( ( 1.0 - frac ) * 2.3, 0.0 );
+  vec2 pa = fieldGoboOnWheel( p, frac * FIELD_GOBO_STEP );
+  vec2 pb = fieldGoboOnWheel( p, -( 1.0 - frac ) * FIELD_GOBO_STEP );
   float holeA = 1.0 - smoothstep( 1.0 - soft, 1.0, length( pa ) );
   float holeB = 1.0 - smoothstep( 1.0 - soft, 1.0, length( pb ) );
   return holeA * fieldGobo( pa, vec2( floor( gobo.x ), gobo.y ), defocus )
@@ -420,24 +451,47 @@ float fieldIris( vec2 p, float iris, float defocus ) {
   return 1.0 - smoothstep( iris - soft, iris + 0.001, length( p ) );
 }
 
-vec2 fieldStencil( vec2 p, float inner, vec4 gobo, vec4 prism, float split, float iris ) {
+// The field's edge through the lens's blur, at a distance r from the axis
+// in field radii. The image of the gate is a disc of radius 1, and the blur
+// spreads each point of it over a disc of radius blur: light is full out to
+// |1 - blur|, gone at 1 + blur, and where the blur is wider than the image,
+// near the lens, spread that much thinner, so the light through every slice
+// of the beam is the same. The inner cone softens the image's own edge.
+float fieldEdge( float r, float inner, float blur ) {
+  float height = blur > 1.0 ? 1.0 / ( blur * blur ) : 1.0;
+  float lo = abs( 1.0 - blur ) - ( 1.0 - inner );
+  return height * ( 1.0 - smoothstep( lo, 1.0 + blur, r ) );
+}
+
+// The lens's blur as gobo blur levels. The atlas bakes a cell of 128 px,
+// two field radii across, at Gaussian sigmas of 0, 2.5 and 7 px, as
+// gobo_library.js; a blur disc of radius b field radii is a sigma of about
+// half its 64 b px.
+float fieldBlurLevels( float blur ) {
+  float sigma = 32.0 * blur;
+  return sigma < 2.5 ? sigma / 2.5 : 1.0 + min( ( sigma - 2.5 ) / 4.5, 1.0 );
+}
+
+vec2 fieldStencil( vec2 p, float inner, vec4 gobo, vec4 prism, float split, float iris, float blur ) {
   int facets = int( abs( prism.x ) );
   bool linear = prism.x < 0.0;
+  // The gobo is as soft as the frost or the lens makes it, whichever is more.
+  float defocus = max( prism.w, fieldBlurLevels( blur ) );
   if ( facets < 2 ) {
-    float v = ( 1.0 - smoothstep( inner, 1.0, length( p ) ) )
-      * fieldGobos( p, gobo, prism.w )
-      * fieldIris( p, iris, prism.w );
-    float far = fieldSplit( p, split, prism.w );
+    float v = fieldEdge( length( p ), inner, blur )
+      * fieldGobos( p, gobo, defocus )
+      * fieldIris( p, iris, defocus );
+    float far = fieldSplit( p, split, defocus );
     return vec2( v * ( 1.0 - far ), v * far );
   }
   vec2 sum = vec2( 0.0 );
   for ( int k = 0; k < FIELD_PRISM_FACETS; k ++ ) {
     if ( k >= facets ) break;
     vec2 q = p - fieldPrismOffset( k, facets, linear, prism.y, prism.z );
-    float v = ( 1.0 - smoothstep( inner, 1.0, length( q ) ) )
-      * fieldGobos( q, gobo, prism.w )
-      * fieldIris( q, iris, prism.w );
-    float far = fieldSplit( q, split, prism.w );
+    float v = fieldEdge( length( q ), inner, blur )
+      * fieldGobos( q, gobo, defocus )
+      * fieldIris( q, iris, defocus );
+    float far = fieldSplit( q, split, defocus );
     sum += vec2( v * ( 1.0 - far ), v * far );
   }
   return sum * ( FIELD_PRISM_TRANSMISSION / float( facets ) );
@@ -506,6 +560,9 @@ const LightField = {
       record.prism.set(0, 0, 0, 0);
       record.split = 0;
       record.iris = 1;
+      record.lensRadius = 0;
+      record.invFocus = 0;
+      record.cosReach = null;
       if (sources[i].readLight(record)) {
         LightField.ensureCapacity(count + 1);
         const at = count * TEXELS_PER_LIGHT * 4;
@@ -517,7 +574,7 @@ const LightField = {
         data[at + 4] = record.direction.x;
         data[at + 5] = record.direction.y;
         data[at + 6] = record.direction.z;
-        data[at + 7] = record.cosOuter;
+        data[at + 7] = record.cosReach !== null ? record.cosReach : record.cosOuter;
 
         data[at + 8] = record.color.r * record.intensity;
         data[at + 9] = record.color.g * record.intensity;
@@ -561,9 +618,9 @@ const LightField = {
         data[at + 39] = record.split;
 
         data[at + 40] = record.iris;
-        data[at + 41] = 0;
-        data[at + 42] = 0;
-        data[at + 43] = 0;
+        data[at + 41] = record.lensRadius;
+        data[at + 42] = record.invFocus;
+        data[at + 43] = record.cosOuter;
         count += 1;
       }
     }

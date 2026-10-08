@@ -471,6 +471,7 @@ function buildIndex(type, problems) {
     emitter: new Map(type.physical.emitters.map((e) => [e.name, e])),
     filter: new Map(type.physical.filters.map((f) => [f.name, f])),
     model: new Map(type.models.map((m) => [m.name, m])),
+    dmxProfile: new Map(type.physical.dmxProfiles.map((p) => [p.name, p])),
     geometry: geometryByName,
     parentOf,
     mode: new Map(type.modes.map((m) => [m.name, m])),
@@ -500,6 +501,7 @@ function checkReferences(type, problems) {
         if (f.wheel && !index.wheel.has(f.wheel)) missing('wheel', f.wheel);
         if (f.emitter && !index.emitter.has(f.emitter)) missing('emitter', f.emitter);
         if (f.filter && !index.filter.has(f.filter)) missing('filter', f.filter);
+        if (f.dmxProfile && !index.dmxProfile.has(f.dmxProfile)) missing('DMX profile', f.dmxProfile);
       }));
     });
   });
@@ -519,6 +521,14 @@ export function completeFixtureType(type) {
   // eslint-disable-next-line no-param-reassign
   type.index = buildIndex(type, problems);
   checkReferences(type, problems);
+  // Each function's DMX profile as its points, ready to evaluate.
+  type.modes.forEach((mode) => mode.channels.forEach((c) => c.logicalChannels.forEach((l) => {
+    l.functions.forEach((f) => {
+      const profile = f.dmxProfile ? type.index.dmxProfile.get(f.dmxProfile) : null;
+      // eslint-disable-next-line no-param-reassign
+      f.profile = profile && profile.points.length ? profile.points : null;
+    });
+  })));
   return problems;
 }
 

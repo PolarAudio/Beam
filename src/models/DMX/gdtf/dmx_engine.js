@@ -18,6 +18,7 @@
  */
 
 import { patchedChannels } from './gdtf_reader';
+import { profileAt } from './gdtf_values';
 
 /**
  * The function a value falls in among candidates, by start and end. Ranges
@@ -49,7 +50,8 @@ function interpolate(value, dmxFrom, dmxTo, physicalFrom, physicalTo) {
  * them: a file that names its points -- CW Fast 1800, CW Med 1080, CW Slow
  * 360 deg/s -- states the curve through them, and its function's own
  * from/to may run the other way. Anywhere else the value takes the
- * function's range, at its place in the function.
+ * function's range, at its place in the function, along the function's DMX
+ * profile when it has one and in a straight line when it does not.
  *
  * @param {Object} fn a channel function
  * @param {Number} value at the channel's resolution
@@ -76,9 +78,15 @@ export function stateAt(fn, value) {
       if (stated(s) && s.dmxTo < value && (!before || s.dmxTo > before.dmxTo)) before = s;
       if (stated(s) && s.dmxFrom > value && (!after || s.dmxFrom < after.dmxFrom)) after = s;
     }
-    physical = before && after
-      ? interpolate(value, before.dmxTo, after.dmxFrom, before.physicalTo, after.physicalFrom)
-      : interpolate(value, fn.dmxFrom, fn.dmxTo, fn.physicalFrom, fn.physicalTo);
+    if (before && after) {
+      const { dmxTo: from, physicalTo: start } = before;
+      physical = interpolate(value, from, after.dmxFrom, start, after.physicalFrom);
+    } else if (fn.profile) {
+      const t = fn.dmxTo > fn.dmxFrom ? (value - fn.dmxFrom) / (fn.dmxTo - fn.dmxFrom) : 0;
+      physical = fn.physicalFrom + profileAt(fn.profile, t) * (fn.physicalTo - fn.physicalFrom);
+    } else {
+      physical = interpolate(value, fn.dmxFrom, fn.dmxTo, fn.physicalFrom, fn.physicalTo);
+    }
   }
   return { fn, set, physical };
 }

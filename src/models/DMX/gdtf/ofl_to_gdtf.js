@@ -11,6 +11,7 @@
  */
 
 import { completeFixtureType } from './gdtf_reader';
+import { standardPretty } from './standard_attributes';
 import { normaliseMatrixProfile } from '../ofl_matrix';
 import Capability from '../capabilityManager.model';
 
@@ -544,6 +545,29 @@ export default function translateOfl(ofl, { manufacturer = '' } = {}) {
       if (!master) notes.push(`switching channel "${key}" has no controller in mode "${mode.name}"`);
       addChannel(key, offset, functions, {});
     });
+    // A lens wound by hand is how GDTF has it: a focus channel with no DMX
+    // address, which takes no place in the footprint.
+    const focused = channels.some((c) => /^Focus\d+$/.test(c.logicalChannels[0].attribute));
+    if ((physical.lens || {}).focus === 'manual' && !focused) {
+      const geometry = geometryFor('Focus1');
+      channels.push({
+        name: uniqueName(geometry, 'Focus1', 'Focus'),
+        dmxBreak: 1,
+        offsets: null,
+        bytes: 1,
+        initialFunctionWritten: null,
+        highlightWritten: null,
+        geometry,
+        logicalChannels: [{
+          attribute: 'Focus1',
+          snap: 'No',
+          master: 'None',
+          mibFade: 0,
+          dmxChangeTimeLimit: 0,
+          functions: [makeFunction('Focus', 'Focus1', '', 0, 1, 0, 1)],
+        }],
+      });
+    }
     return {
       name: mode.name, description: mode.shortName || '', geometry: top.name, channels, relations: [], macroCount: 0,
     };
@@ -572,7 +596,7 @@ export default function translateOfl(ofl, { manufacturer = '' } = {}) {
       featureGroups: [],
       attributes: [...used].map((name) => ({
         name,
-        pretty: name,
+        pretty: standardPretty(name) || name,
         activationGroup: null,
         feature: null,
         mainAttribute: null,

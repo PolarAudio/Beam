@@ -50,11 +50,37 @@ uniform sampler2D goboAtlas;     // Every gobo pattern, in a grid; pattern 0 ope
 #define GOBO_LOD_MAX 4.0
 
 /**
- * The distance between neighbouring holes on a gobo wheel, in the field's
- * radius: two, the holes' own diameter, and a margin of metal between them.
- * It sets how far a gobo travels while the wheel moves one slot.
+ * A gobo wheel is a disc turning on its own centre, so a gobo arrives at the
+ * gate along an arc about that centre and turns with the wheel on the way.
+ * Every wheel is taken as 100 mm across, its slots 38 mm from its centre,
+ * holding gobos 25 mm across: the slot circle is GOBO_WHEEL_RADIUS field
+ * radii from the wheel's centre, and neighbouring holes GOBO_PITCH apart, the
+ * holes' own diameter and a margin of metal. GOBO_STEP is the turn, in
+ * radians, that moves the wheel one slot.
  */
 #define GOBO_PITCH 2.3
+#define GOBO_WHEEL_RADIUS 3.04
+#define GOBO_STEP 0.7759
+
+/**
+ * @function goboOnWheel
+ * @brief where a point of the gate falls in a gobo the wheel has turned
+ * @param vec2 p gate position, (0,0) the axis, 1 the field's radius
+ * @param float turn the wheel's turn away from this gobo sitting in the gate, radians
+ * @returns vec2 the same point in the gobo's own frame
+ *
+ * The wheel's shaft is at +y in the gate, which the lens turns over, so in
+ * the projected image it sits below the optical axis. Turning the wheel
+ * carries the gobo round that centre, so the gate sees it shifted along an
+ * arc and turned by the same angle.
+ */
+vec2 goboOnWheel(vec2 p, float turn) {
+  vec2 centre = vec2(0.0, GOBO_WHEEL_RADIUS);
+  vec2 d = p - centre;
+  float c = cos(turn);
+  float s = sin(turn);
+  return vec2(c * d.x + s * d.y, -s * d.x + c * d.y) + centre;
+}
 
 /**
  * How much of the light a prism lets through: glass loses some at every
@@ -158,7 +184,16 @@ varying float vAngle;        // Half-angle of the beam's field, degrees
 varying float vInner;        // Inner cone radius over the field's, where the falloff starts
 varying float vSlope;        // Cone slope, dRadius/dz, of the cone drawn
 varying float vLensRadius;   // Radius of the cone at the lens, in metres
+flat varying float vInvFocus;     // 1 / the lens's focus distance, 1/m, 0 infinity
 varying float vZFar;         // Local z of the cone's far rim
+
+/**
+ * The lens's blur where the profile is being read, in field radii, and how
+ * soft that makes the gobo, in baked blur levels. Set for each sample of a
+ * ray before its cross-section is read; see `beamProfile`.
+ */
+float sampleBlur = 0.0;
+float sampleDefocus = 0.0;
 flat varying vec4 vTile;          // Depth tile rect in the atlas, z < 0 for no tile
 varying vec3 vAxisX;         // The beam frame's x axis, world, unit
 varying vec3 vAxisY;         // The beam frame's y axis, world, unit
@@ -351,7 +386,7 @@ float beamGobo(vec2 p, vec2 patternAngle, vec2 along, float lod, float defocus) 
  */
 float beamIris(vec2 p) {
   if (vIris >= 0.999) return 1.0;
-  float soft = 0.01 + 0.06 * vPrism.w;
+  float soft = 0.01 + 0.06 * sampleDefocus;
   return 1.0 - smoothstep(vIris - soft, vIris + 0.001, length(p));
 }
 
@@ -377,14 +412,15 @@ float beamIris(vec2 p) {
  *
  * At rest, the first wheel's gobo and a second wheel's. A wheel between two
  * slots carries the fraction of the way it has gone in the first pattern
- * number: the old gobo slides out along the wheel and the next slides in
- * behind it, each through its own round hole, with metal between them.
+ * number: the wheel turns, the old gobo leaves the gate on its arc and the
+ * next arrives behind it, each through its own round hole, with metal
+ * between them (`goboOnWheel`).
  */
 float beamGobos(vec2 p, vec2 along, float lod) {
   // Never sharper than the first baked blur in the air: light scattered by
   // haze has bounced and mixes directions, and a sharp read gave each pixel
   // a different slice of a fine pattern, a grain along every ray.
-  float airDefocus = max(vPrism.w, 1.0);
+  float airDefocus = max(sampleDefocus, 1.0);
   // Flat, so the number arrives exact, and read with a margin all the same:
   // a whole pattern number that arrived as 4.9999999 read as a wheel a
   // hair from the next slot, open, pixel by pixel, a grain along every ray.
@@ -393,9 +429,9 @@ float beamGobos(vec2 p, vec2 along, float lod) {
   if (frac <= 0.0) {
     return beamGobo(p, vGobo.xy, along, lod, airDefocus) * beamGobo(p, vGobo.zw, along, lod, airDefocus);
   }
-  float soft = 0.02 + 0.08 * vPrism.w;
-  vec2 pa = p + vec2(frac * GOBO_PITCH, 0.0);
-  vec2 pb = p - vec2((1.0 - frac) * GOBO_PITCH, 0.0);
+  float soft = 0.02 + 0.08 * sampleDefocus;
+  vec2 pa = goboOnWheel(p, frac * GOBO_STEP);
+  vec2 pb = goboOnWheel(p, -(1.0 - frac) * GOBO_STEP);
   float holeA = 1.0 - smoothstep(1.0 - soft, 1.0, length(pa));
   float holeB = 1.0 - smoothstep(1.0 - soft, 1.0, length(pb));
   return holeA * beamGobo(pa, vec2(floor(vGobo.x + 0.0005), vGobo.y), along, lod, airDefocus)
@@ -416,7 +452,7 @@ float beamGobos(vec2 p, vec2 along, float lod) {
 float beamSplit(vec2 p) {
   if (vColorB.w <= 0.0) return 0.0;
   float line = 1.0 - 2.0 * vColorB.w;
-  float soft = 0.02 + 0.12 * vPrism.w;
+  float soft = 0.02 + 0.12 * sampleDefocus;
   return smoothstep(line - soft, line + soft, p.x);
 }
 
@@ -433,11 +469,44 @@ float beamSplit(vec2 p) {
  * cross-section displaced by the spread, split included, so a three-facet
  * prism is three overlapping beams a third as bright.
  */
+/**
+ * @function beamEdge
+ * @brief the field's edge through the lens's blur
+ * @param float r distance from the axis, in field radii
+ * @returns float 0..1
+ *
+ * The image of the gate is a disc of radius 1 and the blur, `sampleBlur`,
+ * spreads each point of it over a disc that wide: full out to |1 - blur|,
+ * gone at 1 + blur, the same edge the pool has in light_field.js. How much
+ * thinner the light is where the blur is wider than the image is not here
+ * but in the irradiance, which carries it without dividing by zero at the
+ * lens.
+ */
+float beamEdge(float r) {
+  float lo = abs(1.0 - sampleBlur) - (1.0 - vInner);
+  return 1.0 - smoothstep(lo, 1.0 + sampleBlur, r);
+}
+
+/**
+ * @function beamBlurLevels
+ * @brief the lens's blur as gobo blur levels
+ * @param float blur in field radii
+ * @returns float 0 sharp to 2 the softest baked level
+ *
+ * The atlas bakes a cell of 128 px, two field radii across, at Gaussian
+ * sigmas of 0, 2.5 and 7 px (gobo_library.js); a blur disc of radius b
+ * field radii is a sigma of about half its 64 b px.
+ */
+float beamBlurLevels(float blur) {
+  float sigma = 32.0 * blur;
+  return sigma < 2.5 ? sigma / 2.5 : 1.0 + min((sigma - 2.5) / 4.5, 1.0);
+}
+
 vec2 beamStencil(vec2 p, vec2 along, float lod) {
   int facets = int(abs(vPrism.x));
   bool linear = vPrism.x < 0.0;
   if (facets < 2) {
-    float v = (1.0 - smoothstep(vInner, 1.0, length(p)))
+    float v = beamEdge(length(p))
       * beamGobos(p, along, lod)
       * beamIris(p);
     float far = beamSplit(p);
@@ -447,7 +516,7 @@ vec2 beamStencil(vec2 p, vec2 along, float lod) {
   for (int k = 0; k < PRISM_FACETS_MAX; k++) {
     if (k >= facets) break;
     vec2 q = p - prismOffset(k, facets, linear, vPrism.y, vPrism.z);
-    float v = (1.0 - smoothstep(vInner, 1.0, length(q)))
+    float v = beamEdge(length(q))
       * beamGobos(q, along, lod)
       * beamIris(q);
     float far = beamSplit(q);
@@ -509,6 +578,12 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
   // wall and says nothing about the cone's radius.
   float m = vSlope;
   float r0 = vLensRadius;
+  // The hull the lit beam stays inside: the image, m * z, widened by the
+  // lens's blur, r0 * |1 - z / focus|, is never wider than r0 plus the
+  // image and the blur's growth, the same cone the vertex shader draws.
+  // The stretch inside it is where light can be; the profile below says
+  // how much is.
+  float mHull = m + r0 * vInvFocus;
 
   // The ray, split into travel along the axis and travel across it.
   vec3 O = cameraPos - beamPos;
@@ -523,9 +598,9 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
   // by a clamp, and a clamp is continuous without being smooth: the boundary
   // where it engages is a hard curve across the screen. A chord is a
   // continuous function of the ray everywhere.
-  float rz = r0 + m * oz;
-  float A = dot(vR, vR) - m * m * vz * vz;
-  float B = 2.0 * (dot(oR, vR) - m * vz * rz);
+  float rz = r0 + mHull * oz;
+  float A = dot(vR, vR) - mHull * mHull * vz * vz;
+  float B = 2.0 * (dot(oR, vR) - mHull * vz * rz);
   float C = dot(oR, oR) - rz * rz;
 
   float chord = 0.0;
@@ -558,7 +633,7 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
       if (A > 0.0) {
         sLo = sA;
         sHi = sB;
-      } else if (rz + m * vz * sA > 0.0) {
+      } else if (rz + mHull * vz * sA > 0.0) {
         sLo = -FAR_S;
         sHi = sA;
       } else {
@@ -642,11 +717,11 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
   }
 
   // The fixture's radial falloff, the same curve as the pool it throws on
-  // the floor: full out to the inner cone, then a smoothstep to nothing at
-  // the field, which is the stated angle. three's SpotLight draws the pool
-  // as smoothstep(cos outer, cos inner, cos angle), and the focus channel
-  // sets the inner cone for both, so the lit air and the pool cannot
-  // disagree about how wide the light is or how soft its edge.
+  // a surface: the field's edge, the stated angle, softened by the inner
+  // cone and spread by the lens's blur at each depth (`beamEdge`). The pool
+  // in light_field.js reads the same edge at the surface's depth, so the lit
+  // air and the pool cannot disagree about how wide the light is or how soft
+  // its edge.
   //
   // **Averaged along the lit stretch, not read at one point.** A ray that
   // crosses the cone obliquely -- every ray, once the camera is near the
@@ -669,8 +744,9 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
   //
   // **Each sample also carries the light that reaches it and the air it
   // sits in.** Irradiance falls as the inverse square of the distance from
-  // the virtual point the cone opens from, and pays Beer-Lambert extinction
-  // from the lens through the haze on the way. The
+  // the lens's centre, spread thinner where the lens's blur is wider than
+  // the image, and pays Beer-Lambert extinction from the lens through the
+  // haze on the way. The
   // haze field is read at the sample itself, so the texture passes through
   // the shaft rather than sitting on it: the core averages the field along
   // a long chord and comes out smoother, the thin edges keep its detail,
@@ -678,18 +754,19 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
   // measured nearly free where arithmetic is not.
   // The tile covers the drawn cone, prism spread included, plus the margin.
   //
-  // **The samples go where the light is.** The irradiance along the ray is
-  // known in closed form, so its integral over the lit stretch is exact
-  // (`irradianceIntegral`), and the samples are spaced so that each stands for an
-  // equal share of it: dense near the lens, sparse far out. They then only
-  // have to estimate the profile, the haze and the extinction, which vary
-  // slowly. Evenly spaced samples on a ray running down a beam put one in
+  // **The samples go where the light is.** The inverse square from the
+  // cone's apex has a closed-form integral (`irradianceIntegral`), and the
+  // samples are spaced so that each stands for an equal share of it: dense
+  // near the lens, sparse far out. It differs from the irradiance with the
+  // lens's blur only near the lens, so each sample is reweighted by the one
+  // over the other and the rest -- profile, haze, extinction -- vary slowly. Evenly spaced samples on a ray running down a beam put one in
   // every twenty-odd metres, and whichever landed near the lens was counted
   // for its whole stretch: a bright, curved sheet that jumped as the ray moved.
   // A ray crossing the beam side-on sees almost no change in irradiance, and
   // keeps the even spacing with each sample weighted by its own irradiance.
   float tanHalf = tan(radians(vAngle)) * DEPTH_FOV_MARGIN * vSpread;
-  // The light opens from the field's apex; a prism only widens the drawn cone.
+  // Where the field's cone would open from behind the lens, which the
+  // samples are spaced by; a prism only widens the drawn cone.
   float apexBehind = r0 / max(m / vSpread, 1e-4);
   float extinctionPerMetre = hazeScatter * clamp(fogFactor, 0.0, 1.0);
   float samples = float(BEAM_PROFILE_SAMPLES);
@@ -730,13 +807,19 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
     }
     float z = clamp(oz + vz * s, 0.0, vZFar);
     // Where the sample sits in the aperture: its offset from the axis on
-    // the beam's own axes, over the field's radius there, lens ring
-    // included, so 1 is the field's edge at every depth. The drawn cone is
-    // the field unless a prism widens it, so the drawn fraction is that
-    // over the spread.
+    // the beam's own axes, over the radius of the gate's image there, so 1
+    // is the field's edge at every depth, the same coordinate the pool on a
+    // surface is read in. The image opens from the lens's centre at the
+    // field's slope; the lens's blur at this depth, its radius times
+    // |1 - z / focus|, is what the beam is wider by, narrowing onto the
+    // image at the focus and widening past it.
+    float fieldSlope = m / vSpread;
+    float imageRadius = max(fieldSlope * z, 1e-5);
+    float blurMetres = r0 * abs(1.0 - z * vInvFocus);
+    sampleBlur = blurMetres / imageRadius;
+    sampleDefocus = max(vPrism.w, beamBlurLevels(sampleBlur));
     vec3 radialVec = oR + vR * s;
-    float fieldRadius = max(r0 + (m / vSpread) * z, 1e-4);
-    vec2 aperture = vec2(dot(radialVec, vAxisX), dot(radialVec, vAxisY)) / fieldRadius;
+    vec2 aperture = vec2(dot(radialVec, vAxisX), dot(radialVec, vAxisY)) / imageRadius;
     float x = length(aperture) / vSpread;
     float lit = 1.0;
     if (vTile.z > 0.0 && z > 0.0) {
@@ -755,7 +838,7 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
     // beside the pool.
     float zNext = oz + vz * (s + sampleStep);
     vec3 radialNext = oR + vR * (s + sampleStep);
-    float fieldNext = max(r0 + (m / vSpread) * clamp(zNext, 0.0, vZFar), 1e-4);
+    float fieldNext = max(fieldSlope * clamp(zNext, 0.0, vZFar), 1e-5);
     vec2 apertureNext = vec2(dot(radialNext, vAxisX), dot(radialNext, vAxisY)) / fieldNext;
     float lod = GOBO_LOD_BASE + GOBO_BLUR_PER_METRE * z;
     vec2 sides = beamStencil(aperture, apertureNext - aperture, lod) * lit;
@@ -763,9 +846,18 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
     float spread = 1.0 / (z + apexBehind);
     float extinction = exp(-extinctionPerMetre * z);
     float field = hazeField(cameraPos + viewDir * s);
+    // The irradiance here per candela: from the lens's centre, as the pool
+    // has it, and as much thinner as the blur is wider than the image, so
+    // every slice of the beam carries the same light. Both forms of it are
+    // finite at the lens. The samples were placed and weighted for the
+    // inverse square from the apex, so each is reweighted by this over that.
+    float uHere = z + apexBehind;
+    float irradiance = min(1.0 / max(z * z, 1e-8),
+      fieldSlope * fieldSlope / max(blurMetres * blurMetres, 1e-12));
+    float reweight = weight * irradiance * uHere * uHere;
     sumWeight += weight;
-    sumLight += weight * profileHere * extinction * field;
-    sumFar += weight * sides.y * extinction * field;
+    sumLight += reweight * profileHere * extinction * field;
+    sumFar += reweight * sides.y * extinction * field;
     sumProfile += profileHere;
     sumIrradiance += spread * spread * extinction;
     sumField += field;

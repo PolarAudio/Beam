@@ -9,6 +9,7 @@
 
 import { walkGeometry } from './gdtf_reader';
 import { slotKind } from './name_rules';
+import { isOwnPretty } from './standard_attributes';
 
 /** Old channel types by GDTF attribute, for the quick accessors and the UI. */
 const CHANNEL_TYPES = [
@@ -65,13 +66,19 @@ const WHEEL_SUFFIXES = {
 
 /**
  * A GDTF attribute as a channel's name on a panel: `ColorSub_C` is Cyan,
- * `Gobo1PosRotate` is Gobo 1 rotation. An attribute without a reading is
- * shown as it is written.
+ * `Gobo1PosRotate` is Gobo 1 rotation.
+ *
+ * A pretty name the file gives that is not the spec's is the author naming
+ * the channel, and is shown as written. The spec's own pretty names are
+ * abbreviations (Dim, Sh1, C1), so they give way to the reading here. An
+ * attribute without a reading is shown as it is written.
  *
  * @param {String} attribute
+ * @param {String} [pretty] the file's pretty name for the attribute
  * @returns {String}
  */
-export function attributeLabel(attribute) {
+export function attributeLabel(attribute, pretty = '') {
+  if (isOwnPretty(attribute, pretty)) return pretty.trim();
   const colour = /^Color(Add|Sub)_(\w+)$/.exec(attribute);
   if (colour && COLOUR_LETTERS[colour[2]]) return COLOUR_LETTERS[colour[2]];
   const families = 'Color|Gobo|Prism|AnimationWheel|Animation|Effects|Frost|Focus|Shutter|Control|ColorMacro';
@@ -90,6 +97,18 @@ export function attributeLabel(attribute) {
     TiltRotate: 'Tilt rotation',
   };
   return named[attribute] || attribute;
+}
+
+/**
+ * The pretty name a fixture type's file gives an attribute.
+ *
+ * @param {Object} type a GDTF fixture type
+ * @param {String} attribute
+ * @returns {String} empty when the file defines none
+ */
+export function prettyOf(type, attribute) {
+  const definition = type && type.index ? type.index.attribute.get(attribute) : null;
+  return (definition && definition.pretty) || '';
 }
 
 /** A channel's type in the terms the rest of the app sorts by. */
@@ -132,7 +151,7 @@ export function channelRows(engine) {
     const slot = engine.byAddress[address];
     const attribute = slot ? ((slot.channel.channel.logicalChannels[0] || {}).attribute || 'NoFeature') : 'NoFeature';
     const isFine = !!slot && slot.byte > 0;
-    let base = slot ? attributeLabel(attribute) : 'Unset';
+    let base = slot ? attributeLabel(attribute, prettyOf(engine.type, attribute)) : 'Unset';
     if (slot && slot.channel.instanceOf) base = `${slot.channel.instanceOf} ${base}`;
     let type = slot ? channelType(attribute) : 'Unset';
     if (isFine) type = `${channelType(attribute)}Fine`;

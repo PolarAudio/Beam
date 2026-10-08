@@ -65,7 +65,7 @@
                 <img
                   v-if="step.gobo"
                   class="block_gobo"
-                  :class="{ stand_in: !step.gobo.named }"
+                  :class="{ stand_in: !step.gobo.named, light: !!step.gobo.light }"
                   :src="step.gobo.url"
                   alt=""
                   draggable="false"
@@ -866,6 +866,12 @@ export default {
   border-radius: 50%;
   background: #fff;
   object-fit: contain;
+}
+/* A fixture file's own image is light on its own metal, with a transparent
+   holder round it: drawn on the panel as it is. Over white, the soft edge of
+   its disc let the white through as a ring. */
+.channel_guide .block_gobo.light {
+  background: transparent;
 }
 /* A pattern Beam chose because the profile names none: ringed with a dash,
    so it is not taken for the fixture's own. */

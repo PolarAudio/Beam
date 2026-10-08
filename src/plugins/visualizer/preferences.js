@@ -106,6 +106,14 @@ const DEFAULTS = {
    * is being changed, where they can also be picked from.
    */
   channelRangeGuide: true,
+  /**
+   * What sender mode speaks: `'sacn'` (multicast) or `'artnet'`. The mode
+   * itself is never stored -- every launch receives -- but the protocol and
+   * target are facts about this machine's rig.
+   */
+  dmxSendProtocol: 'sacn',
+  /** Where Art-Net goes in sender mode; broadcast when empty. */
+  dmxSendTarget: '',
   /** Scene background, as a hex string. Matches SceneManager's own default. */
   backgroundColor: '#0C0D0A',
   /**

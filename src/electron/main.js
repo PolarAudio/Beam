@@ -22,6 +22,8 @@ import path from 'path';
 import icon from '../assets/images/beam_logo.png?asset';
 import artnet from './artnet';
 import sacn from './sacn';
+import sacnSender from './sacn_sender';
+import artnetSender from './artnet_sender';
 import LaserHub, { addresses as laserAddresses } from './laser_hub';
 import jsonstore from './jsonstore';
 import library from './library';
@@ -356,8 +358,15 @@ function setupArtnet() {
    * transfer.
    */
   let framePort = null;
+  /**
+   * Whether Beam is the sender. Inbound frames are then held back from the
+   * renderer -- the fixtures keep what the panels set -- while the receivers
+   * go on recording who is sending, so a second sender can be named.
+   */
+  let sending = false;
 
   const forward = (batch) => {
+    if (sending) return;
     if (framePort) {
       try {
         framePort.postMessage(batch);
@@ -410,6 +419,28 @@ function setupArtnet() {
     sources: [...artnet.sourceReport(), ...sacn.sourceReport()],
     conflicts: sacn.conflicts(),
   }));
+
+  // Sender mode: Beam drives the wire from its own fixture values, on one
+  // protocol at a time.
+  let sender = null;
+  ipcMain.handle('dmx:set-sending', (_event, enabled, opts = {}) => {
+    if (sender) sender.stop();
+    sender = null;
+    sending = !!enabled;
+    if (sending) {
+      if (opts.protocol === 'artnet') {
+        sender = artnetSender;
+        sender.start({ target: opts.target });
+      } else {
+        sender = sacnSender;
+        sender.start({ multicastInterface: sacn.multicastInterface });
+      }
+    }
+    return sending;
+  });
+  ipcMain.on('dmx:send', (_event, universe, data) => {
+    if (sending && sender) sender.send(universe, data);
+  });
 
   // Start listening immediately — a visualizer's whole job is to receive. Both
   // protocols at once: they are different sockets writing one address space,
@@ -752,6 +783,8 @@ app.on('before-quit', () => {
 app.on('window-all-closed', () => {
   artnet.stop();
   sacn.stop();
+  sacnSender.stop();
+  artnetSender.stop();
   laserHub.stop();
   app.quit();
 });

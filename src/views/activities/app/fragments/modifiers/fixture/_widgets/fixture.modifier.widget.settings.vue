@@ -82,11 +82,11 @@
       <uk-num-input
         v-if="hasManualFocus"
         :mixed="focusMixed"
-        :model-value="fixture.focus"
+        :model-value="fixture.focusDistance"
         style="width: 92px"
-        label="Focus %"
-        :precision="0"
-        :min="0"
+        label="Focus at (m)"
+        :precision="1"
+        :min="1"
         :max="100"
         @update:model-value="writeFocus"
       />
@@ -710,8 +710,8 @@ export default {
     },
     focusMixed() {
       if (!this.many) return false;
-      const first = this.fixture.focus;
-      return this.targets.some((target) => target.focus !== first);
+      const first = this.fixture.focusDistance;
+      return this.targets.some((target) => target.focusDistance !== first);
     },
     /**
      * Whether this fixture can cast a shadow at all. An emitter bar has no
@@ -1395,7 +1395,7 @@ export default {
      * @param {*} value
      */
     writeFocus(value) {
-      this.targets.forEach((target) => { target.focus = value; });
+      this.targets.forEach((target) => { target.focusDistance = value; });
     },
     writeDevice(key, value) {
       if (!this.device) return;

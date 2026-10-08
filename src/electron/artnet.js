@@ -4,6 +4,8 @@
 // into bytes, and spelling that as arithmetic would obscure the one thing a
 // reader needs to check it against, which is the spec's own diagram.
 import DmxReceiver from './dmx_receiver';
+import { ARTNET_PORT, ARTNET_ID, OP_DMX } from './artnet_wire';
+import artnetSender from './artnet_sender';
 
 /**
  * Art-Net UDP engine (main process).
@@ -19,11 +21,6 @@ import DmxReceiver from './dmx_receiver';
  * @see https://art-net.org.uk/ (ArtDMX / OpDmx = 0x5000)
  */
 
-const ARTNET_PORT = 6454;
-/** "Art-Net" + null terminator (8 bytes) */
-const ARTNET_ID = Buffer.from('Art-Net\0', 'latin1');
-/** OpDmx opcode, stored little-endian in the packet */
-const OP_DMX = 0x5000;
 /** Minimum valid ArtDMX packet: 18-byte header + at least some data */
 const MIN_PACKET = 18;
 
@@ -69,6 +66,8 @@ class ArtNet extends DmxReceiver {
     if (!msg.subarray(0, 8).equals(ARTNET_ID)) return null;
     // Opcode is little-endian; only ArtDMX is handled for now (ArtPoll etc. ignored)
     if (msg.readUInt16LE(8) !== OP_DMX) return null;
+    // Beam's own sender mode, heard back by broadcast.
+    if (artnetSender.isOwn(rinfo)) return null;
 
     const subUni = msg.readUInt8(14);
     const net = msg.readUInt8(15);

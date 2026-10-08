@@ -15,7 +15,7 @@
  * named in the line's text.
  */
 
-import { cieToHex, attributeLabel } from './fixture_parts';
+import { cieToHex, attributeLabel, prettyOf } from './fixture_parts';
 import { fold } from '../fixture_guide';
 import { stateAt } from './dmx_engine';
 import {
@@ -101,12 +101,16 @@ function choicesAndRest(fn, bytes, choices, choicePart, restPart) {
 
 /**
  * A slot's picture as the range cards show one, from the file's own wheel
- * images, or null where the file has none or they were not loaded.
+ * images, or null where the file has none or they were not loaded. A GDTF
+ * image is light on its own metal with a transparent holder round it, so it
+ * is `light`: drawn as it is, not over white.
  */
 function slotImage(type, slot, title) {
   const url = slot && slot.mediaFileName && type.wheelImages
     ? type.wheelImages.get(slot.mediaFileName) : null;
-  return url ? { url, title, named: true } : null;
+  return url ? {
+    url, title, named: true, light: true,
+  } : null;
 }
 
 /** A colour slot's colour: its filter's, which is the measured one, else its own. */
@@ -252,7 +256,7 @@ function partsOf(type, fn, bytes) {
   // span is only said where it is a quantity -- a speed or a time; a
   // control's 0 to 1 is a placeholder.
   const kind = /^Control\d+$/.test(a) ? 'Maintenance' : 'Effect';
-  const named = !fn.name || fn.name === a ? attributeLabel(a) : fn.name;
+  const named = !fn.name || fn.name === a ? attributeLabel(a, prettyOf(type, a)) : fn.name;
   const quantity = /Speed|Time|Rate|Fade/.test(a) && fn.physicalFrom !== fn.physicalTo;
   const restText = `${words(named)}${quantity ? ` ${span}` : ''}`;
   const choicePart = (s) => part(s.dmxFrom, s.dmxTo, kind, words(s.name));
@@ -309,7 +313,7 @@ export default function gdtfGuide(type, engine) {
     }
     const c = slot.channel;
     const attribute = (c.channel.logicalChannels[0] || {}).attribute || 'NoFeature';
-    const label = attributeLabel(attribute);
+    const label = attributeLabel(attribute, prettyOf(type, attribute));
     const name = c.instanceOf ? `${c.instanceOf} ${label}` : label;
     if (slot.byte > 0) {
       channels.push({

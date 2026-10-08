@@ -123,12 +123,40 @@ const HEAD_CATEGORIES = [FIXTURE_TYPES.MOVING_HEAD, FIXTURE_TYPES.STATIC];
 const DEFAULT_COLOR_TEMP = 8000;
 
 /**
- * Where a hand-focused lens starts, 0 fully out to 100 fully in. Halfway gives
- * close to the edge a head without any focus control is drawn with.
+ * The distances a hand-focused lens is set to, in metres: where a new one
+ * starts, and the range it takes. The nearest is the lens's nearest focus;
+ * at the farthest the blur is under a hundredth of a pool at any throw, which
+ * is infinity in all but name.
  *
  * @constant {Number}
  */
-const DEFAULT_MANUAL_FOCUS = 50;
+const DEFAULT_FOCUS_DISTANCE = 5;
+const FOCUS_DISTANCE_MIN = 1;
+const FOCUS_DISTANCE_MAX = 100;
+
+/**
+ * A hand-focused lens's distance, held to the range.
+ *
+ * @param {*} metres
+ * @returns {Number}
+ */
+function focusDistanceOf(metres) {
+  const value = Number(metres);
+  if (!Number.isFinite(value)) return FOCUS_DISTANCE_MAX;
+  return Math.min(Math.max(value, FOCUS_DISTANCE_MIN), FOCUS_DISTANCE_MAX);
+}
+
+/**
+ * The distance a show saved as a percentage meant: 0 the nearest focus to
+ * 100 infinity, evenly in 1 / distance, as a focus channel runs.
+ *
+ * @param {Number} percent
+ * @returns {Number} metres
+ */
+function focusDistanceFromPercent(percent) {
+  const share = Math.min(Math.max(Number(percent) || 0, 0), 100) / 100;
+  return focusDistanceOf(share >= 1 ? Infinity : FOCUS_DISTANCE_MIN / (1 - share));
+}
 
 /**
  * Stand-in for a fixture the renderer has no model for.
@@ -281,9 +309,13 @@ class Fixture extends withTransform(Proxify) {
        * see Light's own accessor for why it is not given away freely.
        */
       this._castsShadow = !!data.castsShadow;
-      /** Where a hand-set lens is wound to: see `focus`. */
-      this._focus = data.focus != null && Number.isFinite(Number(data.focus))
-        ? Number(data.focus) : DEFAULT_MANUAL_FOCUS;
+      /** Where a hand-set lens is focused: see `focusDistance`. */
+      this._focusDistance = DEFAULT_FOCUS_DISTANCE;
+      if (data.focusDistance != null && Number.isFinite(Number(data.focusDistance))) {
+        this._focusDistance = focusDistanceOf(data.focusDistance);
+      } else if (data.focus != null && Number.isFinite(Number(data.focus))) {
+        this._focusDistance = focusDistanceFromPercent(data.focus);
+      }
       /** Hidden from the scene: see `hidden`. */
       this._hidden = !!data.hidden;
       /**
@@ -436,7 +468,7 @@ class Fixture extends withTransform(Proxify) {
       groupId: this.group ? this.group.id : undefined,
       structureId: this.structure ? this.structure.id : undefined,
       castsShadow: this._castsShadow,
-      focus: this.hasManualFocus ? this._focus : undefined,
+      focusDistance: this.hasManualFocus ? this._focusDistance : undefined,
       hidden: this._hidden || undefined,
       // Only the parked values, never what DMX happens to be saying -- the
       // same line the app already draws between an address and the wire.
@@ -576,7 +608,7 @@ class Fixture extends withTransform(Proxify) {
     // As a new fixture starts: every channel at nought, then what was set
     // by hand, then every channel told to the head, which the mode change
     // has put back to how a new head starts.
-    if (this.hasManualFocus && this._3DModel) this._3DModel.focus = this._focus;
+    if (this.hasManualFocus && this._3DModel) this._3DModel.focusDistance = this._focusDistance;
     this.channels.forEach((channel) => {
       this.setChannel(channel.id - 1, 0);
     });
@@ -1005,6 +1037,18 @@ class Fixture extends withTransform(Proxify) {
   }
 
   /**
+   * The value a channel holds now, whoever wrote it last.
+   *
+   * @param {Number} index 0-based channel index
+   * @returns {Number} 0-255
+   */
+  channelValue(index) {
+    if (this.channels instanceof BarChannels) return this.channels.valueAt(index);
+    const channel = this.channels && this.channels[index];
+    return channel ? (Number(channel.value.DMX) || 0) : 0;
+  }
+
+  /**
    * Sets a channel by hand, and remembers it.
    *
    * The value takes effect at once and is written into the show. It is not
@@ -1236,7 +1280,7 @@ class Fixture extends withTransform(Proxify) {
     // Pushed down after building: a fixture reloaded from a show carries its
     // own answer, and the renderer starts every light with shadows off.
     light.castsShadow = this._castsShadow;
-    if (this.hasManualFocus) light.focus = this._focus;
+    if (this.hasManualFocus) light.focusDistance = this._focusDistance;
   }
 
   /**
@@ -1463,6 +1507,8 @@ class Fixture extends withTransform(Proxify) {
         // The travel across every pan and tilt function of the mode, as a
         // GDTF fixture's is found.
         const inputs = headInputs(type, mode);
+        // Before the light, which asks the mode whether the lens is wound by hand.
+        this._engine = markRaw(new DmxEngine(type, mode));
         this.createLight({
           minAngle: lens ? lens.degreesMinMax[0] : 10,
           maxAngle: lens ? lens.degreesMinMax[1] : 25,
@@ -1480,7 +1526,6 @@ class Fixture extends withTransform(Proxify) {
           // many of each there are.
           wheels: this.OFLData.wheels || {},
         }, true);
-        this._engine = markRaw(new DmxEngine(type, mode));
         this._dispatch = this.dispatchFor();
         break;
       }
@@ -1614,32 +1659,35 @@ class Fixture extends withTransform(Proxify) {
   }
 
   /**
-   * Whether the profile says the lens is focused by hand. OFL has no word for
-   * it, so a profile marks it Beam's way: `physical.lens.focus: "manual"`.
+   * Whether the lens is focused by hand: the mode the fixture runs in has a
+   * focus channel with no DMX address. A GDTF file says so that way, and a
+   * profile's translation does for `physical.lens.focus: "manual"`.
    *
    * @readonly
    * @type {Boolean}
    */
   get hasManualFocus() {
-    const lens = ((this.OFLData || {}).physical || {}).lens || {};
-    return lens.focus === 'manual';
+    const channels = this._engine ? this._engine.mode.channels : [];
+    return channels.some((c) => !c.offsets
+      && c.logicalChannels.some((l) => /^Focus\d+$/.test(l.attribute)));
   }
 
   /**
-   * Where a hand-focused lens is wound to, 0 fully out to 100 fully in. On
-   * the placement, because each unit's lens is set on its own.
+   * The distance a hand-focused lens is focused at, in metres: where the
+   * gobo is sharp. On the placement, because each unit's lens is set on its
+   * own.
    *
    * @type {Number}
    */
-  set focus(value) {
-    this._focus = Math.min(Math.max(Number(value) || 0, 0), 100);
-    if (this.hasManualFocus && this._3DModel && 'focus' in this._3DModel) {
-      this._3DModel.focus = this._focus;
+  set focusDistance(value) {
+    this._focusDistance = focusDistanceOf(value);
+    if (this.hasManualFocus && this._3DModel && 'focusDistance' in this._3DModel) {
+      this._3DModel.focusDistance = this._focusDistance;
     }
   }
 
-  get focus() {
-    return this._focus;
+  get focusDistance() {
+    return this._focusDistance;
   }
 
   /**

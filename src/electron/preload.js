@@ -61,6 +61,23 @@ contextBridge.exposeInMainWorld('artnet', {
    * @returns {Promise<{sources: Array, conflicts: Array}>}
    */
   sources: () => ipcRenderer.invoke('dmx:sources'),
+  /**
+   * Turns sender mode on or off: inbound frames are held back and Beam sends
+   * sACN instead.
+   *
+   * @param {Boolean} enabled
+   * @param {Object} [opts] `{ protocol: 'sacn'|'artnet', target }`, the target
+   *   an Art-Net address, broadcast when empty
+   * @returns {Promise<Boolean>} whether Beam is now sending
+   */
+  setSending: (enabled, opts) => ipcRenderer.invoke('dmx:set-sending', enabled, opts),
+  /**
+   * Sends one universe while in sender mode.
+   *
+   * @param {Number} universe Beam universe, counted from 0
+   * @param {Uint8Array} data 512 slots
+   */
+  send: (universe, data) => ipcRenderer.send('dmx:send', universe, data),
 });
 
 /**

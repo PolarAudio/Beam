@@ -56,6 +56,9 @@ const SHUTTER_EFFECTS = [
 /** Degrees per second as revolutions per minute. */
 const RPM_PER_DEGREE_PER_SECOND = 60 / 360;
 
+/** The shake Amplitude the spec's attribute definitions give, percent. */
+const STANDARD_SHAKE_AMPLITUDE = 20;
+
 /** A value's place in its function's range, 0 to 1. */
 function fractionOf(c) {
   const { fn } = c.state;
@@ -85,10 +88,11 @@ function oflValues(c) {
  * @param {Object} c a channel instance with a state
  * @param {Object} origins lowest physical pan and tilt, which the head's
  *   zero is
+ * @param {Object} [type] the fixture type, for its attribute definitions
  * @returns {{kind: String, values: Object}|null} null for anything the head
  *   does not draw
  */
-function gdtfAction(c, origins) {
+function gdtfAction(c, origins, type = null) {
   const { fn, set, physical } = c.state;
   const a = fn.attribute;
   if (a === 'Dimmer') return { kind: 'Intensity', values: { intensity: physical } };
@@ -115,15 +119,27 @@ function gdtfAction(c, origins) {
       return { kind: 'WheelSlot', values: { wheel: fn.wheel, slotNumber: set.wheelSlotIndex } };
     }
     if (suffix === 'SelectShake' || suffix === 'WheelShake') {
-      return {
-        kind: 'WheelShake',
-        values: {
-          wheel: fn.wheel,
-          slotNumber: set && set.wheelSlotIndex ? set.wheelSlotIndex : 1,
-          isShaking: suffix === 'SelectShake' ? 'slot' : 'wheel',
-          rate: physical,
-        },
+      const values = {
+        wheel: fn.wheel,
+        slotNumber: set && set.wheelSlotIndex ? set.wheelSlotIndex : 1,
+        isShaking: suffix === 'SelectShake' ? 'slot' : 'wheel',
+        rate: physical,
       };
+      // How far the shake swings, where the file says: the attribute's
+      // Amplitude, in percent of the image, across the function as its rate.
+      // The spec's own definition gives 20, which GDTF Builder copies into
+      // every file, also written 0.2: that is the template, not the fixture,
+      // and leaves the swing to the head.
+      const definition = type && type.index ? type.index.attribute.get(a) : null;
+      const amplitude = definition
+        ? definition.subPhysicalUnits.find((u) => u.type === 'Amplitude') : null;
+      const template = (v) => v === STANDARD_SHAKE_AMPLITUDE
+        || v === STANDARD_SHAKE_AMPLITUDE / 100;
+      if (amplitude && !(template(amplitude.physicalFrom) && template(amplitude.physicalTo))) {
+        values.shakeAmplitude = amplitude.physicalFrom
+          + (amplitude.physicalTo - amplitude.physicalFrom) * fractionOf(c);
+      }
+      return { kind: 'WheelShake', values };
     }
   }
   if (wheel) {
@@ -143,6 +159,19 @@ function gdtfAction(c, origins) {
     }
   }
 
+  if (a === 'PositionMSpeed') {
+    // The spec gives the speed no unit. A file that states it counts in
+    // shares of the head's top speed, 1 being full; one left at the spec's
+    // 0 to 1 has stated nothing, and runs fast to slow across its range as
+    // a profile's speed channel does. A function with no share above zero
+    // is a setting that names a speed mode rather than a speed, and a share
+    // of zero would never move.
+    if (fn.physicalFrom <= 0 && fn.physicalTo <= 0) return null;
+    if (fn.physicalFrom === 0 && fn.physicalTo === 1) {
+      return { kind: 'PanTiltSpeed', values: { panTiltSpeed: 100 * (1 - fractionOf(c)) } };
+    }
+    return { kind: 'PanTiltSpeed', values: { panTiltShare: physical } };
+  }
   if (/^Shutter\d+$/.test(a)) {
     const closed = namesClosed(nameOf(fn, set));
     return {
@@ -249,6 +278,9 @@ export default class HeadDispatch {
    * @param {Object} c a channel instance
    */
   applyChannel(c) {
+    // A focus with no DMX address is a lens wound by hand: the placement
+    // sets it, and the file's default for it is not a setting.
+    if (!c.offsets && c.functions.some((f) => /^Focus\d+$/.test(f.attribute))) return;
     const heads = this.targetsOf(c);
     if (heads.length === 1) {
       this.applyTo(heads[0], c);
@@ -288,7 +320,7 @@ export default class HeadDispatch {
     if (state) {
       action = state.fn.ofl
         ? { kind: state.fn.ofl.type, values: oflValues(c), inDegrees: !!state.fn.ofl.inUnit.zoom }
-        : gdtfAction(c, this.origins);
+        : gdtfAction(c, this.origins, this.engine.type);
     }
     const kind = action ? action.kind : null;
 
@@ -365,7 +397,11 @@ export default class HeadDispatch {
         break;
       case 'PanTiltSpeed':
         if (typeof head.setPanTiltSpeed === 'function') {
-          head.setPanTiltSpeed({ speed: values.panTiltSpeed, duration: values.panTiltDuration });
+          head.setPanTiltSpeed({
+            speed: values.panTiltSpeed,
+            duration: values.panTiltDuration,
+            share: values.panTiltShare,
+          });
           this.panTiltSpeed = c;
         }
         break;

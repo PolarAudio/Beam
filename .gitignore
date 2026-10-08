@@ -42,3 +42,6 @@ yarn-error.log*
 
 # Session scratch space: probes, screenshots, throwaway scripts.
 scratchpad/
+
+# Dev tool output: logs and screenshots
+/tools/dev/out

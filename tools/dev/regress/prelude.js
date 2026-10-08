@@ -4,7 +4,17 @@
   const gp = document.querySelector('#app').__vue_app__.config.globalProperties;
   const show = gp.$show.__v_raw;
   const vis = show.visualizerHandle;
-  const M = (p) => import(p).then((m) => m.default);
+  // The copy of a module the app is running: after a hot reload that is the
+  // last `?t=` URL loaded, and a bare import would get a different instance
+  // whose state is not the scene's.
+  const live = (p) => {
+    const loaded = performance.getEntriesByType('resource')
+      .map((e) => e.name)
+      .filter((n) => n.split('?')[0].endsWith(p));
+    return loaded.length ? loaded[loaded.length - 1] : p;
+  };
+  const M = (p) => import(live(p)).then((m) => m.default);
+  window.__live = live;
   const bt = {
     show,
     vis,

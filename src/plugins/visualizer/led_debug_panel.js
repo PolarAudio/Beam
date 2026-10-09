@@ -98,6 +98,7 @@ export default function createLEDDebugPanel(visualizer, host) {
     strictPatch: PatchSingleton.strict,
     // Mover beams
     beamOcclusion: Light.occlusion(),
+    beamHalo: true,
     beamDebug: 0,
     // Laser
     laserAir: Laser.scatterGain(),
@@ -338,6 +339,11 @@ export default function createLEDDebugPanel(visualizer, host) {
   beam.add(state, 'beamOcclusion')
     .name('stop at surfaces')
     .onChange((v) => Light.setOcclusion(v));
+  // The beams' light scattered a second time, for comparing with and
+  // without; not stored. See beam_halo.js.
+  beam.add(state, 'beamHalo')
+    .name('scattered glow')
+    .onChange((v) => visualizer.setBeamHalo(v));
   // One shader term as greyscale, to see which one carries a fault.
   beam.add(state, 'beamDebug', {
     beam: 0,

@@ -164,6 +164,16 @@ const float BEAM_FAR_S = 1.0e6;
  * with a single beam.
  */
 uniform int debugTerm;
+/**
+ * Drawing the source of the beams' halo rather than the beams. The halo is the
+ * beam's light scattered out and then scattered again towards the eye, so the
+ * phase is that pair's (\`haloPhase\`), not the single one towards the eye;
+ * alpha carries the light's luminance times the distance to it, which the
+ * halo needs to size its spread in metres. See beam_halo.js.
+ */
+uniform bool haloSource;
+/** Full-frame pixels per pixel of the target being drawn, for the depth read. */
+uniform float fragScale;
 float dbgU = 0.0;
 float dbgProfile = 0.0;
 float dbgThrough = 0.0;
@@ -725,7 +735,7 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
   // is that over the cosine to the axis. 1.0 is the cleared far plane, open
   // air; 0.0 means the texture carries no depth at all, and that has to read
   // as no clip rather than as a surface at the near plane.
-  vec2 uv = gl_FragCoord.xy / vec2(textureSize(sceneDepth, 0));
+  vec2 uv = gl_FragCoord.xy * fragScale / vec2(textureSize(sceneDepth, 0));
   float stored = texture2D(sceneDepth, uv).x;
   if (stored > 0.0 && stored < 1.0) {
     float along = max(dot(viewDir, cameraDir), 1e-3);
@@ -917,7 +927,10 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
     vec2 sides = beamStencil(aperture, apertureNext - aperture, lod) * lit;
     float profileHere = sides.x + sides.y;
     float spread = 1.0 / (z + apexBehind);
-    float extinction = exp(-extinctionPerMetre * z);
+    // Beer-Lambert both ways: from the lens to the sample, and from the
+    // sample to the eye. What the second leg takes is what the haze
+    // scatters again on the way, the halo's light; see beam_halo.js.
+    float extinction = exp(-extinctionPerMetre * (z + max(s, 0.0)));
     float field = hazeField(rayOrigin + viewDir * s);
     // The irradiance here per candela: from the lens's centre, as the pool
     // has it, and as much thinner as the blur is wider than the image, so
@@ -953,6 +966,32 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
   dbgIrradiance = sumIrradiance / samples;
   dbgField = sumField / samples;
   return sumLight;
+}
+
+/**
+ * @function haloPhase
+ * @brief the phase the halo's source is drawn with
+ * @param float cosView the beam's travel dotted with the direction to the eye
+ * @returns float per steradian
+ *
+ * The halo is the beam's light scattered twice: out of the beam at an angle
+ * t1 to its axis, then towards the eye. For the air beside the beam where a
+ * view ray passes closest, the second angle is acos(cos t1 cosView), so the
+ * pair weighs Q = integral over t1 of p(t1) p(acos(cos t1 cosView)). The
+ * kernel in beam_halo.js was worked out for even scattering both times, where
+ * the same integral is pi / (4 pi)^2; drawing the source with 4 Q instead of
+ * the even 1 / (4 pi) carries the difference. Side-on that is 0.70 of the
+ * even value, looking down a beam towards its lens 33 times it. Thirty-two
+ * steps hold the forward lobe; it runs only in the small halo draw.
+ */
+float haloPhase(float cosView) {
+  const int STEPS = 32;
+  float sum = 0.0;
+  for (int i = 0; i < STEPS; i++) {
+    float c = cos(M_PI * (float(i) + 0.5) / float(STEPS));
+    sum += hazeLobes(c) * hazeLobes(c * cosView);
+  }
+  return 4.0 * sum * M_PI / float(STEPS);
 }
 
 void main() {
@@ -1000,7 +1039,8 @@ void main() {
   // How the air throws this light at the eye: the haze's phase function, per
   // steradian, on the angle between the beam's travel and the way back to
   // the camera.
-  float phase = hazeLobes(dot(safeNormalize(vDirection), -viewDir));
+  float cosView = dot(safeNormalize(vDirection), -viewDir);
+  float phase = haloSource ? haloPhase(cosView) : hazeLobes(cosView);
 
   // Luminance in from the air: the scattering coefficient, the phase and
   // the light along the ray, on the light field's scale. The peak candela is
@@ -1013,5 +1053,8 @@ void main() {
   // Each side of a colour split in its own colour, weighted by how much of
   // this ray's light it carried. Light adds, so this is exact.
   vec3 rgbColor = mix(vColor, vColorB.rgb, farShare) * intensity;
-  gl_FragColor = vec4(rgbColor * vIntensity, 1.0);
+  vec3 radiance = rgbColor * vIntensity;
+  gl_FragColor = haloSource
+    ? vec4(radiance, dot(radiance, vec3(0.2126, 0.7152, 0.0722)) * sAlong)
+    : vec4(radiance, 1.0);
 }

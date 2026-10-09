@@ -44,7 +44,9 @@ const lengths = (ofl) => normaliseMatrixProfile(ofl).modes.map((m) => m.channels
   check('proteus: pan on the yoke', t.modes[0].channels.find((c) => c.logicalChannels[0].attribute === 'Pan').geometry, 'Yoke');
   const { beam } = t.index.geometry.get('Beam');
   check('proteus: lumens as stated', beam.luminousFlux, 23000);
-  check('proteus: written is only what OFL states', beam.explicit, ['PowerConsumption', 'LuminousFlux', 'ColorTemperature', 'BeamAngle', 'FieldAngle']);
+  // No FieldAngle: OFL has one lens figure, and a field angle that is only a
+  // copy of it is not stated, or the head would take it for a hard edge.
+  check('proteus: written is only what OFL states', beam.explicit, ['PowerConsumption', 'LuminousFlux', 'ColorTemperature', 'BeamAngle']);
   const zoom = t.modes[0].channels.find((c) => c.logicalChannels[0].attribute === 'Zoom').logicalChannels[0].functions[0];
   check('proteus: zoom narrow..wide is the lens range', [zoom.physicalFrom, zoom.physicalTo], [2, 40]);
   check('proteus: 16-bit pan in the extended mode', t.modes[2].channels.find((c) => c.logicalChannels[0].attribute === 'Pan').offsets.length, 2);

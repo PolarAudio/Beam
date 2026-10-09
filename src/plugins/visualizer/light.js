@@ -303,7 +303,7 @@ let occlusionEnabled = true;
  * air scatters out of a beam towards the eye and how fast the beam is
  * eaten on its way.
  */
-const HAZE_SCATTER_AT_FULL = Math.log(50) / 10;
+export const HAZE_SCATTER_AT_FULL = Math.log(50) / 10;
 
 /**
  * The beam fragment shader, with the scene's haze configuration prepended.
@@ -490,6 +490,8 @@ let baseMesh;
 let yokeMesh;
 let headMesh;
 let beamMesh;
+/** Scratch for the clear colour round the halo's draw. */
+const haloClearColor = new THREE.Color();
 let capMesh;
 /** The lens faces a file draws as rectangles; the same slots as `capMesh`. */
 let rectCapMesh;
@@ -2885,6 +2887,53 @@ class Light {
   }
 
   /**
+   * Draws the beams as the source of their halo into the target: the light
+   * they scatter out in every direction, distance in alpha. The same mesh,
+   * the same uniforms, drawn a second time into a small target; see
+   * beam_halo.js.
+   *
+   * @public
+   * @param {THREE.WebGLRenderer} renderer
+   * @param {THREE.Camera} camera the view
+   * @param {THREE.WebGLRenderTarget} target where it goes
+   * @param {Number} fragScale full-frame pixels per target pixel
+   * @returns {Boolean} whether there were beams to draw
+   */
+  static renderHaloSource(renderer, camera, target, fragScale) {
+    if (!beamMesh || !beamMesh.count) return false;
+    const { material } = beamMesh;
+    const { uniforms } = material;
+    const debug = uniforms.debugTerm.value;
+    const blending = [material.blending, material.blendSrc, material.blendDst,
+      material.blendSrcAlpha, material.blendDstAlpha];
+    // Plain sums, alpha included: alpha carries luminance times distance, and
+    // additive blending would multiply the colour by it.
+    material.blending = THREE.CustomBlending;
+    material.blendSrc = THREE.OneFactor;
+    material.blendDst = THREE.OneFactor;
+    material.blendSrcAlpha = THREE.OneFactor;
+    material.blendDstAlpha = THREE.OneFactor;
+    uniforms.haloSource.value = true;
+    uniforms.fragScale.value = fragScale;
+    uniforms.debugTerm.value = 0;
+
+    const clearColor = renderer.getClearColor(haloClearColor);
+    const clearAlpha = renderer.getClearAlpha();
+    renderer.setRenderTarget(target);
+    renderer.setClearColor(0x000000, 0);
+    renderer.clear(true, false, false);
+    renderer.render(beamMesh, camera);
+    renderer.setClearColor(clearColor, clearAlpha);
+
+    [material.blending, material.blendSrc, material.blendDst,
+      material.blendSrcAlpha, material.blendDstAlpha] = blending;
+    uniforms.haloSource.value = false;
+    uniforms.fragScale.value = 1;
+    uniforms.debugTerm.value = debug;
+    return true;
+  }
+
+  /**
    * Draws one shader term as greyscale instead of the beam. A diagnostic
    * for the debug panel, never stored; see `debugTerm` in the shader.
    *
@@ -3232,6 +3281,8 @@ class Light {
         // and a surface it lights are on the same exposure.
         beamUnits: { value: SPOTLIGHT_PHYSICALLY_CORRECT_INTENSITY },
         hazeScatter: { value: HAZE_SCATTER_AT_FULL },
+        haloSource: { value: false },
+        fragScale: { value: 1 },
         // Which shader term the debug panel is drawing instead of the beam.
         debugTerm: { value: 0 },
         glowFactor: {
@@ -3631,6 +3682,8 @@ class Light {
  * is built, so there is nothing to catch up on.
  */
 function syncEnvironment() {
+  LightField.uniforms.lightFieldExtinction.value = SceneEnv.hazeEnabled
+    ? HAZE_SCATTER_AT_FULL * SceneEnv.hazeAmount : 0;
   if (!beamMesh || !beamMesh.material || !beamMesh.material.uniforms) return;
   const { uniforms } = beamMesh.material;
   uniforms.fogState.value = SceneEnv.hazeEnabled;

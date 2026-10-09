@@ -104,6 +104,7 @@ import {
   installAmbient, setHouseBrightness, setHouseState, setEnvironments,
 } from './ambient';
 import AmbientHazeEffect from './ambient_haze';
+import BeamHaloEffect from './beam_halo';
 import Perf from './perf_overlay';
 import Preferences from './preferences';
 import { refreshAddressFormat } from '../../models/DMX/address_format';
@@ -178,6 +179,7 @@ let bloomManual = false;
  * can reach it. Module-scoped for the same reason the composer is.
  */
 let ambientHazeEffect = null;
+let beamHaloEffect = null;
 
 /**
  * Multisample count for the composer's render target.
@@ -1384,6 +1386,11 @@ class Visualizer {
     // depth buffer, which is why it cannot be a plain material on geometry.
     ambientHazeEffect = new AmbientHazeEffect(this.camera);
 
+    // The beams' light scattered a second time, the glow beside each beam.
+    // Light in the air, so before the room's haze veils it and before bloom
+    // and the tone curve; it holds only the beams. See beam_halo.js.
+    beamHaloEffect = new BeamHaloEffect(this.camera);
+
     // Before the haze, because a projected image is light arriving at a surface
     // and the air in front of it should veil it like anything else. Before
     // bloom for the same reason a lamp is: a bright projection on stone glares.
@@ -1413,8 +1420,8 @@ class Visualizer {
     // light in the scene, and its orange is the orange it is drawn in.
     selectionOutlineEffect = new SelectionOutlineEffect(this.camera);
     const effects = bloomEffect
-      ? [projectorEffect, ambientHazeEffect, strobeWashEffect, bloomEffect, toneMapping]
-      : [projectorEffect, ambientHazeEffect, strobeWashEffect, toneMapping];
+      ? [projectorEffect, beamHaloEffect, ambientHazeEffect, strobeWashEffect, bloomEffect, toneMapping]
+      : [projectorEffect, beamHaloEffect, ambientHazeEffect, strobeWashEffect, toneMapping];
     effects.push(selectionOutlineEffect);
     mainPass = new EffectPass(this.camera, ...effects);
     finalComposer.addPass(mainPass);
@@ -1926,7 +1933,7 @@ class Visualizer {
     [renderPass, laserPass, mainPass].forEach((pass) => {
       if (pass) pass.mainCamera = camera;
     });
-    [ambientHazeEffect, projectorEffect, laserEffect, selectionOutlineEffect].forEach((effect) => {
+    [ambientHazeEffect, beamHaloEffect, projectorEffect, laserEffect, selectionOutlineEffect].forEach((effect) => {
       if (effect) effect.camera = camera;
     });
   }
@@ -2250,6 +2257,18 @@ class Visualizer {
    * @param {Number} value
    */
   // eslint-disable-next-line class-methods-use-this
+  /**
+   * Switches the beams' halo, for comparing with and without and as a
+   * rollback. Not stored.
+   *
+   * @public
+   * @param {Boolean} on
+   */
+  // eslint-disable-next-line class-methods-use-this
+  setBeamHalo(on) {
+    if (beamHaloEffect) beamHaloEffect.on = !!on;
+  }
+
   setBloom(key, value) {
     if (!bloomEffect) return;
     bloomManual = true;

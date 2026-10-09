@@ -183,6 +183,9 @@ const uniforms = {
   lightFieldCount: { value: 0 },
   // Sources write candela on the lux scale; light falls as the inverse square.
   lightFieldDecay: { value: 2 },
+  // The haze's extinction per metre on the way from a lens to a surface;
+  // 0 with no haze. The beam in the air pays the same on its own path.
+  lightFieldExtinction: { value: 0 },
   // The mover depth atlas, set by `Light.renderDepth` each frame.
   lightFieldDepth: { value: null },
   lightFieldDepthFar: { value: 1 },
@@ -245,7 +248,8 @@ const FIELD_LIGHT_CHUNK = /* glsl */`
     float angleCos = dot( fieldLight.direction, spotDirection );
     if ( angleCos <= packedDirection.w ) continue;
 
-    float attenuation = getDistanceAttenuation( lightDistance, packedPosition.w, lightFieldDecay );
+    float attenuation = getDistanceAttenuation( lightDistance, packedPosition.w, lightFieldDecay )
+      * exp( -lightFieldExtinction * lightDistance );
     if ( attenuation <= 0.0 ) continue;
     // A colour wheel split: how much of this point's light is the far colour.
     float farShare = 0.0;
@@ -344,6 +348,7 @@ const FIELD_PARS_CHUNK = /* glsl */`
 uniform sampler2D lightField;
 uniform int lightFieldCount;
 uniform float lightFieldDecay;
+uniform float lightFieldExtinction;
 uniform sampler2D lightFieldDepth;
 uniform float lightFieldDepthFar;
 uniform float lightFieldDepthBias;

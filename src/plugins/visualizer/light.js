@@ -194,14 +194,7 @@ function gelColour(slot) {
  */
 const GOBO_DEFOCUS_MAX = GOBO_BLUR_LEVELS - 1;
 
-/**
- * The edge of a lens that can be focused, at its focus: hard, as a focused
- * spot throws. A gobo's pattern can reach 99 % of the radius and stays
- * crisp there, which a softer edge would eat. Defocus
- * is not a softer penumbra but the lens's own blur, `FOCUS_NEAR` below. Fully
- * soft is where frost takes the edge.
- */
-const PENUMBRA_FOCUSED = 0.01;
+/** The edge under full frost: all falloff, from the axis out. */
 const PENUMBRA_DEFOCUSED = 1.0;
 
 /**
@@ -353,15 +346,18 @@ const PLAUSIBLE_LUMENS_PER_WATT = [5, 150];
 /** Light spreads as the inverse square of the distance. */
 const SPOTLIGHT_PHYSICALLY_CORRECT_DECAY = 2.0;
 /**
- * The pool's penumbra for a fixture whose lens cannot be focused, which is
- * taken as focused at infinity. One that can be focused has
- * `PENUMBRA_FOCUSED` and the lens's blur.
+ * The edge of a light whose file does not describe one: the falloff from
+ * the inner cone to the field, as a fraction of the field's radius. A file
+ * with a beam angle (half) inside its field angle (a tenth) sets its own,
+ * see `headInputs`; the lens's blur then softens it with distance.
  *
- * Shapes the beam in the air as well, through `writeBeamProfile`. Half:
- * a plateau to the middle of the radius, a slope from there to the edge.
- * At 1.2 the plateau was only the inner fifth and two overlapping pools
- * summed to a saddle the eye drew as dark curves along each rim; a wide
- * plateau adds flat, which is what two blurred discs do in an image editor.
+ * Shapes the pool and the beam in the air alike, through `writeBeamProfile`.
+ * Half: a plateau to the middle of the radius, a slope from there to the
+ * edge. At 1.2 the plateau was only the inner fifth and two overlapping
+ * pools summed to a saddle the eye drew as dark curves along each rim. A
+ * cliff edge (0.01) was tried for every lens with a focus channel: it drew
+ * each beam as a flat slab, and where two slabs met at a beam-width's
+ * spacing the end of one stood as a dark line against the other.
  */
 const SPOTLIGHT_PHYSICALLY_CORRECT_PENUMBRA = 0.5;
 /** Per-light shadow map resolution. Every casting light costs one depth pass. */
@@ -905,16 +901,22 @@ class Light {
      * when there is one; without a wheel the prism has three.
      */
     /**
-     * How blurred the gobo image is from the focus, in mip levels of the
-     * pattern: 0 in focus. Carried in the prism data's spare slot.
+     * How blurred the gobo image is by frost, in mip levels of the pattern:
+     * 0 without. Carried in the prism data's spare slot. Focus blurs the
+     * gobo through the lens's own blur in the shaders, not here.
      */
-    this._goboDefocus = Light.goboDefocusFor(SPOTLIGHT_PHYSICALLY_CORRECT_PENUMBRA);
+    this._goboDefocus = 0;
+    /**
+     * The edge the fixture's file describes, or the default; see
+     * `profilePenumbra`. What the frost softens from.
+     */
+    this._profilePenumbra = Light.profilePenumbra(data.edgePenumbra);
     /**
      * The lens before frost: the field's half angle from the zoom, and the
-     * penumbra from the focus. Frost is applied over both; see `applyLensAngle` and `applyLensEdge`.
+     * edge from the profile. Frost is applied over both; see `applyLensAngle` and `applyLensEdge`.
      */
     this._baseAngle = null;
-    this._basePenumbra = SPOTLIGHT_PHYSICALLY_CORRECT_PENUMBRA;
+    this._basePenumbra = this._profilePenumbra;
     /**
      * Where the lens is focused, as 1 / distance in 1/m: 0 is infinity,
      * which is where a lens that cannot be focused is taken to be.
@@ -1315,9 +1317,12 @@ class Light {
    * otherwise.
    *
    * @public
-   * @param {Object} inputs optionally `{ minAngle, maxAngle, lumens }`
+   * @param {Object} inputs optionally `{ minAngle, maxAngle, edgePenumbra, lumens }`
    */
   setModeInputs(inputs) {
+    if (inputs.edgePenumbra !== undefined) {
+      this._profilePenumbra = Light.profilePenumbra(inputs.edgePenumbra);
+    }
     this.resetOptics();
     if (inputs.minAngle > 0 && inputs.maxAngle > 0) {
       this._minAngle = inputs.minAngle;
@@ -1353,7 +1358,7 @@ class Light {
     this._frostWheel = null;
     this._frostEffect = null;
     this.applyFrost(0);
-    this._basePenumbra = SPOTLIGHT_PHYSICALLY_CORRECT_PENUMBRA;
+    this._basePenumbra = this._profilePenumbra;
     this._invFocus = 0;
     this.applyLensEdge();
     this.strobeEffect = 'Open';
@@ -1479,7 +1484,7 @@ class Light {
   }
 
   /**
-   * Writes the edge and the gobo blur, the focus's softened by the frost.
+   * Writes the edge and the gobo blur, the profile's softened by the frost.
    * Full frost is a fully soft edge, and a gobo blurred past the atlas's
    * softest level and on into its mean, so the pattern is gone and only its
    * share of the light is left. The blur carries that as defocus past
@@ -1490,9 +1495,8 @@ class Light {
   applyLensEdge() {
     const f = this._frost;
     const penumbra = this._basePenumbra + (PENUMBRA_DEFOCUSED - this._basePenumbra) * f;
-    const defocus = Light.goboDefocusFor(this._basePenumbra);
     this._spotLight.penumbra = penumbra;
-    this._goboDefocus = defocus + (GOBO_DEFOCUS_MAX + 1 - defocus) * f;
+    this._goboDefocus = (GOBO_DEFOCUS_MAX + 1) * f;
     Light.writeBeamProfile(this._id, penumbra, this._invFocus);
     this.writeOptics();
   }
@@ -1602,16 +1606,31 @@ class Light {
   }
 
   /**
-   * Focuses the lens, as 1 / distance; a lens being focused has the focused
-   * edge, and its blur does the rest.
+   * Focuses the lens, as 1 / distance. The edge keeps the profile's shape;
+   * the lens's blur, from the focus, is what sharpens or softens it with
+   * distance.
    *
    * @private
    * @param {Number} invFocus 1/m, 0 infinity
    */
   setInvFocus(invFocus) {
     this._invFocus = invFocus;
-    this._basePenumbra = PENUMBRA_FOCUSED;
     this.applyLensEdge();
+  }
+
+  /**
+   * The edge a light is built with: the file's, where it states one, else
+   * the default. A penumbra past 1 would fold over in three's cosine space
+   * as well as in the shaders, so it stops at all falloff.
+   *
+   * @private
+   * @param {Number} [stated] from `headInputs`, null where the file gives none
+   * @returns {Number}
+   */
+  static profilePenumbra(stated) {
+    return Number.isFinite(stated)
+      ? Math.min(Math.max(stated, 0), PENUMBRA_DEFOCUSED)
+      : SPOTLIGHT_PHYSICALLY_CORRECT_PENUMBRA;
   }
 
   /**
@@ -1855,24 +1874,6 @@ class Light {
       wheel.wheelSpeedRpm = Light.percentToRpm(values.speed, this._goboSpeed);
     }
     this.writeOptics();
-  }
-
-  /**
-   * The gobo blur the focus gives, in baked blur levels: the same penumbra that
-   * softens the pool's edge, from `PENUMBRA_FOCUSED` to `PENUMBRA_DEFOCUSED`,
-   * mapped onto 0 to `GOBO_DEFOCUS_MAX` levels. Focus and the image go
-   * together on a real fixture; turning it sharpens the pattern.
-   *
-   * @private
-   * @param {Number} penumbra
-   * @returns {Number}
-   */
-  static goboDefocusFor(penumbra) {
-    const t = Math.min(Math.max(
-      (penumbra - PENUMBRA_FOCUSED) / (PENUMBRA_DEFOCUSED - PENUMBRA_FOCUSED),
-      0,
-    ), 1);
-    return t * GOBO_DEFOCUS_MAX;
   }
 
   /**

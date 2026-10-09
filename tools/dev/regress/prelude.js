@@ -143,6 +143,8 @@
     const c = vis.domElement;
     c.style.removeProperty('width');
     c.style.removeProperty('height');
+    c.style.removeProperty('flex');
+    c.style.removeProperty('min-height');
     vis.resize();
     vis.setRecordingMode(false);
     bt.Shutter.setSlotClock(null);
@@ -174,6 +176,11 @@
     const c = vis.domElement;
     c.style.setProperty('width', `${w}px`, 'important');
     c.style.setProperty('height', `${h}px`, 'important');
+    // A flex child, which the layout squeezes when the window is short:
+    // 1280 x 720 came out 1280 x 708 once. The buffer follows the canvas's
+    // own box, so the box must hold its size whatever the window is.
+    c.style.setProperty('flex', '0 0 auto', 'important');
+    c.style.setProperty('min-height', `${h}px`, 'important');
     vis.resize();
   };
 

@@ -734,8 +734,8 @@
      "lumens": 10193.5,
      "power": 1480,
      "zoom": [
-      32,
-      32
+      52,
+      52
      ],
      "pan": null,
      "tilt": null,
@@ -864,8 +864,8 @@
      "lumens": 10193.5,
      "power": 1480,
      "zoom": [
-      32,
-      32
+      52,
+      52
      ],
      "pan": null,
      "tilt": null,
@@ -1256,8 +1256,8 @@
      "lumens": 11800,
      "power": 200,
      "zoom": [
-      60,
-      60
+      80,
+      80
      ],
      "pan": null,
      "tilt": null,
@@ -1276,8 +1276,8 @@
      "lumens": 11800,
      "power": 200,
      "zoom": [
-      60,
-      60
+      80,
+      80
      ],
      "pan": null,
      "tilt": null,
@@ -1297,8 +1297,8 @@
      "lumens": 11800,
      "power": 200,
      "zoom": [
-      60,
-      60
+      80,
+      80
      ],
      "pan": null,
      "tilt": null,
@@ -1319,8 +1319,8 @@
      "lumens": 11800,
      "power": 200,
      "zoom": [
-      60,
-      60
+      80,
+      80
      ],
      "pan": null,
      "tilt": null,

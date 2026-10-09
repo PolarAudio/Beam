@@ -354,8 +354,19 @@ export function headInputs(type, mode) {
     return range && fade > 0 ? (range[1] - range[0]) / fade : null;
   };
   const main = beams[0] || null;
-  // A head without a zoom channel is drawn at its stated beam angle.
-  const fixed = main ? main.beamAngle : null;
+  // The light's edge, from the file's two angles: the beam angle is where
+  // the light is at half, the field angle where it is at a tenth, so the
+  // field is the edge of the light and the beam angle says how much of it
+  // is plateau. The head's edge is a smoothstep whose half-way point is the
+  // middle of the falloff, so a penumbra of 2 (1 - beam / field) puts the
+  // half there. Two equal angles describe no edge at all -- one figure
+  // typed into both, as every profile converted from OFL has -- and the
+  // head keeps its default edge.
+  const edge = main && main.fieldAngle > main.beamAngle
+    ? { outer: main.fieldAngle, penumbra: 2 * (1 - main.beamAngle / main.fieldAngle) }
+    : { outer: main ? main.beamAngle : null, penumbra: null };
+  // A head without a zoom channel is drawn at its stated edge.
+  const fixed = edge.outer;
   // Every beam's output together: an LED head describes each emitter as a
   // beam of its own, and the head is all of them. A beam still carrying the
   // spec's placeholder output was never measured, and is only counted when
@@ -386,6 +397,7 @@ export function headInputs(type, mode) {
     category,
     minAngle: zoom ? zoom[0] : fixed,
     maxAngle: zoom ? zoom[1] : fixed,
+    edgePenumbra: edge.penumbra,
     lumens: lumens || null,
     unmeasured: beams.length > 0 && !measured.length,
     // The light sources' power, which is what GDTF's beams state: the

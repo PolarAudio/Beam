@@ -586,6 +586,7 @@ class Fixture extends withTransform(Proxify) {
           maxTilt: inputs.tiltSpan,
           minAngle: inputs.minAngle,
           maxAngle: inputs.maxAngle,
+          edgePenumbra: inputs.edgePenumbra,
           lumens: inputs.lumens,
         });
         this._dispatch = this.dispatchFor();
@@ -1202,6 +1203,7 @@ class Fixture extends withTransform(Proxify) {
       const spec = {
         minAngle: inputs.minAngle || 10,
         maxAngle: inputs.maxAngle || 25,
+        edgePenumbra: inputs.edgePenumbra,
         minTilt: 0,
         maxTilt: inputs.tiltSpan || 0,
         minPan: 0,

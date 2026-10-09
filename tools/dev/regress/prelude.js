@@ -132,6 +132,26 @@
     }
     bt.Shutter.setSlotClock(() => ({ index: Math.round(window.__T * 60), seconds: window.__T, length: 1 / 60 }));
   };
+  // Hands the app back: its own clocks and render loop running again, the
+  // canvas back to the layout's size, recording mode off. Without it the
+  // window is frozen to the person using it.
+  bt.thaw = () => {
+    bt.AM.animations.forEach((a) => {
+      a.state = 0;
+      if (a._clock) delete a._clock.getElapsedTime;
+    });
+    const c = vis.domElement;
+    c.style.removeProperty('width');
+    c.style.removeProperty('height');
+    vis.resize();
+    vis.setRecordingMode(false);
+    bt.Shutter.setSlotClock(null);
+    const ah = vis.ambientHaze;
+    if (ah && ah.__btFrozen) {
+      delete ah.update;
+      ah.__btFrozen = false;
+    }
+  };
   const loopOf = (text) => bt.AM.animations.find((a) => a.loop.toString().includes(text));
   bt.step = (dt) => {
     window.__T += dt;

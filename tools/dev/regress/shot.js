@@ -24,5 +24,7 @@
   const steps = bt.settled ? 3 : bt.setup.settle;
   for (let i = 0; i < steps; i++) bt.step(0.1);
   bt.settled = true;
-  return bt.capture();
+  const frame = bt.capture();
+  bt.thaw();
+  return frame;
 })()

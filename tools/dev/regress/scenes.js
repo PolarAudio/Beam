@@ -36,6 +36,9 @@
       cameras: {
         front: { position: { x: 0, y: -12, z: 2 }, target: { x: 0, y: 0, z: 2 } },
         under: { position: { x: -2.5, y: -4, z: 0.6 }, target: { x: -2.5, y: 0, z: 4 } },
+        // Behind and above the bar, looking along the beams that tilt away.
+        behind: { position: { x: -1.5, y: -3, z: 6.5 }, target: { x: -1.5, y: 1.2, z: 0 } },
+        top: { position: { x: 0, y: 0.3, z: 14 }, target: { x: 0, y: 0, z: 0 } },
       },
     };
   }

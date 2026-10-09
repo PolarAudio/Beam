@@ -187,8 +187,11 @@ export default function translateOfl(ofl, { manufacturer = '' } = {}) {
   else notes.push('no lumens stated');
   if (bulb.colorTemperature) beamExplicit.push('ColorTemperature');
   if (lens) {
-    beamExplicit.push('BeamAngle', 'FieldAngle');
-    notes.push('beam and field angle both taken from the widest lens angle');
+    // The field angle is the same figure copied, not a second one the
+    // profile states, so it is not written down as stated: the head then
+    // takes its default edge rather than a hard one.
+    beamExplicit.push('BeamAngle');
+    notes.push('beam angle from the widest lens angle; OFL states no field angle');
   } else {
     notes.push('no lens range');
   }

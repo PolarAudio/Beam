@@ -359,11 +359,18 @@ export function headInputs(type, mode) {
   // field is the edge of the light and the beam angle says how much of it
   // is plateau. The head's edge is a smoothstep whose half-way point is the
   // middle of the falloff, so a penumbra of 2 (1 - beam / field) puts the
-  // half there. Two equal angles describe no edge at all -- one figure
-  // typed into both, as every profile converted from OFL has -- and the
-  // head keeps its default edge.
-  const edge = main && main.fieldAngle > main.beamAngle
-    ? { outer: main.fieldAngle, penumbra: 2 * (1 - main.beamAngle / main.fieldAngle) }
+  // half there. Equal angles are a hard edge, which is what a gobo
+  // projector throws at its focus: measured on one, a flat disc whose edge
+  // falls from 90 % to 10 % within one percent of its width. A file that
+  // writes only one of the two angles states no edge, and the head keeps
+  // its default; a profile converted from OFL is one of those, OFL having
+  // a single lens figure.
+  const stated = (name) => Array.isArray(main.explicit) && main.explicit.includes(name);
+  const edge = main && stated('BeamAngle') && stated('FieldAngle')
+    ? {
+      outer: Math.max(main.fieldAngle, main.beamAngle),
+      penumbra: 2 * (1 - Math.min(main.beamAngle / main.fieldAngle, 1)),
+    }
     : { outer: main ? main.beamAngle : null, penumbra: null };
   // A head without a zoom channel is drawn at its stated edge.
   const fixed = edge.outer;

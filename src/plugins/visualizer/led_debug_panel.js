@@ -67,18 +67,25 @@ export default function createLEDDebugPanel(visualizer, host) {
   const gui = new GUI({ title: 'Debug', container });
   Object.assign(gui.domElement.style, {
     position: 'absolute',
-    top: `${GAP}px`,
     right: `${GAP}px`,
     bottom: '',
     zIndex: '100',
   });
 
-  // As tall as the viewport leaves room for. The root's children scroll once
-  // the root is capped in height.
+  // The container also holds the toolbar row, so the panel starts at the top
+  // of the 3D canvas and is as tall as the canvas leaves room for. The root's
+  // children scroll once the root is capped in height.
+  const canvas = visualizer.domElement;
   const fit = () => {
-    gui.domElement.style.maxHeight = `${Math.max(container.clientHeight - 2 * GAP, 80)}px`;
+    const top = (canvas && canvas.offsetParent === container ? canvas.offsetTop : 0) + GAP;
+    gui.domElement.style.top = `${top}px`;
+    gui.domElement.style.maxHeight = `${Math.max(container.clientHeight - top - GAP, 80)}px`;
   };
-  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(fit).observe(container);
+  if (typeof ResizeObserver !== 'undefined') {
+    const watch = new ResizeObserver(fit);
+    watch.observe(container);
+    if (canvas) watch.observe(canvas);
+  }
   window.addEventListener('resize', fit);
   fit();
 

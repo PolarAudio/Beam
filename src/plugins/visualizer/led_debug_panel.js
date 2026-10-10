@@ -25,8 +25,11 @@ import Tuning from './tuning';
  * fixed headings. Which folders are open is stored with the tuning values.
  */
 
-/** Gap between the panel and the viewport's edges, in px. */
+/** Gap between the panel and the 3D view's right and bottom edges, in px. */
 const GAP = 8;
+
+/** Gap between the panel and the top of the 3D view, in px. */
+const TOP_GAP = 2;
 
 /** Preference key for the folders' open state, beside the tuning values. */
 const FOLDERS_KEY = `${Tuning.PREFIX}folders`;
@@ -77,7 +80,7 @@ export default function createLEDDebugPanel(visualizer, host) {
   // children scroll once the root is capped in height.
   const canvas = visualizer.domElement;
   const fit = () => {
-    const top = (canvas && canvas.offsetParent === container ? canvas.offsetTop : 0) + GAP;
+    const top = (canvas && canvas.offsetParent === container ? canvas.offsetTop : 0) + TOP_GAP;
     gui.domElement.style.top = `${top}px`;
     gui.domElement.style.maxHeight = `${Math.max(container.clientHeight - top - GAP, 80)}px`;
   };

@@ -303,8 +303,6 @@ export default {
       this.sending = sending;
       this.otherSenders = otherSenders || [];
     });
-    // The debug panel's button, so both ask the same question.
-    EventBus.on('reset_defaults', () => this.resetToDefaults());
     // Files dropped anywhere on the window. A .gdtf is imported; anything
     // else is refused here, because the default for a dropped file is to
     // navigate to it, which would replace the app and lose the show.

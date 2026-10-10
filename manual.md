@@ -552,7 +552,7 @@ Each group owns its mappings independently — one group can go out as a front e
 - **Grid** — the infinite reference grid
 - **Axes** — the origin indicator
 - **Background** — colour behind the scene
-- **Debug** — frame timings and the tuning panel: LED emitter and glow, room air and contact shadows, camera exposure and glare, mover beam and laser diagnostics. Tuning values are kept between sessions. Double-click a control's name to put it back to its default, or **Reset all** at the top for every control. **Reset preferences** below it is the same as Preferences → Reset to defaults and reloads Beam. Two haze controls under **Room**: **swirl**, how much the air folds over itself, and **heading sweep**, how fast the drift changes direction. Both ride the turbulence slider.
+- **Debug** — frame timings and the tuning panel: LED emitter and glow, room air and contact shadows, camera exposure and glare, mover beam and laser diagnostics. Tuning values are kept between sessions. Double-click a control's name to put it back to its default, or **Reset all** at the top for every control. Two haze controls under **Room**: **swirl**, how much the air folds over itself, and **heading sweep**, how fast the drift changes direction. Both ride the turbulence slider.
 
 **The view cube.** Click a face to snap to that elevation. Faster than orbiting when you want a straight-on view — and straight-on views are what you want before exporting a camera projection.
 

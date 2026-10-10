@@ -52,6 +52,12 @@ its toolbar), `modifiers/` (the widgets: placement, object, fixture...),
   bring them up before anything else. Do not merge, close or comment on them
   without being told to.
 
+## Releases
+
+- Immediately before `gh release create`, stop and ask "Upload to GitHub?".
+  Every time, after the build and the push, whatever was agreed earlier. No
+  answer, no upload.
+
 ## Running and checking
 
 - Run: `powershell -File tools/dev/launch.ps1 [-Show x.beam]`, stop with

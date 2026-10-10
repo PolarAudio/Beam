@@ -5,7 +5,6 @@ import Light from './light';
 import LEDField from './led_field';
 import LEDPanel from './led_panel';
 import Tuning from './tuning';
-import EventBus from '../eventbus';
 
 /**
  * @file The debug panel: every render tuning value, written straight into its
@@ -17,7 +16,8 @@ import EventBus from '../eventbus';
  * switch was left off.
  *
  * Double-clicking a control's name puts it back to its default. The button at
- * the top does the same for every control at once.
+ * the top does the same for every control at once. Clearing every preference
+ * is Preferences > Reset to defaults.
  */
 
 /**
@@ -122,8 +122,6 @@ export default function createLEDDebugPanel(visualizer, host) {
 
   gui.add({ reset: () => resets.forEach((fn) => fn()) }, 'reset')
     .name('Reset all');
-  gui.add({ reset: () => EventBus.emit('reset_defaults') }, 'reset')
-    .name('Reset preferences (reloads)');
 
   const die = gui.addFolder('Emitter die');
   tune(die, 'gain', 0, 8, 0.05);

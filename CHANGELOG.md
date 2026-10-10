@@ -47,7 +47,7 @@
 
 ### Debug panel
 
-- Double-click a control's name to put it back to its default. **Reset all** at the top does every control; **Reset preferences** is the old button and reloads.
+- Double-click a control's name to put it back to its default. **Reset all** at the top does every control. The old button that cleared every preference is gone from the panel; it stays under **Preferences → Reset to defaults**.
 - Camera folder: exposure, tone curve, glare strength and spread. Nothing is stored.
 - Removed: Bloom, Scene haze (the same settings as Preferences → Visualizer), contour cycling and render passes.
 

@@ -552,7 +552,7 @@ Each group owns its mappings independently — one group can go out as a front e
 - **Grid** — the infinite reference grid
 - **Axes** — the origin indicator
 - **Background** — colour behind the scene
-- **Debug** — frame timings and the tuning panel: LED emitter and glow, room air and contact shadows, camera exposure and glare, mover beam and laser diagnostics. Tuning values are kept between sessions. Double-click a control's name to put it back to its default, or **Reset all** at the top for every control. Two haze controls under **Room**: **swirl**, how much the air folds over itself, and **heading sweep**, how fast the drift changes direction. Both ride the turbulence slider.
+- **Debug** — frame timings and the tuning panel, in the viewport's top-right corner. Its folders are **Camera**, **Room** (light and haze), **LED**, **Mover beam** and **Laser**. The panel grows downwards as folders open and scrolls once it reaches the bottom of the viewport. Tuning values and which folders are open are kept between sessions. Double-click a control's name to put it back to its default, or **Reset all** at the top for every control. Two haze controls under **Room → Haze**: **swirl**, how much the air folds over itself, and **heading sweep**, how fast the drift changes direction. Both ride the turbulence slider.
 
 **The view cube.** Click a face to snap to that elevation. Faster than orbiting when you want a straight-on view — and straight-on views are what you want before exporting a camera projection.
 
@@ -584,6 +584,7 @@ A beam is light scattered by the haze, so with haze off there is no beam, only t
 - **Receive** listens for Art-Net on **UDP 6454** and sACN on **UDP 5568**. No IP to set, no subscription to manage. Universe numbers are read from the full 15-bit Art-Net field, so any universe a source can address, Beam will accept — up to the 512 it can hold.
 - **Send** puts the fixtures' own values, the ones set by hand in their widgets, on the wire, so a real fixture can be tested with the same controls. **Send as** picks sACN multicast or Art-Net; for Art-Net, **Send to** takes a node's address, or empty to broadcast. Every launch starts in Receive.
 - **Notation** sets how DMX addresses are written in Beam. Match the system you read them beside.
+- **Strict patch** refuses overlapping addresses and gives new or pasted fixtures the first free address. Off, any address is accepted.
 - **Desktop app only.** Browsers can't do UDP. The web build says so rather than failing quietly.
 
 ## Lasers

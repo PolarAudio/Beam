@@ -49,7 +49,10 @@
 
 - Double-click a control's name to put it back to its default. **Reset all** at the top does every control. The old button that cleared every preference is gone from the panel; it stays under **Preferences → Reset to defaults**.
 - Camera folder: exposure, tone curve, glare strength and spread. Nothing is stored.
+- Regrouped: Camera, Room (Light, Haze), LED (Die, Distance, Glow), Mover beam, Laser (Brightness, Shape, Diagnostics).
+- The panel sits in the viewport's top-right corner, grows downwards as folders open and scrolls past the viewport's bottom. Which folders are open is remembered.
 - Removed: Bloom, Scene haze (the same settings as Preferences → Visualizer), contour cycling and render passes.
+- **Strict patch** moves to **Preferences → Art-Net**. A stored setting carries over.
 
 ### Fixes
 

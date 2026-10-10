@@ -105,6 +105,21 @@
           @input="setFormat"
         />
       </uk-flex>
+
+      <uk-flex center-h>
+        <div>
+          <h4>Strict patch:</h4>
+          <p class="subtitle">
+            Refuse overlapping addresses, and give new or pasted fixtures the
+            first free address. Off, any address is accepted.
+          </p>
+        </div>
+        <uk-spacer />
+        <uk-checkbox
+          :model-value="strictPatch"
+          @update:model-value="setStrictPatch"
+        />
+      </uk-flex>
     </uk-flex>
   </uk-popup>
 </template>
@@ -113,6 +128,8 @@
 import PopupMixin from '@/views/mixins/popup.mixin';
 import EventBus from '@/plugins/eventbus';
 import artnetConnection from '@/plugins/artnet.connection';
+import PatchSingleton from '@/models/DMX/patch.model';
+import Tuning from '@/plugins/visualizer/tuning';
 import {
   ADDRESS_FORMATS, addressFormat, setAddressFormat, formatAddress,
 } from '@/models/DMX/address_format';
@@ -133,6 +150,7 @@ export default {
       sending: artnetConnection.sending,
       protocol: artnetConnection.sendOptions.protocol,
       target: artnetConnection.sendOptions.target,
+      strictPatch: PatchSingleton.strict,
     };
   },
   computed: {
@@ -180,6 +198,11 @@ export default {
     EventBus.off('dmx_mode', this.onMode);
   },
   methods: {
+    /** Stored under the same key the debug panel used, so the setting carries over. */
+    setStrictPatch(value) {
+      this.strictPatch = !!value;
+      Tuning.write('strictPatch', this.strictPatch, this.$show.visualizerHandle);
+    },
     setFormat(index) {
       const chosen = ADDRESS_FORMATS[index];
       if (chosen) setAddressFormat(chosen.id);
@@ -193,6 +216,7 @@ export default {
       this.sending = artnetConnection.sending;
       this.protocol = artnetConnection.sendOptions.protocol;
       this.target = artnetConnection.sendOptions.target;
+      this.strictPatch = PatchSingleton.strict;
     },
     async setProtocol(index) {
       this.protocol = index === 1 ? 'artnet' : 'sacn';

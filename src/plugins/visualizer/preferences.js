@@ -61,7 +61,7 @@ const DEFAULTS = {
    */
   globalBrightness: 100,
   /** Global brightness with the house lights down. */
-  brightnessHouseOff: 30,
+  brightnessHouseOff: 25,
   /** Which of the two is in force. */
   houseLights: true,
   /**

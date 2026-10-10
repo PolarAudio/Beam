@@ -198,9 +198,10 @@ Get this into your fingers first, because you'll do it constantly.
 
 | Do this | Get this |
 |---|---|
-| **Right-drag** | Orbit |
-| **Middle-drag** | Pan |
-| **Scroll** | Zoom |
+| **Right-drag** | Orbit about the point under the pointer |
+| **Middle-drag** | Pan, as a lens shift: the picture slides and the camera stays put |
+| **Ctrl + middle-drag** | Walk: the camera moves along the floor, the grabbed spot staying under the pointer |
+| **Scroll** | Zoom toward the point under the cursor |
 | **Left-drag** | Rubber-band select |
 | **Left-click** | Select one thing |
 | **Shift** or **Ctrl** + click | Add to the selection |
@@ -209,7 +210,9 @@ The left button is deliberately *not* a camera control. It's for selecting, beca
 
 One detail worth knowing, because it makes the whole thing feel different: **orbiting pivots around whatever is under your cursor.** Point at a mover, right-drag, and the camera swings around *that mover*. Point at the sky and it falls back to the last sensible pivot. This is the difference between navigating comfortably and fighting a camera that insists on rotating about a point somewhere behind you.
 
-Press **Escape** at any time to deselect everything and reset the view.
+Press **Escape** at any time to deselect everything. The view stays where it is.
+
+**Orthographic**, on the toolbar, swaps the camera for a plan or elevation view with no vanishing point. It keeps the view direction and target; the wheel scales the view about the cursor and Shift + right-drag turns about the target. Studio and recording are always perspective and switch back on entry.
 
 ## Step 1: two movers
 
@@ -396,7 +399,7 @@ The list down the left side, holding every fixture in the show. Two buttons at t
 **new** opens the patch dialog, which has three tabs:
 
 - **fixtures** — the fixture library. Real profiles plus any generics you've built. Filterable.
-- **objects** — non-emitting scenery. Trusses, staging, decks. A truss has no channels, so nothing here gets addressed. **import object** copies a GLB, OBJ, FBX or STL file into your object library, with an OBJ's materials and textures. Only GLB states its units and which way is up, so the dialog asks for both and shows the model's size in metres as you choose: a truss that reads three kilometres long is in millimetres.
+- **objects** — non-emitting scenery. Trusses, staging, decks. A truss has no channels, so nothing here gets addressed. **import object** copies a GLB, OBJ, FBX or STL file into your object library, with an OBJ's materials and textures. A Draco-compressed GLB loads. Only GLB states its units and which way is up, so the dialog asks for both and shows the model's size in metres as you choose: a truss that reads three kilometres long is in millimetres.
 - **structures** — saved groups, ready to patch again as a unit. You put things here with **save as structure** in a group's widget.
 
 Two more buttons live under the fixtures list:
@@ -483,7 +486,9 @@ The widget says which of the two you're looking at. The **DMX Channels** table h
 
 ## Placing things
 
-**The gizmo.** Select something and it appears. **T** for translate, **R** for rotate, **H** to hide it, **Escape** to drop the selection and reset the view.
+**The gizmo.** Select something and it appears. **T** for translate, **R** for rotate, **S** for scale (one 3D model at a time), **H** to hide it, **Escape** to drop the selection.
+
+**Model size.** A model from a file has **Length (X)**, **Width (Y)** and **Height (Z)** in metres in the Placement widget, along the model's own axes, with its original size beneath. Fixtures and created shapes do not scale.
 
 **The Position Tool.** In the modifier panel. Exact numeric entry:
 
@@ -547,7 +552,7 @@ Each group owns its mappings independently — one group can go out as a front e
 - **Grid** — the infinite reference grid
 - **Axes** — the origin indicator
 - **Background** — colour behind the scene
-- **Debug** — frame timings and the emitter tuning panel. Two haze controls live there: **hazeWarp**, how much the air folds over itself, and **hazeTurn**, how fast the drift changes direction. Both ride the turbulence slider — they set how much of each effect that slider buys. With no turn the haze all moves one way and reads as a sheet sliding past; wound up, it turns over instead.
+- **Debug** — frame timings and the tuning panel: LED emitter and glow, room air and contact shadows, camera exposure and glare, mover beam and laser diagnostics. Tuning values are kept between sessions. Double-click a control's name to put it back to its default, or **Reset all** at the top for every control. **Reset preferences** below it is the same as Preferences → Reset to defaults and reloads Beam. Two haze controls under **Room**: **swirl**, how much the air folds over itself, and **heading sweep**, how fast the drift changes direction. Both ride the turbulence slider.
 
 **The view cube.** Click a face to snap to that elevation. Faster than orbiting when you want a straight-on view — and straight-on views are what you want before exporting a camera projection.
 
@@ -559,10 +564,11 @@ A beam is light scattered by the haze, so with haze off there is no beam, only t
 
 - **Brightness.** A head is as bright as its profile says: its lumens spread over its stated beam angle. A profile that gives only power is taken at 22 lumens per watt, and a lumen figure that makes no sense for the stated power is ignored in favour of the power. So an 80 W LED spot is a fraction of a big discharge head, and a narrow beam fixture is very bright in a small spot. Zooming in concentrates the same light into a smaller spot.
 
-- **Width and edge.** The fixture's stated angle is the edge of the light. The focus channel sets how soft that edge is, from nearly hard at full focus to soft halfway in. A fixture without a focus channel gets a middling edge.
-- **Where it stops.** Each lit head keeps a small depth view from its lens. The beam stops at the first thing it hits, and the pool is shadowed by it, so a wall ends both and a cube in the beam casts a shadow on the floor. With hundreds of heads moving, only a few of those views are redrawn each frame, the most visible first; a beam can briefly lag where it cuts a truss.
+- **Width and edge.** The fixture's beam angle is where the light is at half and its field angle where it is at a tenth, so the field angle is the edge and the beam angle sets how soft it is. A file that states the two equal, as a gobo projector's does, draws a hard edge. A profile with one angle keeps a middling edge.
+- **Focus.** Focus is the distance the lens is focused at: the focus channel runs from 1 m to infinity, and a lens without one has **Focus at (m)** in its settings. The beam narrows from the lens to the image at the focus and widens past it; the pool's edge and the gobo are sharp at the focus and blur away from it.
+- **Where it stops.** Each lit head keeps a small depth view from its lens. The beam stops at the first thing it hits, and the pool is shadowed by it, so a wall ends both and a cube in the beam casts a shadow on the floor. Shadows are soft by the lens's size: sharp where they meet what casts them, wider away from it. With hundreds of heads moving, only a few of those views are redrawn each frame, the most visible first; a beam can briefly lag where it cuts a truss.
 - **Pools.** Light on a surface is on the same lux scale as projectors and falls off with distance.
-- **Along the beam.** Light thins with distance and is eaten by thick haze, so dense haze makes short beams. The haze texture runs through the beam rather than sitting on its surface.
+- **Along the beam.** Light thins with distance and is eaten by thick haze, so dense haze makes short beams. The air and the pool fade together with distance from the lens, and what the haze scatters out of the beam comes back as a glow around it. The haze texture runs through the beam rather than sitting on its surface.
 - **Facing the camera.** Haze throws light mostly forwards, so a beam pointing at you is brighter than one crossing your view. **Debug → Mover beam → facing brightness %** sets how much.
 - **Gobos.** Every gobo wheel a profile has works, with slot, rotation, wheel scroll and shake. Beam carries the Open Fixture Library's 46 gobo images. A slot that names one gets it; slots that name nothing get images in order, so each slot still looks different. The wheel slides from slot to slot rather than jumping. Focus blurs the gobo as well as the edge.
 - **Colour wheels.** A colour slot's colour comes from its name. Set the wheel between two slots and the beam shows half of each.
@@ -573,14 +579,12 @@ A beam is light scattered by the haze, so with haze off there is no beam, only t
 
 ## Art-Net input
 
-**Preferences → Art-Net** (**Ctrl+Shift+A**). One switch: **Receive**, enabled or disabled.
+**Preferences → Art-Net** (**Ctrl+Shift+A**). **Mode** is Off, Receive or Send.
 
-- Listens on **UDP 6454**, the standard Art-Net port.
-- **Desktop app only.** Browsers can't receive UDP. The web build says so rather than failing quietly.
-- Universe numbers are read from the full 15-bit Art-Net field, so any universe a source can address, Beam will accept — up to the 512 it can hold.
-- No configuration beyond the switch. No IP to set, no subscription to manage.
-
-Output to hardware is a separate matter and goes via the WSC protocol inherited from ASLS Studio — see the README.
+- **Receive** listens for Art-Net on **UDP 6454** and sACN on **UDP 5568**. No IP to set, no subscription to manage. Universe numbers are read from the full 15-bit Art-Net field, so any universe a source can address, Beam will accept — up to the 512 it can hold.
+- **Send** puts the fixtures' own values, the ones set by hand in their widgets, on the wire, so a real fixture can be tested with the same controls. **Send as** picks sACN multicast or Art-Net; for Art-Net, **Send to** takes a node's address, or empty to broadcast. Every launch starts in Receive.
+- **Notation** sets how DMX addresses are written in Beam. Match the system you read them beside.
+- **Desktop app only.** Browsers can't do UDP. The web build says so rather than failing quietly.
 
 ## Lasers
 
@@ -626,6 +630,7 @@ The picture comes from the stream; the fixture only corrects it. Each of these i
 - **Desktop app only.** All three routes need UDP, which browsers can't do.
 - **Sharing a machine with the sending software works**, with one caveat: a program that binds a device's well-known port for itself leaves nothing for Beam's emulated device. Beam detects that and says so, rather than looking connected and drawing nothing.
 - **Expect some flicker** on a heavy figure. That is the scanner model doing its job — a real laser dims and flickers when asked to draw more than it can scan.
+- **A stream that stops goes dark.** A device that keeps sending a trickle after its content has stopped counts as stopped: under a quarter of its declared point rate, the beam goes out.
 - **Beams stop at the first surface they meet.** Each laser keeps a depth view of the scene from its own aperture, and only things that cast shadows count — the room, objects, LED bar bodies, moving head bodies. If you need to see a beam run through everything, the debug panel's **Laser** folder has a **stop at surfaces** switch. It isn't saved, so the next start is back to normal. **Log depth tiles** in the same folder writes each laser's depth view to the console, nearest surfaces first, which is the thing to look at when a beam ends somewhere it shouldn't.
 
 ## The MadMapper export in detail
@@ -708,8 +713,10 @@ Files are MP4, H.264 video and AAC audio, constant frame rate. They play on phon
 | Shift / Ctrl + click | Add to selection |
 | Alt + click | Select a fixture inside a structure |
 | Right-drag | Orbit, pivoting on whatever is under the cursor |
-| Middle-drag | Pan |
-| Scroll | Zoom |
+| Middle-drag | Pan (lens shift) |
+| Ctrl + middle-drag | Walk along the floor |
+| Shift + right-drag | Turn about the target (orthographic) |
+| Scroll | Zoom toward the cursor |
 
 **Keyboard**
 
@@ -717,8 +724,9 @@ Files are MP4, H.264 video and AAC audio, constant frame rate. They play on phon
 |---|---|
 | **T** | Translate gizmo |
 | **R** | Rotate gizmo |
+| **S** | Scale gizmo (one 3D model) |
 | **H** | Hide the gizmo |
-| **Escape** | Deselect everything and reset the view |
+| **Escape** | Deselect everything |
 | **Ctrl+Z** | Undo |
 | **Ctrl+Y** | Redo |
 | **Ctrl+S** | Save showfile |

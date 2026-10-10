@@ -132,15 +132,9 @@ npm run dist:win
 
 ---
 
-## Streaming to Hardware
+## DMX in and out
 
-Beam sends live show data using the **[WSC (Web Show Control)](https://github.com/ASLS-org/WSC)** protocol — a compact, binary, transport-agnostic protocol designed for real-time control of performance and show systems.
-
-WSC carries multiple message types over a single connection: bulk channel data (DMX universes), linear timecode (SMPTE/MTC), cue lifecycle commands (GO, STOP, PAUSE…), typed parameter writes, and opaque binary tunnels to downstream systems. Every packet includes a Transport Descriptor that tells the gateway which downstream protocol to use — so the browser never needs to know about the physical layer.
-
-The reference gateway (`@asls/wsc-server`) runs as a Node.js process alongside Beam and translates incoming WSC packets to the appropriate downstream protocol. Forwarding targets include Art-Net, sACN, DMX512, MIDI, MIDI Show Control, MIDI Timecode, OSC, and others.
-
-Refer to the [WSC repository](https://github.com/ASLS-org/WSC) and its JavaScript implementation guide for gateway setup instructions.
+Beam receives Art-Net (UDP 6454) and sACN (UDP 5568) and drives the visualizer from it. **Preferences → Art-Net → Mode** switches it to Send, which puts the fixtures' own values on the wire as sACN multicast or Art-Net, so a real fixture can be tested with the same controls. Lasers are fed over Ponk, IDN, Ether Dream or LaserCube; Beam answers on the network as the device, so the sending software needs nothing installed. Desktop app only: browsers cannot do UDP.
 
 ---
 

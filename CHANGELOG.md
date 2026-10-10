@@ -1,5 +1,67 @@
 # Changelog
 
+## 0.1.0-alpha.19
+
+### Viewport
+
+- **Orthographic** on the toolbar swaps the camera for a plan or elevation view with no vanishing point. The view keeps its direction and target. The wheel scales the view about the cursor; Shift + right-drag turns about the target. Studio and recording stay perspective and switch back.
+- Right-drag orbits about the point under the pointer, which stays under the pointer. Middle-drag is a lens shift: the picture slides and the camera does not move. Ctrl + middle-drag walks the camera along the floor with the grabbed spot staying under the pointer. The wheel moves toward the point under the cursor.
+- The view cube is smaller, pinned to the viewport's corner, and is never recorded.
+- Escape deselects and leaves the view where it is.
+- Toolbar buttons sit closer together.
+
+### 3D models
+
+- A model from a file has Length (X), Width (Y) and Height (Z) in metres in the Placement widget, along the model's own axes, with its original size beneath. The show saves all three. Fixtures and created shapes do not scale.
+- Scale tool (**S**, and a toolbar button) for one model at a time. The centre handle scales all three axes.
+- Models compressed with Draco load. The decoder was missing from the build.
+- The three shipped floors have thumbnails.
+
+### Moving heads
+
+- Focus is the distance the lens is focused at: the focus channel runs from 1 m to infinity, and a lens without one has **Focus at (m)** in its settings, default 5 m. The beam narrows from the lens to the image at the focus and widens past it; the pool's edge and the gobo are sharp at the focus and blur away from it.
+- The beam's edge comes from the fixture's beam and field angles: the field angle is the edge, the beam angle sets how soft. A file stating the two equal draws a hard edge. A profile with one angle keeps the default edge. Two corpus files change width (B-EYE K20, Cuepix Blinder).
+- A beam's soft edge stops at walls. A short focus or a big lens spread the edge past the depth tile and that fringe went through every surface.
+- Pool shadows are soft by the lens's size: sharp where they meet what casts them, wider away from it.
+- In haze, the air and the pool fade together with distance from the lens, and what the haze scatters out of the beam comes back as a glow around it. **Debug → Mover beam → scattered glow** compares with and without.
+- A beam's edge is one continuous ramp; the samples along the ray no longer draw the edge twice near the focus.
+- A strobing light stops at surfaces between flashes. It lit through walls on the frame after a flash.
+- A light moved down a slot by a deletion kept the colour, angle, focus, gobos, prism and iris of the light that had been there. Fixed.
+- A GDTF fixture drawn with the shipped body takes its lens size from the file.
+- Gobo wheels turn: 44.5 degrees a slot, with an overshoot that settles. A shake rocks the whole wheel.
+- GDTF: channel names use the attribute's pretty name; pan/tilt speed channels drive the head; DMX profiles are applied; a gobo shake's amplitude sets its swing; gobo thumbnails are drawn without a white backing.
+- GDTF fixtures export to MadMapper by name. Every channel was named "[object Object]" and only the Pan/Tilt island was placed.
+
+### DMX
+
+- **Preferences → Art-Net → Mode** is Off, Receive or Send. Send puts the fixtures' own values on the wire as sACN multicast or Art-Net, to test real fixtures with the same controls. Every launch starts in Receive.
+
+### Lasers
+
+- A laser on the default address found no stream and drew nothing while points arrived. Fixed: the renderer kept overwriting the address the device was bound to.
+- A stream delivering under a quarter of its declared point rate counts as stopped and the beam goes out. A host with nothing left to send kept a beam lit with a trickle.
+
+### Selection
+
+- A selected object shows the orange outline; a selected structure or group passes it to its members. The outline covers the whole silhouette, hidden parts included.
+
+### Debug panel
+
+- Double-click a control's name to put it back to its default. **Reset all** at the top does every control; **Reset preferences** is the old button and reloads.
+- Camera folder: exposure, tone curve, glare strength and spread. Nothing is stored.
+- Removed: Bloom, Scene haze (the same settings as Preferences → Visualizer), contour cycling and render passes.
+
+### Fixes
+
+- LED panels and bars drew only their glow after the orthographic change. Fixed.
+- axios is replaced by fetch. It carried twenty-odd advisories, and its current version refuses the scheme a packaged build loads fixtures over.
+
+### Development
+
+- CLAUDE.md maps the code and the rules for working in it; tools/dev launches, probes, screenshots and times the dev build.
+- Visual regression set: test scenes at four haze levels with a frozen clock, diffed against a stored set.
+- Contributors: PolarAudio for the Draco decoder, the floor thumbnails and the laser stream fixes.
+
 ## 0.1.0-alpha.18
 
 ### GDTF fixtures

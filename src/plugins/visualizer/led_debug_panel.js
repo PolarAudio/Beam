@@ -21,7 +21,8 @@ import Tuning from './tuning';
  *
  * The panel floats in the viewport's top-right corner, over the view cube,
  * and grows downwards as folders open; past the viewport's bottom it
- * scrolls. Which folders are open is stored with the tuning values.
+ * scrolls. Only the top-level folders collapse; the groups inside them are
+ * fixed headings. Which folders are open is stored with the tuning values.
  */
 
 /** Gap between the panel and the viewport's edges, in px. */
@@ -32,6 +33,21 @@ const FOLDERS_KEY = `${Tuning.PREFIX}folders`;
 
 /** Folders that start closed until the user opens them. */
 const CLOSED_BY_DEFAULT = ['Room'];
+
+/** A group heading inside a folder: no arrow, not clickable. */
+const SECTION_CSS = `
+.lil-gui .beam-section > .title { cursor: default; pointer-events: none; opacity: 0.7; }
+.lil-gui .beam-section > .title:before { content: none; }
+`;
+
+/** Adds the heading style once per document. */
+function installSectionStyle() {
+  if (document.getElementById('beam-debug-sections')) return;
+  const style = document.createElement('style');
+  style.id = 'beam-debug-sections';
+  style.textContent = SECTION_CSS;
+  document.head.appendChild(style);
+}
 
 /**
  * Builds the panel. Safe to call when no bars exist -- it simply does nothing.
@@ -80,10 +96,17 @@ export default function createLEDDebugPanel(visualizer, host) {
     return folder;
   };
   remember(gui, '');
-  const folder = (parent, title, parentPath = '') => {
-    const path = parentPath ? `${parentPath}/${title}` : title;
-    const made = remember(parent.addFolder(title), path);
-    made.path = path;
+  const folder = (parent, title) => remember(parent.addFolder(title), title);
+
+  // A heading that groups controls inside a folder. It never collapses.
+  installSectionStyle();
+  const section = (parent, title) => {
+    const made = parent.addFolder(title);
+    made.domElement.classList.add('beam-section');
+    made.$title.tabIndex = -1;
+    // Held open whatever asks: close() and a title click both come through these.
+    made.open = () => made;
+    made.openAnimated = () => made;
     return made;
   };
 
@@ -170,7 +193,7 @@ export default function createLEDDebugPanel(visualizer, host) {
   // Set once rather than reached for while working, so it starts closed.
   const room = folder(gui, 'Room');
 
-  const roomLight = folder(room, 'Light', room.path);
+  const roomLight = section(room, 'Light');
   // Environment fill at full house lights. With one directional light alone,
   // every surface facing away from it renders pure black. Too much washes the
   // show out, too little brings the black faces back.
@@ -182,7 +205,7 @@ export default function createLEDDebugPanel(visualizer, host) {
   tune(roomLight, 'contactReach', 0.05, 20, 0.05).name('contact reach m');
   tune(roomLight, 'contactEdge', 0, 0.5, 0.005).name('contact edge blur m');
 
-  const haze = folder(room, 'Haze', room.path);
+  const haze = section(room, 'Haze');
   // Haze in the air itself, rather than only where a fixture draws geometry.
   // Six samples over the whole screen, so watch gpuMs while dragging it; zero
   // draws none.
@@ -199,17 +222,17 @@ export default function createLEDDebugPanel(visualizer, host) {
 
   const led = folder(gui, 'LED');
 
-  const die = folder(led, 'Die', led.path);
+  const die = section(led, 'Die');
   tune(die, 'gain', 0, 8, 0.05);
   tune(die, 'coreScale', 0.25, 4, 0.05).name('die size x');
   tune(die, 'haloStrength', 0, 2, 0.01).name('halo strength');
   tune(die, 'backScatter', 0, 1, 0.01).name('back scatter');
 
-  const distance = folder(led, 'Distance', led.path);
+  const distance = section(led, 'Distance');
   tune(distance, 'dimStartDistance', 0.2, 20, 0.1).name('full gain beyond');
   tune(distance, 'dimFloor', 0, 1, 0.01).name('closest dim');
 
-  const glow = folder(led, 'Glow', led.path);
+  const glow = section(led, 'Glow');
   // The volume's only brightness: a second control over the same quantity
   // would leave neither readable.
   tune(glow, 'haloRadiance', 0, 4, 0.01).name('brightness');
@@ -250,7 +273,7 @@ export default function createLEDDebugPanel(visualizer, host) {
   // figure on the stone is a projected picture, so each has its own gain.
   const laser = folder(gui, 'Laser');
 
-  const laserBright = folder(laser, 'Brightness', laser.path);
+  const laserBright = section(laser, 'Brightness');
   tune(laserBright, 'laserAir', 0, 4, 0.05).name('beam in air');
   tune(laserBright, 'laserSurface', 0, 12, 0.05).name('figure on surface');
   // Haze scatters light forwards, so a beam pointed at you is brighter than
@@ -262,12 +285,12 @@ export default function createLEDDebugPanel(visualizer, host) {
   // MadMapper's own preview does.
   tune(laserBright, 'laserDwell').name('scanner dwell');
 
-  const laserShape = folder(laser, 'Shape', laser.path);
+  const laserShape = section(laser, 'Shape');
   tune(laserShape, 'laserWidth', 0.5, 12, 0.5).name('figure width (px)');
   tune(laserShape, 'laserLength', 5, 120, 1).name('beam length (m)');
   tune(laserShape, 'laserTail', 0.05, 0.95, 0.05).name('beam fade');
 
-  const laserDiag = folder(laser, 'Diagnostics', laser.path);
+  const laserDiag = section(laser, 'Diagnostics');
   // A diagnostic, not a preference: not stored.
   resettable(laserDiag.add(state, 'laserOcclusion')
     .name('stop at surfaces')

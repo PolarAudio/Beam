@@ -46,6 +46,12 @@ in branding, "Beam" in prose. One branch, master.
 its toolbar), `modifiers/` (the widgets: placement, object, fixture...),
 `patch-bay/` (item list, popups), `studio/`.
 
+## Session start
+
+- List open pull requests and new issues (`gh pr list`, `gh issue list`) and
+  bring them up before anything else. Do not merge, close or comment on them
+  without being told to.
+
 ## Running and checking
 
 - Run: `powershell -File tools/dev/launch.ps1 [-Show x.beam]`, stop with
@@ -75,3 +81,21 @@ its toolbar), `modifiers/` (the widgets: placement, object, fixture...),
   comment. `.glsl` files imported with `?raw` may.
 - Comments state current facts and the reason, not history or names.
 - Commits: plain and technical, no AI attribution lines.
+
+## Writing
+
+Everything written for this project is plain and technical: commit messages,
+code comments, changelog, release notes, docs, PR text and the manual. State
+what the thing is or does, how, and the concrete reason. Numbers where they
+exist. Nothing written for effect.
+
+- A commit title is a plain statement of the change: "Laser stream counts as
+  dead below a quarter of its declared rate". Not an aphorism or a balanced
+  sentence: "A laser fed nothing is a laser that has gone dark, not one
+  drawing thinly" is the wrong kind.
+- A comment is one or two lines of current fact and reason. No story of how
+  the bug was found, no measurements from one session, no quotes.
+- No metaphor, judgement or flourish anywhere. The manual may be
+  conversational but still plain.
+- Contributions that arrive with essay comments or sentence titles are
+  trimmed to this standard before they land.

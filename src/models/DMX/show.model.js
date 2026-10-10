@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import axios from 'axios';
+import fetchJson from '@/plugins/fetch_json';
 import { markRaw } from 'vue';
 import {
   EventEmitter,
@@ -96,8 +96,7 @@ function foldModelKey(key) {
  */
 async function fetchProfile(profileKey) {
   try {
-    const res = await axios.get(`${import.meta.env.VITE_STATIC_URL}fixtures/${profileKey}.json`);
-    const profile = res.data;
+    const profile = await fetchJson(`${import.meta.env.VITE_STATIC_URL}fixtures/${profileKey}.json`);
     // The least a profile needs for the parser to survive it. A 404 served as
     // HTML has none of these, which is the point.
     const usable = profile
@@ -2295,8 +2294,7 @@ class Show extends EventEmitter {
    */
   async preloadManufacturers() {
     try {
-      const res = await axios.get(`${import.meta.env.VITE_STATIC_URL}fixtures/manufacturers.json`);
-      this.manufacturers = res.data || {};
+      this.manufacturers = (await fetchJson(`${import.meta.env.VITE_STATIC_URL}fixtures/manufacturers.json`)) || {};
     } catch (err) {
       this.manufacturers = {};
     }
@@ -2315,9 +2313,8 @@ class Show extends EventEmitter {
 
   async preloadFixtureList() {
     try {
-      const res = await axios.get(`${import.meta.env.VITE_STATIC_URL}fixtures/fixture_list.json`);
       /** The shipped index as fetched, which every refresh starts from. */
-      this.shippedFixtureList = res.data;
+      this.shippedFixtureList = await fetchJson(`${import.meta.env.VITE_STATIC_URL}fixtures/fixture_list.json`);
     } catch (err) {
       console.log('could not fetch fixture list.');
       this.shippedFixtureList = [];

@@ -2,7 +2,7 @@ import {
   GLTFLoader,
 } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
-import axios from 'axios';
+import fetchJson from '@/plugins/fetch_json';
 
 const dracoLoader = new DRACOLoader();
 // The same prefix the models are fetched with; see scene_objects.js.
@@ -67,8 +67,7 @@ class ModelInstancer {
    */
   async loadModelList() {
     try {
-      const res = await axios.get(this._path);
-      return res.data;
+      return await fetchJson(this._path);
     } catch (err) {
       throw new Error(`Could not find model list at ${this._path}`);
     }

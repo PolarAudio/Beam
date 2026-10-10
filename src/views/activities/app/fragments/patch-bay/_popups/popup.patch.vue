@@ -398,6 +398,7 @@
 <script>
 import { markRaw } from 'vue';
 import PopupMixin from '@/views/mixins/popup.mixin';
+import fetchJson from '@/plugins/fetch_json';
 import { DMX_UNIVERSE_LENGTH, channelAddress } from '@/models/DMX/patch.model';
 import { buildMadMapperFixture } from '@/models/DMX/generic/madmapper';
 import Fixture from '@/models/DMX/fixture.model';
@@ -1920,7 +1921,7 @@ export default {
       // stands for a hundred channels and counts as one.
       const data = generated
         ? JSON.parse(JSON.stringify(generated))
-        : normaliseMatrixProfile((await this.$http.get(`${import.meta.env.VITE_STATIC_URL}fixtures/${manufacturer.name}/${fixture}`)).data);
+        : normaliseMatrixProfile(await fetchJson(`${import.meta.env.VITE_STATIC_URL}fixtures/${manufacturer.name}/${fixture}`));
       Object.assign(this.fixture, {
         share: null,
         OFLData: data,

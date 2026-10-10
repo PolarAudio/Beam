@@ -1,5 +1,4 @@
 import { createApp, reactive } from 'vue';
-import axios from 'axios';
 import uikit from '@/views/components/uikit';
 import utils from '@/views/utils';
 import EventBus from '@/plugins/eventbus';
@@ -25,7 +24,6 @@ try {
   const app = createApp(App);
   registerComponents(uikit, app);
   app.config.globalProperties.$show = reactive(ShowSingleton);
-  app.config.globalProperties.$http = axios;
   app.config.globalProperties.$utils = reactive(utils);
   app.config.errorHandler = (err, instance, info) => {
     // The message on its own says nothing about where it came from, and a

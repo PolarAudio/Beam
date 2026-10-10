@@ -147,8 +147,8 @@ Beam receives Art-Net (UDP 6454) and sACN (UDP 5568) and drives the visualizer f
 | 3D Visualizer | [Three.js](https://threejs.org/) r170 + WebGL 2.0 + GLSL + [postprocessing](https://github.com/pmndrs/postprocessing) |
 | Build Tool | [Vite](https://vitejs.dev/) |
 | Desktop Shell | [Electron](https://www.electronjs.org/) v41 via `electron-vite` + `electron-builder` |
-| Show Output | [WSC](https://github.com/ASLS-org/WSC) via `@asls/wsc-client` / `@asls/wsc-sdk` |
-| Fixture Definitions | XML parsing via `xml2js` |
+| DMX and lasers | Art-Net, sACN, Ponk, IDN, Ether Dream and LaserCube over UDP in the Electron main process |
+| Fixture Definitions | GDTF (zip via `fflate`, XML via `DOMParser`) and Open Fixture Library JSON |
 | Event Bus | `mitt` |
 
 ---
@@ -157,9 +157,9 @@ Beam receives Art-Net (UDP 6454) and sACN (UDP 5568) and drives the visualizer f
 
 Contributions of all kinds are welcome — bug reports, feature requests, fixture library additions, documentation improvements, and code.
 
-1. **Fork** the repository and create a branch off `develop`.
-2. Make your changes and test them locally (`npm start`).
-3. Open a **Pull Request** against `develop` with a clear description of the change and why.
+1. **Fork** the repository and create a branch off `master`.
+2. Make your changes and test them locally (`npm run electron:start`, `npm test`).
+3. Open a **Pull Request** against `master` with a clear description of the change and why.
 
 For larger changes or new features, come and say so on [Discord](https://discord.gg/9EJqb4Kpwf) first — it is easier to align on direction there than in a pull request that has already been written.
 

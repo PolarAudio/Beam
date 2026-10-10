@@ -31,6 +31,13 @@ const GAP = 8;
 /** Gap between the panel and the top of the 3D view, in px. */
 const TOP_GAP = 2;
 
+/**
+ * The panel's title bar. A muted slate indigo: apart from the near-black
+ * chrome, the teal accent, the orange selection and the scene axes' pure
+ * red, green and blue.
+ */
+const TITLE_COLOUR = '#3d4470';
+
 /** Preference key for the folders' open state, beside the tuning values. */
 const FOLDERS_KEY = `${Tuning.PREFIX}folders`;
 
@@ -74,6 +81,7 @@ export default function createLEDDebugPanel(visualizer, host) {
     bottom: '',
     zIndex: '100',
   });
+  gui.domElement.style.setProperty('--title-background-color', TITLE_COLOUR);
 
   // The container also holds the toolbar row, so the panel starts at the top
   // of the 3D canvas and is as tall as the canvas leaves room for. The root's

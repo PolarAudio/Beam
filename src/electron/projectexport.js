@@ -4,6 +4,7 @@ import path from 'path';
 import documentstore from './documentstore';
 import gdtfstore from './gdtfstore';
 import library from './library';
+import mediastore from './mediastore';
 import objectstore from './objectstore';
 import paths from './paths';
 
@@ -208,6 +209,22 @@ function collectObject(entry, entries) {
 }
 
 /**
+ * Collects one media file, from where a load would find it.
+ *
+ * @param {String} key file name
+ * @param {Object} entries collected so far, added to
+ * @returns {Boolean} whether the file was found
+ */
+function collectMedia(key, entries) {
+  const file = mediastore.fileFor(key);
+  if (!file) return false;
+  const bytes = bytesOf(file);
+  if (!bytes) return false;
+  entries[entryFor(path.join(objectstore.MEDIA_DIR, key))] = bytes;
+  return true;
+}
+
+/**
  * Everything a show references, as container entries.
  *
  * @public
@@ -220,6 +237,11 @@ function collect(wanted) {
   const missing = [];
   const profiles = Array.isArray(wanted && wanted.profiles) ? wanted.profiles : [];
   const objects = Array.isArray(wanted && wanted.objects) ? wanted.objects : [];
+  const media = Array.isArray(wanted && wanted.media) ? wanted.media : [];
+
+  [...new Set(media)].forEach((key) => {
+    if (typeof key !== 'string' || !collectMedia(key, entries)) missing.push(`media ${key}`);
+  });
 
   [...new Set(profiles)].forEach((key) => {
     if (typeof key !== 'string' || !collectProfile(key, entries)) missing.push(`profile ${key}`);

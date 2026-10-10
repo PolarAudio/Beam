@@ -269,6 +269,19 @@ contextBridge.exposeInMainWorld('library', {
    */
   addEnvironment: () => ipcRenderer.invoke('library:addEnvironment'),
   /**
+   * Image and video files a video source may be: the open document's, the
+   * library's and the shipped ones, one per file name.
+   *
+   * @returns {Promise<Array>} `{ key, name, kind, origin, url }`
+   */
+  media: () => ipcRenderer.invoke('library:media'),
+  /**
+   * Asks for an image or video file and copies it into `Library/Media`.
+   *
+   * @returns {Promise<Object>} `{ ok, entry }` or `{ ok: false, reason }`
+   */
+  addMedia: () => ipcRenderer.invoke('library:addMedia'),
+  /**
    * GDTF fixtures in `Library/Profiles`, metadata only. The bytes are served
    * as `library://profiles/<file>`.
    *

@@ -11,7 +11,14 @@ import VideoDecode from './video_decode';
  *
  * What it deliberately does not do yet: slicing a frame into regions, or
  * connectors, or anything that consumes the texture. This is the pipe.
+ *
+ * A source named `file:<name>` is an image or video file from the media
+ * library instead: `FileFeed` below, which hands over the same fields so
+ * nothing downstream can tell the two apart.
  */
+
+/** The prefix that marks a source name as a media file. */
+export const FILE_PREFIX = 'file:';
 
 /** Open feeds by handle, so an arriving frame can find the one it belongs to. */
 const feeds = new Map();
@@ -220,6 +227,209 @@ class VideoFeed {
 }
 
 /**
+ * An image or video file as a feed.
+ *
+ * The same fields as an NDI feed, so the decode step, the projectors and the
+ * display panels take it unchanged: an sRGB RGBA texture, flipped as NDI's
+ * is, and a frame count that moves when the picture does. A video plays muted
+ * and loops, from the moment it is opened, and its frame count moves with
+ * each decoded frame. An image moves it once, when it has loaded.
+ */
+class FileFeed {
+  /**
+   * @param {String} name the source name, `file:<key>`
+   * @param {Object} entry from `window.library.media()`
+   */
+  constructor(name, entry) {
+    this._name = name;
+    this._entry = entry;
+    this._texture = null;
+    this._element = null;
+    this._width = 0;
+    this._height = 0;
+    this._frames = 0;
+    this._holders = 1;
+    this._closed = false;
+  }
+
+  get name() { return this._name; }
+
+  get format() { return 'RGBA'; }
+
+  get width() { return this._width; }
+
+  get height() { return this._height; }
+
+  get texels() { return this._width; }
+
+  get texture() { return this._texture; }
+
+  get frameCount() { return this._frames; }
+
+  get displayTexture() { return VideoDecode.textureFor(this); }
+
+  /** No byte array: the picture is an element. See `element`. */
+  get pixels() { return null; }
+
+  /** The image or video element, for a second GL context that wants the picture. */
+  get element() { return this._element; }
+
+  /** `image` or `video`. */
+  get kind() { return this._entry.kind; }
+
+  retain() { this._holders += 1; }
+
+  /**
+   * Starts loading the file.
+   *
+   * @returns {Promise<FileFeed>} once the first picture is in the texture
+   */
+  load() {
+    return this._entry.kind === 'video' ? this.loadVideo() : this.loadImage();
+  }
+
+  /** @private */
+  textureFrom(element, width, height) {
+    const texture = this._entry.kind === 'video'
+      ? new THREE.VideoTexture(element)
+      : new THREE.Texture(element);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.generateMipmaps = false;
+    texture.flipY = true;
+    texture.needsUpdate = true;
+    this._texture = texture;
+    this._width = width;
+    this._height = height;
+  }
+
+  /** @private */
+  loadImage() {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      image.crossOrigin = 'anonymous';
+      image.onload = () => {
+        if (this._closed) { resolve(this); return; }
+        this._element = image;
+        this.textureFrom(image, image.naturalWidth, image.naturalHeight);
+        this._frames += 1;
+        resolve(this);
+      };
+      image.onerror = () => reject(new Error(`could not load ${this._entry.key}`));
+      image.src = this._entry.url;
+    });
+  }
+
+  /** @private */
+  loadVideo() {
+    return new Promise((resolve, reject) => {
+      const video = document.createElement('video');
+      video.crossOrigin = 'anonymous';
+      video.muted = true;
+      video.loop = true;
+      video.playsInline = true;
+      video.preload = 'auto';
+      const counted = () => {
+        if (this._closed) return;
+        this._frames += 1;
+        if (this._texture) this._texture.needsUpdate = true;
+        video.requestVideoFrameCallback(counted);
+      };
+      video.onloadeddata = () => {
+        // Once: a looping video can report loaded data again at each restart,
+        // and a second run would build a second texture and a second counter.
+        video.onloadeddata = null;
+        if (this._closed) { resolve(this); return; }
+        this._element = video;
+        this.textureFrom(video, video.videoWidth, video.videoHeight);
+        this._frames += 1;
+        video.requestVideoFrameCallback(counted);
+        video.play().catch(() => {});
+        resolve(this);
+      };
+      video.onerror = () => reject(new Error(`could not play ${this._entry.key}`));
+      video.src = this._entry.url;
+    });
+  }
+
+  /** Nothing to move: the element is the frame. */
+  // eslint-disable-next-line class-methods-use-this
+  update() { return false; }
+
+  /** Stops playback and releases the texture once nobody wants it. */
+  close() {
+    this._holders -= 1;
+    if (this._holders > 0) return;
+    this._closed = true;
+    feeds.delete(this._name);
+    VideoDecode.release(this);
+    if (this._element && this._element.tagName === 'VIDEO') {
+      this._element.pause();
+      this._element.removeAttribute('src');
+      this._element.load();
+    }
+    this._element = null;
+    if (this._texture) {
+      this._texture.dispose();
+      this._texture = null;
+    }
+  }
+}
+
+/**
+ * Whether media files can be a source: the desktop app's library bridge.
+ *
+ * @returns {Boolean}
+ */
+function filesAvailable() {
+  return typeof window !== 'undefined' && !!(window.library && window.library.media);
+}
+
+/**
+ * The image and video files on offer.
+ *
+ * @returns {Promise<Array>} `{ key, name, kind, origin, url }`, empty when unavailable
+ */
+async function files() {
+  if (!filesAvailable()) return [];
+  return window.library.media();
+}
+
+/**
+ * Asks for a file and copies it into the media library.
+ *
+ * @returns {Promise<Object>} `{ ok, entry }` or `{ ok: false, reason }`
+ */
+async function addFile() {
+  if (!filesAvailable()) return { ok: false, reason: 'Files need the desktop app.' };
+  return window.library.addMedia();
+}
+
+/**
+ * Opens a media file as a feed.
+ *
+ * @param {String} name `file:<key>`
+ * @returns {Promise<FileFeed|null>} null when no folder has the file
+ */
+async function openFile(name) {
+  const key = name.slice(FILE_PREFIX.length);
+  const entry = (await files()).find((candidate) => candidate.key === key);
+  if (!entry) return null;
+  const feed = new FileFeed(name, entry);
+  feeds.set(name, feed);
+  try {
+    await feed.load();
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[video] file source:', err.message);
+    feed.close();
+    return null;
+  }
+  return feed;
+}
+
+/**
  * Everything advertising itself on the network.
  *
  * @param {Number} [waitMs]
@@ -237,7 +447,6 @@ async function sources(waitMs) {
  * @returns {Promise<VideoFeed|null>} null when video input is unavailable
  */
 async function open(name) {
-  if (!available()) return null;
   // Shared rather than duplicated. Whoever opens second gets the same feed and
   // a claim on it; `close` only tears down when the last claim goes.
   const existing = Array.from(feeds.values()).find((feed) => feed.name === name);
@@ -245,6 +454,8 @@ async function open(name) {
     existing.retain();
     return existing;
   }
+  if (typeof name === 'string' && name.startsWith(FILE_PREFIX)) return openFile(name);
+  if (!available()) return null;
   const handle = await window.ndi.open(name);
   const feed = new VideoFeed(handle, name);
   feeds.set(handle, feed);
@@ -262,5 +473,15 @@ function updateAll() {
 }
 
 export default {
-  available, sources, open, all, updateAll, VideoFeed,
+  available,
+  sources,
+  open,
+  all,
+  updateAll,
+  VideoFeed,
+  filesAvailable,
+  files,
+  addFile,
+  FileFeed,
+  FILE_PREFIX,
 };

@@ -77,6 +77,11 @@
               :disabled="!sources.length"
               @input="pickSource"
             />
+            <uk-button
+              label="Add file…"
+              :disabled="!filesAvailable"
+              @click="addFile"
+            />
             <p class="subtitle">
               {{ status }}
             </p>
@@ -235,7 +240,7 @@
 <script>
 import * as THREE from 'three';
 import PopupMixin from '@/views/mixins/popup.mixin';
-import VideoFeed from '@/plugins/visualizer/video_feed';
+import VideoFeed, { FILE_PREFIX } from '@/plugins/visualizer/video_feed';
 import VideoRouter from '@/plugins/visualizer/video_router';
 import Preferences from '@/plugins/visualizer/preferences';
 import createVideoMaterial from '@/plugins/visualizer/video_material';
@@ -335,7 +340,10 @@ export default {
     },
     sourceOptions() {
       if (!this.sources.length) return ['No sources found'];
-      return this.sources.map((source) => source.name);
+      return this.sources.map((source) => source.label);
+    },
+    filesAvailable() {
+      return VideoFeed.filesAvailable();
     },
     aspectOptions() {
       return CONNECTOR_ASPECTS.map((entry) => entry.label);
@@ -498,19 +506,56 @@ export default {
     },
 
     async opened() {
-      if (!VideoFeed.available()) {
+      if (!VideoFeed.available() && !VideoFeed.filesAvailable()) {
         this.status = 'Video input needs the desktop app.';
         return;
       }
       this.status = 'Looking for sources…';
-      this.sources = await VideoFeed.sources();
+      await this.loadSources();
       if (!this.sources.length) {
-        this.status = 'No NDI sources on the network.';
+        this.status = 'No NDI senders on the network and no files. Add an image or video file.';
         return;
       }
-      if (!this.sources.some((source) => source.name === this.sourceName)) {
+      // The source the scene is showing, when there is one; otherwise the
+      // first on offer.
+      const current = VideoRouter.name();
+      if (current && this.sources.some((source) => source.name === current)) {
+        this.sourceName = current;
+      } else if (!this.sources.some((source) => source.name === this.sourceName)) {
         this.sourceName = this.sources[0].name;
       }
+      await this.openFeed();
+      this.mountPreview();
+    },
+
+    /**
+     * NDI senders on the network, then the image and video files in the media
+     * library. A file's name is `file:<file name>`, which is how the router
+     * and the show know it.
+     */
+    async loadSources() {
+      const senders = VideoFeed.available() ? await VideoFeed.sources() : [];
+      const files = await VideoFeed.files();
+      this.sources = [
+        ...senders.map((source) => ({ name: source.name, label: source.name, kind: 'ndi' })),
+        ...files.map((file) => ({
+          name: `${FILE_PREFIX}${file.key}`,
+          label: `${file.kind === 'video' ? 'Video' : 'Image'}: ${file.name}`,
+          kind: file.kind,
+        })),
+      ];
+    },
+
+    /** Copies an image or video file into the library and shows it. */
+    async addFile() {
+      const result = await VideoFeed.addFile();
+      if (!result || !result.ok) {
+        if (result && result.reason && result.reason !== 'cancelled') this.status = result.reason;
+        return;
+      }
+      await this.loadSources();
+      this.sourceName = `${FILE_PREFIX}${result.entry.key}`;
+      this.hasPicture = false;
       await this.openFeed();
       this.mountPreview();
     },
@@ -533,9 +578,16 @@ export default {
       // not automatic: a feed is a network receiver, and opening one is a
       // user's decision, not the app's.
       VideoRouter.select(this.sourceName);
-      // Remembered, so a project full of video panels comes up connected rather
-      // than black until someone opens this popup. See `restoreVideoSource`.
-      Preferences.set('videoSource', this.sourceName);
+      if (this.sourceName.startsWith(FILE_PREFIX)) {
+        // A file belongs to the show, so it opens with it on any machine.
+        this.$show.setVideoFile(this.sourceName.slice(FILE_PREFIX.length));
+      } else {
+        this.$show.setVideoFile('');
+        // Remembered, so a project full of video panels comes up connected
+        // rather than black until someone opens this popup. See
+        // `restoreVideoSource`.
+        Preferences.set('videoSource', this.sourceName);
+      }
       if (!this.feed) this.status = 'Could not open that source.';
       else this.status = 'Waiting for the first frame…';
     },
@@ -601,8 +653,8 @@ export default {
     drawPreview() {
       const { feed } = this;
       if (!feed || !this.renderer) return;
-      const { pixels } = feed;
-      if (!pixels) return;
+      const { pixels, element } = feed;
+      if (!pixels && !element) return;
 
       const fresh = feed.frameCount !== this.lastFrame;
       const signature = this.sliceSignature();
@@ -610,11 +662,31 @@ export default {
       this.lastFrame = feed.frameCount;
       this.lastSignature = signature;
 
+      if (element) {
+        // A file: this context's own texture over the same image or video
+        // element, rebuilt only when the element changes.
+        if (!this.texture || this.textureSource !== element) {
+          if (this.texture) this.texture.dispose();
+          this.texture = feed.kind === 'video'
+            ? new THREE.VideoTexture(element)
+            : new THREE.Texture(element);
+          this.texture.colorSpace = THREE.SRGBColorSpace;
+          this.texture.minFilter = THREE.LinearFilter;
+          this.texture.magFilter = THREE.LinearFilter;
+          this.texture.generateMipmaps = false;
+          this.texture.flipY = true;
+          this.textureSource = element;
+          if (this.quad.material) this.quad.material.dispose();
+          this.quad.material = createVideoMaterial(feed, this.texture);
+          this.sliceQuad.material = this.quad.material;
+        }
       // Rebuilt when the shape changes, re-pointed when it does not: the feed
       // replaces its array each frame rather than writing into it.
-      if (!this.texture
+      } else if (!this.texture
+        || this.textureSource
         || this.texture.image.width !== feed.texels
         || this.texture.image.height !== feed.height) {
+        this.textureSource = null;
         if (this.texture) this.texture.dispose();
         const { RGBAFormat, UnsignedByteType } = THREE;
         const { texels, height } = feed;
@@ -652,7 +724,7 @@ export default {
       this.hasPicture = true;
       if (this.frameWidth !== feed.width) this.frameWidth = feed.width;
       if (this.frameHeight !== feed.height) this.frameHeight = feed.height;
-      this.status = `${feed.width} × ${feed.height} ${feed.format}`;
+      this.status = `${feed.width} × ${feed.height} ${feed.kind || feed.format}`;
     },
 
     /**
@@ -789,6 +861,7 @@ export default {
       if (this.timer) { clearInterval(this.timer); this.timer = null; }
       if (this.feed) { this.feed.close(); this.feed = null; }
       if (this.texture) { this.texture.dispose(); this.texture = null; }
+      this.textureSource = null;
       if (this.sliceQuad) {
         // Disposed before the shared material is, and harmlessly twice when
         // they are the same object -- three's dispose only fires an event.

@@ -47,6 +47,7 @@
 - [The visualizer](#the-visualizer)
 - [Moving head beams](#moving-head-beams)
 - [Art-Net input](#art-net-input)
+- [Video input](#video-input)
 - [Lasers](#lasers)
 - [The MadMapper export in detail](#the-madmapper-export-in-detail)
 - [Recording](#recording)
@@ -587,6 +588,14 @@ A beam is light scattered by the haze, so with haze off there is no beam, only t
 - **Strict patch** refuses overlapping addresses and gives new or pasted fixtures the first free address. Off, any address is accepted.
 - **Desktop app only.** Browsers can't do UDP. The web build says so rather than failing quietly.
 
+## Video input
+
+Projectors and display panels show a picture from one video source. **Preferences → Video** picks it, and carves it into connectors that devices show.
+
+- **NDI senders** on the network, such as MadMapper's output. Which sender is a setting of this machine, because a sender's name means nothing on another one.
+- **Image and video files.** **Add file…** copies a PNG, JPEG or WebP image, or an MP4, MOV or WebM video, into `Documents\Beatline\Beam\Library\Media`. A video plays muted and loops. A file belongs to the show: it is saved with it, and **Export Project to...** carries the file, so the show opens with its picture on another machine.
+- **Test card** ships with Beam. It has a grey wedge, colour bars, a fine grid, a circle and an F in the top-left corner, so a picture that is too bright, the wrong colour, soft, stretched, mirrored or turned shows it.
+
 ## Lasers
 
 A laser fixture in Beam is a laser projector with no laser in it. Something else draws the picture — MadMapper, or any software that can talk to a laser DAC — and Beam receives the points and puts the beams in the room: where they land, what they cross, who they hit. You aim it before you rig it.
@@ -750,6 +759,8 @@ Files are MP4, H.264 video and AAC audio, constant frame rate. They play on phon
 ## Files and where they live
 
 **A project is a `.beam` file** you name and place; the save dialog starts in `Documents\Beatline\Beam`. **Save Project** writes the show. It names the fixture profiles and models it uses and leaves them in your library, so editing a profile reaches every project that places it. **Export Project to...** writes a copy with everything the show references collected into the file: profiles, your overrides, and the models it places, shipped ones included. That is the one to hand to someone else or keep as a record of a show as it was performed. Opened on any Beam, an exported project draws from what it carries first and the local library second, and saving it keeps everything it carried.
+
+**Image and video files** for video input are in `Documents\Beatline\Beam\Library\Media`.
 
 **Fixture profiles** come from the built-in library. A generic fixture lives in the show until you save it to the library; saved ones are stored in `Documents\Beatline\Beam\Library\Profiles`.
 

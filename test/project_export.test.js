@@ -54,7 +54,12 @@ check('objects', wanted.objects, ['Truss', 'Rigging/Hoist']);
 console.log('\nan empty show names nothing');
 check('empty', Show.prototype.referencedResources.call({
   fixturePool: { fixtures: [] }, definitions: { has: () => false }, objects: [],
-}), { profiles: [], objects: [] });
+}), { profiles: [], objects: [], media: [] });
+
+console.log('\na show with a video file names it');
+check('media', Show.prototype.referencedResources.call({
+  fixturePool: { fixtures: [] }, definitions: { has: () => false }, objects: [], videoFile: 'Loop.mp4',
+}).media, ['Loop.mp4']);
 
 // The read side: what an opened export carries resolves after the show's own
 // definitions and ahead of the library, and is offered for placing only when

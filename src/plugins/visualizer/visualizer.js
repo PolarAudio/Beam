@@ -1251,6 +1251,8 @@ class Visualizer {
     try {
       const sources = await VideoFeed.sources();
       if (!sources.some((source) => source.name === wanted)) return;
+      // A show with its own file keeps it, however late discovery answers.
+      if (VideoRouter.name().startsWith(VideoFeed.FILE_PREFIX)) return;
       await VideoRouter.select(wanted);
     } catch (err) {
       // Discovery failing is not worth a dialog; the picker will say so.

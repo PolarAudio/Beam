@@ -24,6 +24,7 @@ import {
 import { kindById } from './generic/fixture_kind';
 import DefinitionStore, { SHOW_SCOPE, showKey } from './definition_store';
 import VideoRouter from '../../plugins/visualizer/video_router';
+import { FILE_PREFIX } from '../../plugins/visualizer/video_feed';
 import SceneObjects from '../../plugins/visualizer/scene_objects';
 import Studio from './studio';
 import { normaliseMatrixProfile } from './ofl_matrix';
@@ -229,6 +230,13 @@ class Show extends EventEmitter {
      * list. See `video_connector.js`.
      */
     this.videoConnectors = [];
+    /**
+     * The image or video file the show's video comes from, by file name, or
+     * empty when it comes from an NDI sender. A file belongs to the show and
+     * travels with it; a sender is a fact about one machine and stays in
+     * Preferences.
+     */
+    this.videoFile = '';
     // Installed once, on the array itself rather than its contents: the popup
     // edits connectors in place and pushes new ones, and the lookup reads the
     // live array each time, so it never needs re-installing.
@@ -338,6 +346,8 @@ class Show extends EventEmitter {
       // The rectangles, and deliberately not which sender fills them: that is
       // a fact about one machine, and this file opens on others.
       videoConnectors: this.videoConnectors.map((connector) => connector.showData),
+      // The file the picture comes from, when it is a file.
+      videoFile: this.videoFile || '',
       // Views, not cameras: five numbers each, applied to the one camera the
       // visualizer has. They belong to the show because they are about this
       // scene -- a locked view onto a rig is how you see that a material
@@ -496,6 +506,7 @@ class Show extends EventEmitter {
     // Nothing to dispose: a connector holds no scene node and no GPU
     // resource, only numbers.
     this.videoConnectors = [];
+    this.videoFile = '';
     this.definitions = new DefinitionStore();
     this.isSaved = true;
   }
@@ -642,7 +653,7 @@ class Show extends EventEmitter {
    * own parameters and has nothing to collect.
    *
    * @public
-   * @returns {Object} `{ profiles, objects }`, each an array of keys
+   * @returns {Object} `{ profiles, objects, media }`, each an array of keys
    */
   referencedResources() {
     const profiles = new Set(this.fixturePool.fixtures
@@ -651,7 +662,8 @@ class Show extends EventEmitter {
     const objects = new Set(this.objects
       .filter((object) => !object.isInline && object.model)
       .map((object) => object.model));
-    return { profiles: [...profiles], objects: [...objects] };
+    const media = this.videoFile ? [this.videoFile] : [];
+    return { profiles: [...profiles], objects: [...objects], media };
   }
 
   /**
@@ -819,6 +831,7 @@ class Show extends EventEmitter {
 
     this.videoConnectors = (showData.videoConnectors || [])
       .map((data) => new VideoConnector(data));
+    this.videoFile = typeof showData.videoFile === 'string' ? showData.videoFile : '';
 
     // Cameras belong to the show, so the one arriving replaces the one that
     // was open. A file with no cameras empties the list rather than leaving
@@ -855,6 +868,43 @@ class Show extends EventEmitter {
         this.visualizerHandle.frameDefault();
       }
     }
+
+    this.applyVideoSource();
+  }
+
+  /**
+   * Points the scene's video at what this show uses: its file, or else the
+   * NDI sender this machine last chose.
+   *
+   * @public
+   * @async
+   */
+  async applyVideoSource() {
+    try {
+      if (this.videoFile) {
+        await VideoRouter.select(`${FILE_PREFIX}${this.videoFile}`);
+        return;
+      }
+      if (VideoRouter.name().startsWith(FILE_PREFIX)) VideoRouter.release();
+      if (this.visualizerHandle && this.visualizerHandle.restoreVideoSource) {
+        await this.visualizerHandle.restoreVideoSource();
+      }
+    } catch (err) {
+      // A missing file or sender leaves the devices unbound, which they say.
+    }
+  }
+
+  /**
+   * Makes a media file the show's video source, or none.
+   *
+   * @public
+   * @param {String} key file name, or empty for none
+   */
+  setVideoFile(key) {
+    const next = key || '';
+    if (next === this.videoFile) return;
+    this.videoFile = next;
+    this.touch();
   }
 
   /**

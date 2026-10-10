@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Video input
+
+- Image and video files are a video source beside NDI senders. **Preferences → Video → Add file…** copies a PNG, JPEG, WebP, MP4, MOV or WebM file into `Library/Media`. A video plays muted and loops.
+- A file belongs to the show: it is saved with it, Export carries it, and an opened export plays its own copy. An NDI sender stays a setting of the machine.
+- A **Test card** ships with Beam: grey wedge, colour bars, a one-pixel grid, a circle and an F in one corner.
+
+### Preferences
+
+- House lights down defaults to 25%, was 30%.
+
+### Development
+
+- Regression set: the projector shows the test card at a dimmer of 15, so its white sits below clipping; the laser draws a triangle with a red, a green and a blue side. The room uses house lights down at 25%.
+
 ## 0.1.0-alpha.19
 
 ### Viewport

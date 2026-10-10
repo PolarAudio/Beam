@@ -52,6 +52,18 @@ const ENVIRONMENTS_DIR = 'Environments';
  */
 const ENVIRONMENT_EXTENSIONS = ['.hdr', '.exr'];
 
+/** Where the user's image and video files live, under the library root. */
+const MEDIA_DIR = 'Media';
+
+/** Still images a video source may be. */
+const MEDIA_IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp'];
+
+/** Video files a video source may be: the containers Chromium plays. */
+const MEDIA_VIDEO_EXTENSIONS = ['.mp4', '.m4v', '.mov', '.webm'];
+
+/** Every media file a video source may be. */
+const MEDIA_EXTENSIONS = [...MEDIA_IMAGE_EXTENSIONS, ...MEDIA_VIDEO_EXTENSIONS];
+
 /**
  * Folders the `library://` protocol will serve, by the host segment naming them.
  *
@@ -74,6 +86,17 @@ const ENVIRONMENT_EXTENSIONS = ['.hdr', '.exr'];
 const SERVED_DIRS = {
   objects: { dir: OBJECTS_DIR, extensions: null },
   environments: { dir: ENVIRONMENTS_DIR, extensions: ENVIRONMENT_EXTENSIONS },
+  // Image and video files for a video source: the user's, the open
+  // document's, and the ones that ship with Beam.
+  media: { dir: MEDIA_DIR, extensions: MEDIA_EXTENSIONS },
+  projectmedia: {
+    base: () => {
+      const mounted = documentstore.mountRoot();
+      return mounted ? path.join(mounted, MEDIA_DIR) : null;
+    },
+    extensions: MEDIA_EXTENSIONS,
+  },
+  shippedmedia: { base: () => paths.rendererAssets('media'), extensions: MEDIA_EXTENSIONS },
   project: {
     base: () => {
       const mounted = documentstore.mountRoot();
@@ -982,6 +1005,10 @@ export default {
   OBJECTS_DIR,
   ENVIRONMENTS_DIR,
   ENVIRONMENT_EXTENSIONS,
+  MEDIA_DIR,
+  MEDIA_IMAGE_EXTENSIONS,
+  MEDIA_VIDEO_EXTENSIONS,
+  MEDIA_EXTENSIONS,
   PRIMITIVE_TYPES,
   PRIMITIVE_KIND,
   DEFAULT_METADATA,

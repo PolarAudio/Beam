@@ -18,7 +18,9 @@ import {
   is,
   optimizer,
 } from '@electron-toolkit/utils';
+import fs from 'fs';
 import path from 'path';
+import { Readable } from 'stream';
 import icon from '../assets/images/beam_logo.png?asset';
 import artnet from './artnet';
 import sacn from './sacn';
@@ -32,6 +34,7 @@ import documentstore from './documentstore';
 import projectexport from './projectexport';
 import videorecorder from './videorecorder';
 import environmentstore from './environmentstore';
+import mediastore from './mediastore';
 import gdtfstore from './gdtfstore';
 import gdtfshare from './gdtfshare';
 import fileexport from './fileexport';
@@ -87,6 +90,50 @@ process.on('unhandledRejection', (err) => {
 process.env.ELECTRON_ENABLE_LOGGING = '1';
 process.env.ELECTRON_ENABLE_STACK_DUMPING = '1';
 
+/** Content types for the video files `serveRange` answers for. */
+const VIDEO_TYPES = {
+  '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm',
+};
+
+/**
+ * Answers a request for a video file, honouring a byte range.
+ *
+ * A video element reads in ranges to seek, to loop and to find an index
+ * written at the end of the file; a protocol that only ever answers with the
+ * whole file leaves some files unplayable and none of them seekable.
+ *
+ * @param {Request} request
+ * @param {String} target absolute path, already resolved and contained
+ * @returns {Response}
+ */
+function serveRange(request, target) {
+  const { size } = fs.statSync(target);
+  const type = VIDEO_TYPES[path.extname(target).toLowerCase()] || 'application/octet-stream';
+  const headers = new Headers({
+    'Accept-Ranges': 'bytes',
+    'Access-Control-Allow-Origin': '*',
+    'Content-Type': type,
+  });
+  const wanted = /^bytes=(\d*)-(\d*)$/.exec(request.headers.get('Range') || '');
+  if (!wanted || (!wanted[1] && !wanted[2])) {
+    headers.set('Content-Length', String(size));
+    return new Response(Readable.toWeb(fs.createReadStream(target)), { status: 200, headers });
+  }
+  // `bytes=-n` is the last n bytes; `bytes=a-` runs to the end.
+  let start = wanted[1] ? Number(wanted[1]) : Math.max(size - Number(wanted[2]), 0);
+  let end = wanted[1] && wanted[2] ? Number(wanted[2]) : size - 1;
+  end = Math.min(end, size - 1);
+  if (start > end || start >= size) {
+    headers.set('Content-Range', `bytes */${size}`);
+    return new Response(null, { status: 416, headers });
+  }
+  start = Math.max(start, 0);
+  headers.set('Content-Range', `bytes ${start}-${end}/${size}`);
+  headers.set('Content-Length', String(end - start + 1));
+  const body = Readable.toWeb(fs.createReadStream(target, { start, end }));
+  return new Response(body, { status: 206, headers });
+}
+
 protocol.registerSchemesAsPrivileged([
   {
     // Models the user dropped into their library, served as files. A .glb is
@@ -101,6 +148,8 @@ protocol.registerSchemesAsPrivileged([
       secure: true,
       supportFetchAPI: true,
       corsEnabled: true,
+      // A video element reads its file in ranges, to seek and to loop.
+      stream: true,
     },
   },
   {
@@ -545,6 +594,8 @@ function setupLibrary() {
   // Environment images. Listed rather than browsed: the renderer picks a name
   // out of the library, and `objectstore.resolve` turns that name into a file.
   ipcMain.handle('library:environments', () => environmentstore.list());
+  ipcMain.handle('library:media', () => mediastore.list());
+  ipcMain.handle('library:addMedia', () => mediastore.add(mainWindow));
   // The dialog is attached to the window so it is modal to Beam rather than
   // floating loose, which is how every other file prompt here behaves.
   ipcMain.handle('library:addEnvironment', () => environmentstore.add(mainWindow));
@@ -744,6 +795,7 @@ app.whenReady().then(() => {
     const url = new URL(request.url);
     const target = objectstore.resolve(decodeURIComponent(`${url.host}${url.pathname}`));
     if (!target) return new Response('Not found', { status: 404 });
+    if (mediastore.kindOf(target) === 'video') return serveRange(request, target);
     const response = await net.fetch(`file://${target}`);
     const headers = new Headers(response.headers);
     headers.set('Access-Control-Allow-Origin', '*');

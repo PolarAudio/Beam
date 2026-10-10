@@ -72,16 +72,24 @@
     const l = await bt.generic('T Laser', {}, 'laser', { x: 0, y: 0, z: 1.5 }, { x: 0, y: 0, z: 180 });
     await wall('screen', { x: 8, y: 0.2, z: 5 }, { x: 0, y: 8, z: 0 });
     bt.device(l, { protocol: 'ponk', source: 'ponk:777', dimmer: 100, shutter: true });
-    const N = 64;
-    const xy = new Float32Array(N * 2);
-    const rgb = new Uint8Array(N * 3);
-    for (let k = 0; k < N; k++) {
-      const a = (k / (N - 1)) * 2 * Math.PI;
-      xy[2 * k] = 0.5 * Math.cos(a);
-      xy[2 * k + 1] = 0.5 * Math.sin(a);
-      rgb[3 * k + 1] = 255;
-    }
-    bt.LaserStream.push({ protocol: 'ponk', service: 777, name: 'test', paths: [{ count: N, xy, rgb }] });
+    // A triangle with a red, a green and a blue side: three colours, and
+    // three sharp corners where the scanner turns.
+    const corners = [[0, 0.6], [0.52, -0.3], [-0.52, -0.3]];
+    const colours = [[255, 0, 0], [0, 255, 0], [0, 0, 255]];
+    const PER_SIDE = 24;
+    const paths = corners.map((from, s) => {
+      const to = corners[(s + 1) % 3];
+      const xy = new Float32Array((PER_SIDE + 1) * 2);
+      const rgb = new Uint8Array((PER_SIDE + 1) * 3);
+      for (let k = 0; k <= PER_SIDE; k++) {
+        const t = k / PER_SIDE;
+        xy[2 * k] = from[0] + (to[0] - from[0]) * t;
+        xy[2 * k + 1] = from[1] + (to[1] - from[1]) * t;
+        rgb.set(colours[s], 3 * k);
+      }
+      return { count: PER_SIDE + 1, xy, rgb };
+    });
+    bt.LaserStream.push({ protocol: 'ponk', service: 777, name: 'test', paths });
     const stream = bt.LaserStream.ponk.get(777);
     if (stream) stream.stale = () => false;
     return {
@@ -93,9 +101,13 @@
   async function projector() {
     const p = await bt.generic('T Proj', {}, 'projector', { x: 0, y: -4, z: 2 }, { x: 0, y: 0, z: 180 });
     await wall('screen', { x: 8, y: 0.2, z: 5 }, { x: 0, y: 6, z: 0 });
+    // The shipped test card, through the file source a user would pick.
     bt.VideoRouter.release();
+    await bt.VideoRouter.select('file:Test card.png');
     bt.show.videoConnectors.push(new bt.VideoConnector({ id: 1 }));
-    bt.device(p, { dimmer: 100, shutter: true, source: 1 });
+    // Dimmed so the card's white reads about 231 at 0% haze: every wedge step
+    // and colour bar stays below clipping, where a change can show.
+    bt.device(p, { dimmer: 15, shutter: true, source: 1 });
     return {
       settle: 5,
       cameras: { front: { position: { x: 5, y: -10, z: 3 }, target: { x: 0, y: 1, z: 2 } } },

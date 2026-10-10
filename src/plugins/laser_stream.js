@@ -94,26 +94,12 @@ export const MAX_WINDOW_MS = 120;
 const LIVE_TIMEOUT_MS = 200;
 
 /**
- * How much of its declared rate a stream must actually be delivering to count
- * as live, as a fraction.
+ * The fraction of its declared rate a stream must deliver to count as live.
  *
- * **Recency is not liveness.** The rule above asks only "did a point arrive in
- * the last 200 ms", and a producer with nothing left to send still answers that
- * -- with a trickle. One measured IDN host, its clip stopped, kept the beam lit
- * for as long as anyone watched: about 31 points a second against a declared
- * 14,610 pps, which is 0.2% of the data. The beam stayed drawn the whole time,
- * thinning as it went, because the renderer drew what little arrived and had no
- * measure of how little that was.
- *
- * A galvo has no picture of its own. Whatever the last figure was, it is gone
- * the moment the data stops, and every interlock in the business treats a
- * starved feed as a dead one. So a stream that is delivering a fraction of what
- * it says it is has stopped, and the beam goes out with it.
- *
- * A quarter is generous on purpose: it has to absorb a dropped batch, a slow
- * frame, and a producer whose rate is derived from its own timing and therefore
- * never exactly steady. Starvation this severe is nowhere near the boundary, so
- * the slack costs nothing.
+ * A producer with nothing left to send can keep sending a trickle, which
+ * passes the recency test above while the beam thins instead of going out. A
+ * quarter leaves room for dropped batches and a rate derived from the
+ * producer's own timing.
  */
 const MIN_LIVE_FRACTION = 0.25;
 
@@ -142,10 +128,7 @@ class ProtocolBuffer {
     this.rate = 0; // play rate of the most recent batch
     this.received = 0; // total points ever received, for a readout
     this.lastPush = 0; // when points last actually arrived
-    /**
-     * Two snapshots of `received`, a staleness interval apart, so the achieved
-     * rate is always measured across a whole window. See `push`.
-     */
+    // Two snapshots of `received`, a staleness interval apart; see achievedRate.
     this.sampleAt = 0;
     this.sampledReceived = 0;
     this.prevSampleAt = 0;
@@ -168,12 +151,8 @@ class ProtocolBuffer {
     if (this.stale()) this.clear();
     this.lastPush = now();
     this.received += n;
-    // Two snapshots of the running total, taken a staleness interval apart, so
-    // the rate below is always measured across a whole window rather than over
-    // the instant since the last batch. One snapshot is not enough: resampling
-    // on every push that crosses the interval leaves a degenerate window on the
-    // tick it resamples, and a starved stream would read as healthy on exactly
-    // the frames it was being judged.
+    // Resample only after a whole interval, so the measured window is never
+    // the instant since the last batch.
     if (!this.sampleAt || now() - this.sampleAt >= LIVE_TIMEOUT_MS) {
       this.prevSampleAt = this.sampleAt;
       this.prevSampled = this.sampledReceived;
@@ -206,9 +185,7 @@ class ProtocolBuffer {
    *   is a fresh array of `count * POINT_STRIDE` values
    */
   frame(windowMs) {
-    // Nothing arriving means nothing lit: the beam goes out with the data. So
-    // does almost nothing arriving -- see `starved`, which is the case that
-    // actually happens, because a host with nothing to send still sends a little.
+    // Nothing, or almost nothing, arriving means nothing lit.
     if (this.starved()) return { rate: this.rate, points: EMPTY_POINTS, count: 0 };
     const ms = Math.min(Math.max(0, windowMs), MAX_WINDOW_MS);
     const wanted = Math.min(this.count, Math.ceil((this.rate * ms) / 1000));
@@ -229,8 +206,8 @@ class ProtocolBuffer {
    * @returns {Number} points per second
    */
   achievedRate() {
-    // The declared rate stands until a whole window has been measured.
-    if (!this.sampleAt) return this.rate;
+    // The declared rate stands until two snapshots a whole window apart exist.
+    if (!this.sampleAt || !this.prevSampleAt) return this.rate;
     const span = this.sampleAt - this.prevSampleAt;
     if (span < LIVE_TIMEOUT_MS) return this.rate;
     return ((this.sampledReceived - this.prevSampled) * 1000) / span;
@@ -247,12 +224,8 @@ class ProtocolBuffer {
   }
 
   /**
-   * Whether the beam should be dark: silent, or fed a fraction of its data.
-   *
-   * A stream that is starving is a stream that has stopped as far as the room
-   * is concerned, and it is the case a recency test cannot see -- see
-   * `MIN_LIVE_FRACTION`. A stream that has never declared a rate is judged on
-   * recency alone, since there is nothing to measure it against.
+   * Whether the beam should be dark: silent, or fed under MIN_LIVE_FRACTION of
+   * its declared rate. A stream with no declared rate is judged on recency alone.
    *
    * @public
    * @returns {Boolean}
@@ -267,6 +240,10 @@ class ProtocolBuffer {
   clear() {
     this.head = 0;
     this.count = 0;
+    // The rate samples restart too, or a stream resuming after a gap would be
+    // read as starved across the gap.
+    this.sampleAt = 0;
+    this.prevSampleAt = 0;
   }
 }
 
@@ -482,11 +459,9 @@ class LaserStream {
       service: buffer.service,
       address: buffer.address,
       rate: buffer.rate,
-      // A dead stream holds nothing worth drawing, whatever is still in
-      // its ring -- so a fixture picking a source by itself does not settle on
-      // one that stopped sending an hour ago, or one being starved to a
-      // trickle. The readout has to agree with what is drawn, or a laser lit
-      // by three points a second reads as receiving.
+      // A dead or starved stream holds nothing worth drawing, so a fixture
+      // picking a source by itself does not settle on one, and the readout
+      // agrees with what is drawn.
       held: buffer.starved() ? 0 : buffer.count,
       live: !buffer.starved(),
       received: buffer.received,

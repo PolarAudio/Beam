@@ -650,6 +650,24 @@ export default {
       ].join(':');
     },
 
+    /**
+     * Sampling for a picture that is a colour, shown smaller than it is.
+     *
+     * The preview shows a 1920-wide frame a few hundred pixels across, so each
+     * screen pixel covers several frame pixels. Without mipmaps it reads one
+     * of them and skips the rest, and fine detail -- a one-pixel grid, thin
+     * text -- breaks into bars and moire. Mipmaps average them. Packed UYVY
+     * bytes are not a colour and cannot be averaged, so they keep nearest.
+     *
+     * @param {Object} texture THREE.Texture
+     */
+    smoothShrink(texture) {
+      texture.minFilter = THREE.LinearMipmapLinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+      texture.generateMipmaps = true;
+      if (this.renderer) texture.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+    },
+
     drawPreview() {
       const { feed } = this;
       if (!feed || !this.renderer) return;
@@ -671,9 +689,7 @@ export default {
             ? new THREE.VideoTexture(element)
             : new THREE.Texture(element);
           this.texture.colorSpace = THREE.SRGBColorSpace;
-          this.texture.minFilter = THREE.LinearFilter;
-          this.texture.magFilter = THREE.LinearFilter;
-          this.texture.generateMipmaps = false;
+          this.smoothShrink(this.texture);
           this.texture.flipY = true;
           this.textureSource = element;
           if (this.quad.material) this.quad.material.dispose();
@@ -696,10 +712,13 @@ export default {
         // in. See `video_feed.js`.
         this.texture.colorSpace = feed.format === 'UYVY'
           ? THREE.NoColorSpace : THREE.SRGBColorSpace;
-        const filter = feed.format === 'UYVY' ? THREE.NearestFilter : THREE.LinearFilter;
-        this.texture.minFilter = filter;
-        this.texture.magFilter = filter;
-        this.texture.generateMipmaps = false;
+        if (feed.format === 'UYVY') {
+          this.texture.minFilter = THREE.NearestFilter;
+          this.texture.magFilter = THREE.NearestFilter;
+          this.texture.generateMipmaps = false;
+        } else {
+          this.smoothShrink(this.texture);
+        }
         this.texture.flipY = true;
         if (this.quad.material) this.quad.material.dispose();
         this.quad.material = createVideoMaterial(feed, this.texture);

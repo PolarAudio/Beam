@@ -104,7 +104,7 @@
   // preferences. These setters write preferences; run.ps1 restores the file.
   bt.room = () => {
     if (vis.houseLights) vis.houseLights = false;
-    if (vis.houseLightsDown !== 36) vis.houseLightsDown = 36;
+    if (vis.houseLightsDown !== 25) vis.houseLightsDown = 25;
     if (vis.environmentHouseOff !== 'room') vis.environmentHouseOff = 'room';
     vis.setBloom('intensity', 0.45);
     vis.setBloom('threshold', 0.46);

@@ -39,19 +39,10 @@ import { addInstancedSource } from './selection_outline';
 const INITIAL_CAPACITY = 64;
 
 /**
- * Where the Draco decoder is served from, which is not the same place in a
- * packaged build as in development.
- *
- * A bare relative path resolves against the document, and in a packaged build
- * the document is a `file://` page while the assets are served over the custom
- * `static://` protocol. The decoder is fetched by a Web Worker as well as by
- * the page, so a `file://` relative fetch is a cross-origin request from an
- * opaque origin and is refused -- so a Draco-compressed model failed to decode
- * in a build and worked in development, which is the worst way for it to fail.
- *
- * `VITE_STATIC_URL` is the prefix the rest of the assets use (`electron.vite.config.js`
- * sets it to `static:/` for a build and leaves it empty for the dev server), so
- * the decoder travels with them.
+ * Where the Draco decoder is served from. A packaged build's document is a
+ * file:// page and its assets come over static://, so the decoder takes the
+ * same VITE_STATIC_URL prefix as every other asset; a bare relative path is
+ * refused there as cross-origin.
  */
 const DRACO_DECODER_PATH = `${import.meta.env.VITE_STATIC_URL}libs/gltf/`;
 

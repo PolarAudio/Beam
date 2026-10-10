@@ -5,9 +5,7 @@ import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import axios from 'axios';
 
 const dracoLoader = new DRACOLoader();
-// The same prefix the models themselves are fetched with, and for the same
-// reason: a relative decoder path resolves against the `file://` document in a
-// packaged build and is refused as cross-origin. See `scene_objects.js`.
+// The same prefix the models are fetched with; see scene_objects.js.
 dracoLoader.setDecoderPath(`${import.meta.env.VITE_STATIC_URL}libs/gltf/`);
 
 /**

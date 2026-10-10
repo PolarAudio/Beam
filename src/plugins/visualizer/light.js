@@ -8,7 +8,7 @@ import Shutter, { SHUTTER_MODES } from './shutter';
 import { kelvinToRgb } from '../../models/DMX/colour_temperature';
 import { hazeShaderPrelude, hazeUniforms } from './haze_noise';
 import LightField, {
-  CANDELA_PER_UNIT, REFERENCE_INTENSITY, REFERENCE_LUMENS, SCENE_INTENSITY_PER_UNIT,
+  CANDELA_PER_UNIT, REFERENCE_INTENSITY, REFERENCE_LUMENS, SCENE_INTENSITY_PER_UNIT, LUX_SCALE,
 } from './light_field';
 import { castsContactShadow } from './contact_shadows';
 import { DepthAtlas } from './projector_depth';
@@ -83,6 +83,18 @@ const BEAM_TOP_RADIUS = 0.09;
  * @constant {Number}
  */
 const LENS_DARK = 0.05;
+
+/**
+ * The most a lens face is drawn at, in scene units. A lit face is the
+ * light's peak candela over the lens's area, on the lux scale: tens of
+ * thousands of times anything else in the frame, which is why a lens glares
+ * in any camera. Held here so the half-float frame and the glare's blur
+ * levels never overflow; the tone curve takes anything past a few units to
+ * white anyway.
+ *
+ * @constant {Number}
+ */
+const LENS_FACE_MAX = 1000;
 /** Scratch for the lens colour write. */
 const lensColor = new THREE.Color();
 /**
@@ -1087,7 +1099,16 @@ class Light {
    */
   updateLensColor() {
     const lit = this.intensity;
-    lensColor.copy(this.color).multiplyScalar(lit);
+    // The face's radiance on the frame's scale: candela over the lens area,
+    // times lux per scene unit, as a lit surface's value is.
+    const area = Math.PI * this.lensRadius * this.lensRadius;
+    const candela = Light.peakCandela(
+      this._lumens,
+      this._spotLight.angle,
+      this._spotLight.penumbra,
+    );
+    const radiance = Math.min((candela / Math.max(area, 1e-4)) * LUX_SCALE, LENS_FACE_MAX);
+    lensColor.copy(this.color).multiplyScalar(lit * radiance);
     lensColor.r += LENS_DARK * (1 - lit);
     lensColor.g += LENS_DARK * (1 - lit);
     lensColor.b += LENS_DARK * (1 - lit);

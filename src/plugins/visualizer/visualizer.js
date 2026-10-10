@@ -99,7 +99,6 @@ const panRight = new THREE.Vector3();
 const panUp = new THREE.Vector3();
 const panStep = new THREE.Vector3();
 import SceneEnv from './scene_env';
-import { hazeCycle, setHazeCycle } from './haze_noise';
 import {
   installAmbient, setHouseBrightness, setHouseState, setEnvironments,
 } from './ambient';
@@ -132,6 +131,7 @@ import {
   ToneMappingEffect,
   ToneMappingMode,
   KernelSize,
+  BlendFunction,
 } from 'postprocessing';
 
 /**
@@ -173,6 +173,7 @@ let bloomEffect = null;
  * stop, or the next change of haze would undo it.
  */
 let bloomManual = false;
+let toneMappingEffect = null;
 
 /**
  * Ambient haze pass, kept accessible so the debug panel and the house lights
@@ -270,6 +271,27 @@ function applyHelperVisibility() {
 const USE_BLOOM = true;
 
 /**
+ * The camera. Fixed, never adaptive: what is set looks the same every time
+ * it is looked at.
+ *
+ * Exposure scales the scene before the tone curve. Scene units are lux on
+ * the projector's scale (`LUX_SCALE` in light_field.js), on which a mover's
+ * pool a few metres from its lens sits at 5 to 60 while the air in a beam
+ * sits below 1. At 1.0 the ACES curve is flat above about 4, so every pool
+ * was a white disc with no shape in it.
+ *
+ * Glare is the lens's own spread of light: a few percent of everything
+ * bright, thrown wide, with no threshold -- a camera does not choose what
+ * to glare on. It replaced a bloom that followed the haze; the haze's
+ * spread of light is now the beams' halo, which is light in the air, not
+ * in the lens.
+ */
+const CAMERA_EXPOSURE = 1.0;
+const CAMERA_TONE_CURVE = 'ACES_FILMIC';
+const GLARE_STRENGTH = 0.04;
+const GLARE_RADIUS = 0.85;
+
+/**
  * Background shown while the house lights are up.
  *
  * rgb(60, 60, 60). Work light means a lit room, and a lit room does not have a
@@ -301,31 +323,6 @@ const DEFAULT_VIEW = {
 
 const HOUSE_LIGHTS_BACKGROUND = '#3c3c3c';
 
-/** Bloom response to fog density, which arrives as 0..1. */
-const BLOOM_BY_FOG = {
-  // Haze off is not glow off: a bright emitter still glares in any lens or eye.
-  // Density adds the extra spread the air contributes on top of that floor.
-  //
-  // The FLOOR is the number that matters. At no haze it is glare on genuinely
-  // bright things only -- intensity near pmndrs' own default of 1.0 and a
-  // threshold high enough that ordinary brightness does not bloom; a low
-  // threshold washes the whole image before any air is involved. Haze opens
-  // it up from there.
-  //
-  // The threshold barely moves with haze. Pools land at their real
-  // illuminance on the projector's lux scale, so a mover's pool is several
-  // times the gate, and a low gate fills the dark between a gobo's bars with
-  // glow. Haze adds strength and spread instead, the spread kept narrow: a
-  // pool a metre or two from its lamp runs to tens of thousands of lux, and
-  // a wide spread smears that over the whole frame as a grey veil.
-  //
-  // Deliberately NOT a preference. Bloom already answers to haze density, which
-  // is a scene control the user sets; a second control over the same quantity
-  // would be one the haze slider cannot reach.
-  intensity: { min: 0.70, max: 2.1 },
-  radius: { min: 0.30, max: 0.50 },
-  threshold: { min: 0.6, max: 0.4 },
-};
 
 /**
  * THREE.Vector3 round prototype override.
@@ -690,27 +687,6 @@ class Visualizer {
   // eslint-disable-next-line class-methods-use-this
   get globalFoggingTurbulences() {
     return SceneEnv.hazeTurbulence * 100;
-  }
-
-  /**
-   * How much contour cycling is mixed into the scene haze, 0..100.
-   *
-   * Reaches every fixture type at once -- the cycling uniform is shared by
-   * reference, the way the haze volume is. Only the baked-volume path reads it,
-   * and only in its cycling mode (`HAZE_MODE` 2 in `haze_noise.js`); the setter
-   * is harmless otherwise. Deliberately not persisted yet: it is a tuning knob
-   * for judging the field, not a settled control.
-   *
-   * @type {Number} 0..100
-   */
-  // eslint-disable-next-line class-methods-use-this
-  set globalHazeCycle(value) {
-    setHazeCycle(Number.isFinite(value) ? Math.min(Math.max(value, 0), 100) / 100 : 0);
-  }
-
-  // eslint-disable-next-line class-methods-use-this
-  get globalHazeCycle() {
-    return hazeCycle() * 100;
   }
 
   /**
@@ -1368,18 +1344,21 @@ class Visualizer {
 
     if (USE_BLOOM) {
       bloomEffect = new BloomEffect({
-        intensity: BLOOM_BY_FOG.intensity.min,
-        luminanceThreshold: BLOOM_BY_FOG.threshold.min,
-        luminanceSmoothing: 0.4,
+        blendFunction: BlendFunction.ADD,
+        intensity: GLARE_STRENGTH,
+        luminanceThreshold: 0,
+        luminanceSmoothing: 0,
         mipmapBlur: true,
-        radius: BLOOM_BY_FOG.radius.min,
+        radius: GLARE_RADIUS,
         kernelSize: KernelSize.LARGE,
       });
     }
 
-    const toneMapping = new ToneMappingEffect({
-      mode: ToneMappingMode.ACES_FILMIC,
+    this.renderer.toneMappingExposure = CAMERA_EXPOSURE;
+    toneMappingEffect = new ToneMappingEffect({
+      mode: ToneMappingMode[CAMERA_TONE_CURVE],
     });
+    const toneMapping = toneMappingEffect;
 
     // Before bloom and tone mapping: the air is part of the image, so it has
     // to be there when glare and the tone curve are worked out. It reads the
@@ -1474,17 +1453,27 @@ class Visualizer {
    */
   applyFogToBloom() {
     // Renderers read haze from SceneEnv themselves; nothing to push here.
-    const density = SceneEnv.hazeAmount;
 
-    if (!bloomEffect) return;
-    // Hands off once the debug panel has set a value by hand, or every slider
-    // would be overwritten the next time the haze moved.
-    if (bloomManual) return;
-    const lerp = (range) => range.min + (range.max - range.min) * density;
+  }
 
-    bloomEffect.intensity = lerp(BLOOM_BY_FOG.intensity);
-    bloomEffect.mipmapBlurPass.radius = lerp(BLOOM_BY_FOG.radius);
-    bloomEffect.luminanceMaterial.threshold = lerp(BLOOM_BY_FOG.threshold);
+  /**
+   * The camera's exposure and tone curve, for comparing settings; not stored.
+   *
+   * @public
+   * @param {Object} camera `{ exposure, curve }`, curve a `ToneMappingMode` name
+   */
+  setCamera({ exposure, curve } = {}) {
+    if (Number.isFinite(exposure) && exposure > 0) this.renderer.toneMappingExposure = exposure;
+    if (curve && toneMappingEffect && ToneMappingMode[curve] !== undefined) {
+      toneMappingEffect.mode = ToneMappingMode[curve];
+    }
+  }
+
+  /** @public @returns {Object} the camera as set */
+  get cameraSettings() {
+    const mode = toneMappingEffect ? toneMappingEffect.mode : null;
+    const curve = Object.keys(ToneMappingMode).find((k) => ToneMappingMode[k] === mode) || null;
+    return { exposure: this.renderer.toneMappingExposure, curve };
   }
 
   /**

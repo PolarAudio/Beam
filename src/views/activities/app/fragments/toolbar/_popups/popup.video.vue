@@ -57,6 +57,14 @@
               :disabled="!filesAvailable"
               @click="addFile"
             />
+            <!-- Puts the selected input on the devices the window was opened from. -->
+            <uk-button
+              v-if="forDevices.length"
+              label="Apply"
+              :title="useLabel"
+              :disabled="alreadyUsed"
+              @click="useSelected"
+            />
           </uk-flex>
         </div>
 
@@ -75,12 +83,6 @@
               {{ selected.name }}
             </h4>
             <uk-spacer />
-            <uk-button
-              v-if="forDevices.length"
-              :label="useLabel"
-              :disabled="alreadyUsed"
-              @click="useSelected"
-            />
             <uk-button
               v-if="!selected.builtIn"
               label="Remove"

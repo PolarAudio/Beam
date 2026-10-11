@@ -168,9 +168,14 @@ export function pictureMapping(picture, device, input = {}) {
   } else if (picture.scale === 'fill') {
     if (contentAspect > frameAspect) sx = contentAspect / frameAspect;
     else sy = frameAspect / contentAspect;
-  } else if (picture.scale === 'native') {
-    sx = inW / pixW;
-    sy = inH / pixH;
+  }
+  // Native places the whole input pixel for pixel and the crop only blacks out
+  // its edges, as a projector's blanking does: the kept pixels stay where they
+  // are. The other modes scale the cropped window to the frame.
+  const inPlace = picture.scale === 'native';
+  if (inPlace) {
+    sx = fullW / pixW;
+    sy = fullH / pixH;
   }
   sx *= picture.zoom;
   sy *= picture.zoom;
@@ -179,6 +184,7 @@ export function pictureMapping(picture, device, input = {}) {
     const o = orientedSample(u, v, picture);
     const x = (o.x - 0.5) / sx + 0.5;
     const y = (o.y - 0.5) / sy + 0.5;
+    if (inPlace) return { x, y };
     return { x: left + x * keptW, y: top + y * keptH };
   };
   const p00 = map(0, 0);

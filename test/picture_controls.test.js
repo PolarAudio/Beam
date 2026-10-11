@@ -104,6 +104,12 @@ console.log('\n-- crop --');
   check('1900 off the left of 1920 keeps the last 20', r((1 - last.bounds.x0) * 1920), 20);
   const tooMuch = pictureMapping(pictureOf(settings({ cropLeft: 1915 })), WIDE, HD);
   check('a crop keeps at least 10 pixels', r((1 - tooMuch.bounds.x0) * 1920), 10);
+  // Native: the kept pixels stay where they were; the crop only blacks out.
+  const DEVICE = { aspect: 16 / 10, pixelsWide: 1920, pixelsHigh: 1200 };
+  const native = pictureMapping(pictureOf(settings({ scale: 'native', cropLeft: 1900 })), DEVICE, HD);
+  check('native: the device\'s right edge shows the input\'s', at(native, 1, 0.5), '1,0.5');
+  check('native: the kept 20 pixels are the device\'s last 20', inside(native, 1 - 10 / 1920, 0.5), true);
+  check('native: the rest is black', inside(native, 0.5, 0.5), false);
   const over = pictureMapping(pictureOf(settings({ cropTop: 600, cropBottom: 600 })), WIDE, HD);
   check('both sides scaled back alike', r((over.bounds.y1 - over.bounds.y0) * 1200), 10);
   check('and about the middle', r((over.bounds.y0 + over.bounds.y1) / 2), 0.5);

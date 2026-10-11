@@ -621,6 +621,8 @@ class Projector {
       inputId: input.id,
       // Lux times metres squared: divide by distance squared for lux.
       lumensPerArea: Math.max(Number(params.lumens) || 0, 0) / areaAtOneMetre,
+      // Full-on/full-off contrast: black is white over this, across the frame.
+      black: 1 / Math.max(Number(params.contrast) || DEFAULT_PROJECTOR_PARAMS.contrast, 1),
       gain,
       blend: {
         left: edge('blendLeft'),

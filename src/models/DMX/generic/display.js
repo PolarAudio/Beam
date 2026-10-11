@@ -99,11 +99,10 @@ export const DEFAULT_DISPLAY_PARAMS = {
   /** The bezel and casing's colour, `#rrggbb`, part of the definition. */
   bodyColor: '#35383c',
   /**
-   * Peak brightness in nits.
+   * Peak brightness in nits (cd/m2): the luminance of full white.
    *
-   * Nothing reads it yet; the renderer will. It is the display's answer to a
-   * projector's lumens, and the reason an outdoor wall reads in daylight where
-   * a monitor does not.
+   * The display's answer to a projector's lumens, and the reason an outdoor
+   * wall reads in daylight where a monitor does not.
    */
   nits: 600,
   /**

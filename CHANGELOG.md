@@ -27,6 +27,8 @@
 - Surfaces are lit in luminance: a matte surface under E lux has luminance reflectance x E / pi. Projected light and the house light now include the pi, as mover pools already did; at the same lux both are a factor of pi darker than before.
 - Projected light is multiplied by the colour of the surface it lands on. A grey #808080 wall returns about 22% of what a white one does; before, every surface returned all of it.
 - The generic projector defaults to 4000 lumens, was 10000.
+- A projector's black level is its white over its contrast, across the frame; the soft edge dims only the picture above it, so blended overlaps show a brighter black.
+- A display's full white is its nits. It used to be a fixed level of about 45 nits whatever the definition said.
 - A projector's light in the haze is sampled only where the frame holds picture. A cropped, fitted or zoomed-out picture no longer breaks into bands in the air.
 - Changing a device value in Fixture settings marks the project as changed. Crop, zoom, shift and the other controls were lost on closing without a prompt.
 - With Native scale a crop only blacks out the edges; the kept pixels stay in place. With Stretch, Fit and Fill the kept part is scaled to the picture.
@@ -38,7 +40,7 @@
 
 ### Development
 
-- Regression set: the projector shows the test card at a dimmer of 70 on a grey screen, so its white sits below clipping; the laser draws a triangle with a red, a green and a blue side. The room uses house lights down at 2 lux.
+- Regression set: a display scene, 40 nits showing the test card. The projector shows the test card at a dimmer of 70 on a grey screen, so its white sits below clipping; the laser draws a triangle with a red, a green and a blue side. The room uses house lights down at 2 lux.
 
 ## 0.1.0-alpha.19
 

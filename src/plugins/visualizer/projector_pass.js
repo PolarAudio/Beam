@@ -375,6 +375,10 @@ ${PICTURE_SLOTS}
     float floorLod = log2(max(across * SHAFT_BLUR_SHARE, 1.0)) + travelled * SHAFT_BLUR_PER_METRE;
     float lod = max(floorLod, log2(max(span, 1.0)));
     vec3 colour = mix(vec3(1.0), pictureLod(i, at, lod).rgb * pictureInside(i, at), hasPicture[i]);
+    // Black is white over the contrast, over the whole frame; the soft edge
+    // dims only the picture above it.
+    float black = emission[i].z;
+    colour = black + (1.0 - black) * colour * blend;
 
     // The frame's own edge, a short gradient: scattering carries a little
     // light sideways out of the frustum.
@@ -385,7 +389,7 @@ ${PICTURE_SLOTS}
     float lux = emission[i].x / max(travelled * travelled, SHAFT_NEAR * SHAFT_NEAR);
     // Absorbed by the room on the way out. Thicker haze eats it sooner.
     float survives = exp(-travelled * SHAFT_FADE_PER_METRE * hazeDensity);
-    return colour * lux * emission[i].y * blend * soft * survives;
+    return colour * lux * emission[i].y * soft * survives;
   }
 
   /**
@@ -540,7 +544,12 @@ ${PICTURE_SLOTS}
         * blendRamp(frame.y, edges.z)
         * blendRamp(1.0 - frame.y, edges.w);
 
-      total += colour * lux * INV_PI * emission[i].y * facing * inside * visible * blend;
+      // Black is white over the contrast, over the whole frame; the soft edge
+      // dims only the picture above it, which is why blended overlaps show a
+      // brighter black.
+      float black = emission[i].z;
+      vec3 lit = black + (1.0 - black) * colour * blend;
+      total += lit * lux * INV_PI * emission[i].y * facing * inside * visible;
     }
     // A surface returns the projected light in proportion to its colour.
     if (hasAlbedo) total *= texture2D(surfaceAlbedo, uv).rgb;
@@ -752,7 +761,8 @@ class ProjectorEffect extends Effect {
       litRect[i].set(lit[0], lit[1], lit[2], lit[3]);
       // x carries the lumens, y the dimmer and shutter folded together. Kept
       // apart so a dimmed machine still reads as the same machine.
-      emission[i].set(projection.lumensPerArea * LUX_SCALE, projection.gain, 0);
+      // z the black level, a fraction of white.
+      emission[i].set(projection.lumensPerArea * LUX_SCALE, projection.gain, projection.black || 0);
     });
   }
 }

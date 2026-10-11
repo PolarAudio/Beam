@@ -6,6 +6,7 @@ import { createPanelMaterial } from './video_material';
 import { DEFAULT_DISPLAY_PARAMS, pixelFill, displayCurve } from '../../models/DMX/generic/display';
 import BodyFinish from './body_finish';
 import { castsContactShadow } from './contact_shadows';
+import { SCENE_PER_NIT } from './light_field';
 import { setOutlined } from './selection_outline';
 
 /**
@@ -407,12 +408,18 @@ class Display {
   /**
    * Scales the picture's brightness, whichever material is drawing it.
    *
+   * Full white is the display's peak luminance, its nits, on the render
+   * buffer's scale.
+   *
    * @public
-   * @param {Number} gain 0..1
+   * @param {Number} level 0..1, dimmer and shutter
    */
-  setGain(gain) {
+  setGain(level) {
     const material = this._material;
     if (!material) return;
+    const stated = Number(this._params.nits);
+    const nits = stated > 0 ? stated : DEFAULT_DISPLAY_PARAMS.nits;
+    const gain = level * nits * SCENE_PER_NIT;
     if (material.uniforms && material.uniforms.gain) {
       material.uniforms.gain.value = gain;
     } else if (material.color) {

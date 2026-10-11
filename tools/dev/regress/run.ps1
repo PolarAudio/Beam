@@ -33,7 +33,7 @@ $outDir = Join-Path $outRoot $Label
 # Scene, camera; each at every haze level.
 $views = @(
   @('movers', 'front'), @('movers', 'under'),
-  @('leds', 'front'), @('laser', 'front'), @('projector', 'front'), @('strobe', 'front')
+  @('leds', 'front'), @('laser', 'front'), @('projector', 'front'), @('display', 'front'), @('strobe', 'front')
 )
 $hazes = @(0, 25, 50, 100)
 

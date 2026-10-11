@@ -108,9 +108,9 @@ export const DEFAULT_PROJECTOR_PARAMS = {
   /**
    * Full-on/full-off contrast.
    *
-   * Worth carrying even though nothing reads it yet: a projector's black is
-   * grey, and it washes whatever it is aimed at. That single number is most of
-   * what separates a projected image from a decal pasted on the model.
+   * A projector's black is its white over this, and it lights the whole frame:
+   * black washes whatever it is aimed at. That single number is most of what
+   * separates a projected image from a decal pasted on the model.
    */
   contrast: 2500,
   /**

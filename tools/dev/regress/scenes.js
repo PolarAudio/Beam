@@ -115,6 +115,19 @@
     };
   }
 
+  async function display() {
+    // 40 nits, so the card's white sits below clipping at EV 5.25 (about 46
+    // nits fills the tone curve) and the wedge and bars can show a change.
+    const d = await bt.generic('T Display', { nits: 40 }, 'display', { x: 0, y: 0, z: 0.7 }, { x: 0, y: 0, z: 0 });
+    const input = bt.show.videoInputs.find((candidate) => candidate.builtIn);
+    bt.device(d, { dimmer: 100, shutter: true, source: input.id });
+    await bt.holdInput(input.id);
+    return {
+      settle: 5,
+      cameras: { front: { position: { x: 0.6, y: -2.6, z: 1.1 }, target: { x: 0, y: 0, z: 0.75 } } },
+    };
+  }
+
   async function strobe() {
     const s = await bt.generic('T Strobe', {}, 'strobe', { x: 0, y: 0, z: 3 }, { x: 0, y: 0, z: 0 });
     bt.device(s, { dimmer: 100, mode: 'on' });
@@ -124,6 +137,6 @@
     };
   }
 
-  window.__scenes = { movers, leds, laser, projector, strobe };
+  window.__scenes = { movers, leds, laser, projector, display, strobe };
   return Object.keys(window.__scenes).join(',');
 })()

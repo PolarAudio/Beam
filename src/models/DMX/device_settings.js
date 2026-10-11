@@ -64,7 +64,7 @@ export const COMMON_CONTROLS = {
    * Which feed, as an **id** when set by hand and a **one-based position** when
    * driven -- see {@link ChoiceType}.
    */
-  source: (label = 'Source Select', source = 'connectors') => new ControlDef('source', label, new ChoiceType({ source }), { fixable: false }),
+  source: (label = 'Source Select', source = 'videoInputs') => new ControlDef('source', label, new ChoiceType({ source }), { fixable: false }),
 };
 
 class DeviceSettings {

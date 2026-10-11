@@ -412,9 +412,6 @@ class Visualizer {
     // A panel that reads `SceneEnv` before this shows zeros for the rest of
     // the session while the scene runs on the stored values.
     SceneEnv.adopt(Preferences.all());
-    // After the preferences are in, so the name is known, and unawaited so a
-    // sender that has gone off the network cannot hold up the whole visualizer.
-    this.restoreVideoSource();
     await ModelInstancer.init(`${import.meta.env.VITE_STATIC_URL}/visualizer/models/model_list.json`);
     this.prepareCamera();
     this.prepareRenderer();
@@ -1122,7 +1119,10 @@ class Visualizer {
           // itself, per tile; see `DepthAtlas.render`.
           ProjectorDepth.render(this.renderer, SceneManager, projections);
         }
-        const feed = VideoRouter.feed();
+        // One picture for every projector until the pass has a slot per
+        // input: the first projector whose input has a feed.
+        const lit = projections.find((p) => VideoRouter.feedFor(p.inputId));
+        const feed = lit ? VideoRouter.feedFor(lit.inputId) : null;
         projectorEffect.setProjections(projections, feed ? feed.displayTexture : null);
       }
     });
@@ -1232,31 +1232,6 @@ class Visualizer {
     // needing the scene rebuilt; only its visibility follows the flag.
     this.debug = Preferences.get('debug');
 
-  }
-
-  /**
-   * Reconnects to the video sender chosen last time, if it is still there.
-   *
-   * Silent when it is not: a machine that had a sender and now does not is the
-   * ordinary case for a laptop away from the rig, and it is not an error worth
-   * interrupting anyone over. Devices show their unbound state until a source
-   * is picked.
-   *
-   * @public
-   * @async
-   */
-  async restoreVideoSource() {
-    const wanted = Preferences.get('videoSource');
-    if (!wanted || !VideoFeed.available()) return;
-    try {
-      const sources = await VideoFeed.sources();
-      if (!sources.some((source) => source.name === wanted)) return;
-      // A show with its own file keeps it, however late discovery answers.
-      if (VideoRouter.name().startsWith(VideoFeed.FILE_PREFIX)) return;
-      await VideoRouter.select(wanted);
-    } catch (err) {
-      // Discovery failing is not worth a dialog; the picker will say so.
-    }
   }
 
   /**

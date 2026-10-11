@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import VideoRouter from './video_router';
 import SceneManager from './scene_manager';
 import { PROJECTOR_NEAR, PROJECTOR_FAR } from './projector_depth';
 import { castsContactShadow } from './contact_shadows';
@@ -36,6 +37,11 @@ import { setOutlined } from './selection_outline';
  */
 
 /** Every projector in the scene, so the statics can sweep them. */
+
+/** The whole picture, as the pass reads a rectangle of it. */
+const FULL_FRAME = {
+  x: 0, y: 0, width: 1, height: 1,
+};
 const instances = new Set();
 
 /** Unit body, scaled per projector. */
@@ -146,7 +152,7 @@ class Projector {
     // and this sees the new value on the next refresh without being re-handed
     // anything. Null for a projector built without a placement behind it.
     this._settingsAt = data.settingsAt || (() => null);
-    this._connectorAt = data.connectorAt || (() => null);
+    this._inputAt = data.inputAt || (() => null);
     // The lens as a camera: what it can see is what it lights. Plain rather
     // than a PerspectiveCamera because the frustum is asymmetric -- lens shift
     // is an off-centre projection, and `fov` cannot say that.
@@ -495,6 +501,7 @@ class Projector {
   static deleteInstance(instance) {
     if (!instance) return;
     instances.delete(instance);
+    VideoRouter.drop(instance);
     if (instance._frustum && instance._frustum.geometry) instance._frustum.geometry.dispose();
     setOutlined(instance, false);
     if (instance._dummy) SceneManager.remove(instance._dummy);
@@ -522,9 +529,10 @@ class Projector {
    * @returns {Object|null} `{ camera, lensMatrix, rect, lumensPerArea, gain }`
    */
   projection() {
-    if (this._hidden) return null;
-    const connector = this._connectorAt();
-    if (!connector) return null;
+    const input = this._hidden ? null : this._inputAt();
+    // Opens the input's feed if nothing else holds it; a no-op when unchanged.
+    VideoRouter.use(this, input ? input.id : null);
+    if (!input) return null;
 
     const settings = this._settingsAt();
     // A closed shutter is a projector throwing nothing, not a black picture --
@@ -580,7 +588,10 @@ class Projector {
     return {
       camera: this._camera,
       lensMatrix: this._lensMatrix,
-      rect: connector.rect,
+      // The whole picture: cropping and scaling are a device feature still
+      // to come, not a slice of a shared frame.
+      rect: FULL_FRAME,
+      inputId: input.id,
       // Lux times metres squared: divide by distance squared for lux.
       lumensPerArea: Math.max(Number(params.lumens) || 0, 0) / areaAtOneMetre,
       gain,

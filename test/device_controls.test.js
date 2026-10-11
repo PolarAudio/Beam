@@ -123,7 +123,7 @@ console.log('\n-- a shutter is not a small number --');
   check('and offers a checkbox for it', blank.type.editor, 'switch');
   const source = DISPLAY_DEFS.find((def) => def.key === 'source');
   check('a source offers a list', source.type.editor, 'choice');
-  check('of connectors', source.type.source, 'connectors');
+  check('of video inputs', source.type.source, 'videoInputs');
 }
 
 console.log('\n-- multi-byte parameters, coarse first --');

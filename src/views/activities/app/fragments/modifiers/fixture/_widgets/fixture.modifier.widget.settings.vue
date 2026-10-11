@@ -262,9 +262,39 @@
             v-show="byHand('source')"
             :model-value="sourceIndex"
             style="flex: 1"
-            label="Source"
+            label="Input"
             :options="sourceOptions"
             @input="pickSource"
+          />
+        </uk-flex>
+
+        <!-- What the panel or its processor does to the picture it receives. -->
+        <uk-flex
+          v-if="isDisplay"
+          :gap="8"
+          class="row"
+        >
+          <uk-select-input
+            v-show="byHand('rotation')"
+            :model-value="rotationIndex"
+            style="flex: 1"
+            label="Rotation"
+            :options="rotationOptions"
+            @input="pickRotation"
+          />
+          <uk-checkbox
+            v-show="byHand('mirrorH')"
+            :mixed="isMixed('mirrorH')"
+            :model-value="!!read('mirrorH')"
+            label="Mirror H"
+            @update:model-value="writeDevice('mirrorH', $event)"
+          />
+          <uk-checkbox
+            v-show="byHand('mirrorV')"
+            :mixed="isMixed('mirrorV')"
+            :model-value="!!read('mirrorV')"
+            label="Mirror V"
+            @update:model-value="writeDevice('mirrorV', $event)"
           />
         </uk-flex>
 
@@ -557,6 +587,7 @@
 
 <script>
 import { DMX_UNIVERSE_LENGTH } from '@/models/DMX/patch.model';
+import { ROTATIONS } from '@/models/DMX/video_input';
 import { MAX_SHADOW_CASTERS } from '@/plugins/visualizer/light';
 import { imageSizeAt } from '@/models/DMX/generic/projector';
 import { GENERIC_KINDS } from '@/models/DMX/generic/kinds';
@@ -595,6 +626,11 @@ const WIRE_POLL_MS = 100;
 
 /** How long the copy button confirms for, in ms. */
 const COPY_FEEDBACK_MS = 1500;
+
+/** How each rotation reads in the list. */
+const ROTATION_NAMES = {
+  0: '0°', 90: '90° clockwise', 180: '180°', 270: '90° anticlockwise',
+};
 
 export default {
   name: 'FixtureModifierWidgetSettings',
@@ -963,9 +999,22 @@ export default {
         ? 'Held until DMX arrives, then whatever is driving wins.'
         : 'Not patched, so these are the only thing driving this fixture.';
     },
-    /** Every connector in the show, with an unbound entry at the top. */
-    connectors() {
-      return (this.$show && this.$show.videoConnectors) || [];
+    /** Every video input in the show. */
+    videoInputs() {
+      return (this.$show && this.$show.videoInputs) || [];
+    },
+    /** A screen: it turns and mirrors its picture. */
+    isDisplay() {
+      return !!(this.fixture && this.fixture.deviceKind === GENERIC_KINDS.DISPLAY);
+    },
+    rotationOptions() {
+      const list = ROTATIONS.map((r) => ROTATION_NAMES[r]);
+      return this.isMixed('rotation') ? ['*', ...list] : list;
+    },
+    rotationIndex() {
+      if (this.isMixed('rotation')) return 0;
+      const at = ROTATIONS.indexOf(Number(this.read('rotation')) || 0);
+      return at < 0 ? 0 : at;
     },
     /** How this laser is fed. */
     protocol() {
@@ -1088,10 +1137,10 @@ export default {
       return `Receiving${state.rate ? ` at ${Math.round(state.rate / 1000)} kpps` : ''}.`;
     },
     sourceOptions() {
-      // A laser's source is which Ponk stream feeds it, not a video connector.
+      // A laser's source is which Ponk stream feeds it, not a video input.
       const list = this.isLaser
         ? this.laserSources.map((source) => source.label)
-        : ['— none —', ...this.connectors.map((c) => c.name)];
+        : ['— none —', ...this.videoInputs.map((input) => input.name)];
       return this.isMixed('source') ? ['*', ...list] : list;
     },
     sourceIndex() {
@@ -1102,13 +1151,13 @@ export default {
         return at < 0 ? 0 : at;
       }
       if (value === null || value === undefined) return 0;
-      // A channel names a connector by position, one-based, which is what makes
+      // A channel names an input by position, one-based, which is what makes
       // `Source Select = 1` read as the first one. A hand-set value is an id,
-      // which survives connectors being reordered.
+      // which survives inputs being reordered.
       if (this.device.isDriven('source') && this.device.hasLive('source')) {
-        return Math.min(Math.max(value, 0), this.connectors.length);
+        return Math.min(Math.max(value, 0), this.videoInputs.length);
       }
-      const at = this.connectors.findIndex((c) => c.id === value);
+      const at = this.videoInputs.findIndex((input) => input.id === value);
       return at < 0 ? 0 : at + 1;
     },
     /**
@@ -1423,11 +1472,16 @@ export default {
         this.writeDevice('source', (this.laserSources[index] || {}).value || null);
         return;
       }
-      const connector = index > 0 ? this.connectors[index - 1] : null;
+      const input = index > 0 ? this.videoInputs[index - 1] : null;
       // Through `writeDevice` rather than writing here: that is the one path
       // that also tells the renderer to redraw; without it, picking a source
       // would leave a display black until some *other* field was touched.
-      this.writeDevice('source', connector ? connector.id : null);
+      this.writeDevice('source', input ? input.id : null);
+    },
+    pickRotation(pick) {
+      const index = Number(pick) - (this.isMixed('rotation') ? 1 : 0);
+      if (index < 0 || index >= ROTATIONS.length) return;
+      this.writeDevice('rotation', ROTATIONS[index]);
     },
     /**
      * Sets how this laser is fed.

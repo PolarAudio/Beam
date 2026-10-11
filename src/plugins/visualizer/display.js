@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import SceneManager from './scene_manager';
 import VideoRouter from './video_router';
+import { orientedSample } from '../../models/DMX/video_input';
 import { createPanelMaterial } from './video_material';
 import { DEFAULT_DISPLAY_PARAMS, pixelFill, displayCurve } from '../../models/DMX/generic/display';
 import BodyFinish from './body_finish';
@@ -19,10 +20,10 @@ import { setOutlined } from './selection_outline';
  * which the view cube calls Front -- so a display at zero rotation stands
  * upright facing the way an audience sits, rather than lying on its back.
  *
- * The crop is done exactly the way the slicing editor does it: four geometry
- * UVs written from `VideoConnector.sampleAt`. That method is the one place that
- * says what a rotation and a flip mean, which is why it is on the model rather
- * than in the editor.
+ * A display shows the whole of its input, turned and mirrored by its own
+ * settings, as a real panel or LED processor does. The geometry UVs are
+ * written from `orientedSample`, the one place that says what a rotation and a
+ * mirror mean.
  */
 
 /** Every display in the scene, so the statics can sweep them. */
@@ -282,12 +283,12 @@ class Display {
    * @param {Object} data
    * @param {Object} data.params display parameters, see the generic model
    * @param {Function} [data.settingsAt] () => the placement's DisplaySettings
-   * @param {Function} [data.connectorAt] () => the VideoConnector it shows
+   * @param {Function} [data.inputAt] () => the VideoInput it shows
    */
   constructor(data = {}) {
     this._params = data.params || {};
     this._settingsAt = data.settingsAt || (() => null);
-    this._connectorAt = data.connectorAt || (() => null);
+    this._inputAt = data.inputAt || (() => null);
     this._position = new THREE.Vector3();
     this._rotation = new THREE.Vector3();
     this.unsupported = false;
@@ -360,14 +361,16 @@ class Display {
    * @public
    */
   refresh() {
-    const feed = VideoRouter.feed();
-    const connector = this._connectorAt();
+    const input = this._inputAt();
+    // Opens the input's feed if nothing else holds it; a no-op when unchanged.
+    VideoRouter.use(this, input ? input.id : null);
+    const feed = input ? VideoRouter.feedFor(input.id) : null;
     const settings = this._settingsAt();
 
     // Nothing selected, nothing bound, or nothing decoded yet. `displayTexture`
     // rather than `texture`: the raw one cannot be filtered, which is the whole
     // reason the decode pass exists.
-    if (!feed || !feed.displayTexture || !connector) {
+    if (!feed || !feed.displayTexture) {
       if (this._screen.material !== BLANK_MATERIAL) this._screen.material = BLANK_MATERIAL;
       this._material = null;
       this._feedGeneration = -1;
@@ -390,7 +393,7 @@ class Display {
       this._feedGeneration = VideoRouter.generation();
     }
 
-    this.writeScreenUvs(connector);
+    this.writeScreenUvs(settings);
 
     // Dimmer and blank fold into one number, because from the screen's point of
     // view they are the same thing: how much of the picture comes out.
@@ -419,18 +422,22 @@ class Display {
   }
 
   /**
-   * Points the screen's corners at the region the connector describes.
+   * Points the screen at its input, turned and mirrored by the settings.
    *
-   * The same four-corner permutation the slicing editor uses, through the same
-   * `sampleAt` -- a crop, a quarter turn and two mirrors are one reordering of
-   * four pairs. The inversions in `y` are the texture's, not the connector's:
-   * the frame is uploaded with `flipY`, so v = 1 is the picture's top row while
-   * every coordinate on a connector counts downwards from the top-left.
+   * A quarter turn and two mirrors are one reordering of the panel's
+   * coordinates, through `orientedSample`. The inversions in `y` are the
+   * texture's: the frame is uploaded with `flipY`, so v = 1 is the picture's
+   * top row while the orientation counts downwards from the top-left.
    *
    * @public
-   * @param {Object} connector a VideoConnector
+   * @param {Object} settings the display's DisplaySettings, or null
    */
-  writeScreenUvs(connector) {
+  writeScreenUvs(settings) {
+    const orientation = settings ? {
+      rotation: Number(settings.value('rotation')) || 0,
+      mirrorH: !!settings.value('mirrorH'),
+      mirrorV: !!settings.value('mirrorV'),
+    } : {};
     const attribute = this._screen.geometry.attributes.uv;
     const panel = this._screen.geometry.attributes.panelUv;
     if (!attribute || !panel) return;
@@ -438,7 +445,7 @@ class Display {
     // screen -- which has as many vertices as it has facets -- maps the same way
     // a flat one does.
     const pick = (u, v) => {
-      const at = connector.sampleAt(u, 1 - v);
+      const at = orientedSample(u, 1 - v, orientation);
       return { x: at.x, y: 1 - at.y };
     };
     for (let i = 0; i < attribute.count; i += 1) {
@@ -619,8 +626,9 @@ class Display {
    * @public
    */
   sync() {
-    const feed = VideoRouter.feed();
-    const ready = !!(feed && feed.displayTexture && this._connectorAt());
+    const input = this._inputAt();
+    const feed = input ? VideoRouter.feedFor(input.id) : null;
+    const ready = !!(feed && feed.displayTexture);
     const generation = VideoRouter.generation();
     if (ready === this._ready && generation === this._syncGeneration) return;
     this._ready = ready;
@@ -637,6 +645,7 @@ class Display {
   static deleteInstance(instance) {
     if (!instance) return;
     instances.delete(instance);
+    VideoRouter.drop(instance);
     if (instance._material) instance._material.dispose();
     if (instance._body) instance._body.geometry.dispose();
     if (instance._screen) instance._screen.geometry.dispose();

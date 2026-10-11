@@ -1431,8 +1431,8 @@ class Fixture extends withTransform(Proxify) {
         // Read rather than copied: the panel edits the settings object in
         // place and the renderer has to see the new value on its next refresh.
         settingsAt: () => this.device,
-        // What this machine is throwing, resolved the same way a display's is.
-        connectorAt: () => VideoRouter.connector(this.device && this.device.value('source')),
+        // The input this machine throws, resolved the same way a display's is.
+        inputAt: () => VideoRouter.input(this.device && this.device.value('source')),
       }));
       this._3DModel.fixtureHandle = this;
       this._3DModel.position = this._position;
@@ -1443,9 +1443,9 @@ class Fixture extends withTransform(Proxify) {
       this._3DModel = markRaw(new Display({
         params: this.OFLData.asls.display,
         settingsAt: () => this.device,
-        // The connector this display is showing, resolved through the router
-        // so nothing in the model layer has to reach for the show.
-        connectorAt: () => VideoRouter.connector(this.device && this.device.value('source')),
+        // The input this display shows, resolved through the router so nothing
+        // in the model layer has to reach for the show.
+        inputAt: () => VideoRouter.input(this.device && this.device.value('source')),
       }));
       this._3DModel.fixtureHandle = this;
       this._3DModel.position = this._position;

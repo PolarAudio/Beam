@@ -420,7 +420,7 @@ export const CONTROL_DEFS = [
   new ControlDef(PROJECTOR_CHANNELS.SHIFT_V, 'Lens Shift V', new PercentType({
     initial: 0, limit: (params) => shiftLimit(params, 'V'),
   }), { capability: { type: 'BeamPosition' } }),
-  COMMON_CONTROLS.source('Source Select', 'connectors'),
+  COMMON_CONTROLS.source('Source Select', 'videoInputs'),
 ];
 
 /** Derived, so a parameter cannot be in one of these and missing from another. */

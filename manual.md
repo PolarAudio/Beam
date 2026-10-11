@@ -590,11 +590,19 @@ A beam is light scattered by the haze, so with haze off there is no beam, only t
 
 ## Video input
 
-Projectors and display panels show a picture from one video source. **Preferences → Video** picks it, and carves it into connectors that devices show.
+A show receives pictures through **inputs**. An input is one NDI stream or one image or video file. Each display or projector picks an input in its settings and shows all of it; several devices can share one. Laying content out across outputs is the media server's job, so send one NDI stream per output from MadMapper or Resolume.
 
-- **NDI senders** on the network, such as MadMapper's output. Which sender is a setting of this machine, because a sender's name means nothing on another one.
-- **Image and video files.** **Add file…** copies a PNG, JPEG or WebP image, or an MP4, MOV or WebM video, into `Documents\Beatline\Beam\Library\Media`. A video plays muted and loops. A file belongs to the show: it is saved with it, and **Export Project to...** carries the file, so the show opens with its picture on another machine.
-- **Test card** ships with Beam. It has a grey wedge, colour bars, a fine grid, a circle and an F in the top-left corner, so a picture that is too bright, the wrong colour, soft, stretched, mirrored or turned shows it.
+**Preferences → Video** lists the show's inputs, with a dot for each: green live, yellow waiting, orange not bound or not found, grey when no device shows it. The number beside an input is how many devices use it.
+
+- **Add NDI input** adds one, and **Sender** picks the NDI sender that fills it. Which sender is a setting of this machine, because a sender's name means nothing on another one. A new input takes the sender's name until you rename it.
+- **Add file…** copies a PNG, JPEG or WebP image, or an MP4, MOV or WebM video, into `Documents\Beatline\Beam\Library\Media` and adds it as an input. A video plays muted and loops. A file belongs to the show: it is saved with it, and **Export Project to...** carries the file, so the show opens with its picture on another machine.
+- **Test card** adds the card that ships with Beam. It has a grey wedge, colour bars, a fine grid, a circle and an F in the top-left corner, so a picture that is too bright, the wrong colour, soft, stretched, mirrored or turned shows it.
+
+A feed only opens while a device shows its input, so an unused input costs nothing.
+
+A display's settings also have **Rotation** and **Mirror H** / **Mirror V**, for a panel mounted in portrait or seen from behind. The picture is turned first, then mirrored. Projectors show their input as it arrives; until a later update every projector shows the first projector's input.
+
+A show saved with connectors opens with one input in their place. A device on a connector that covered the whole frame keeps its turn and mirrors. A device on a smaller connector now shows the whole picture, and Beam lists those devices once when the show opens.
 
 ## Lasers
 

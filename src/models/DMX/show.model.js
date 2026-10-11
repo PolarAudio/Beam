@@ -10,7 +10,7 @@ import {
 
 import PatchSingleton from './patch.model';
 import migrateShowData, { SHOWFILE_VERSION } from './showfile.migrate';
-import VideoConnector from './video_connector';
+import VideoInput, { migrateVideo, INPUT_KINDS } from './video_input';
 import FixturePool from './fixture.pool.model';
 import Group from './group.model';
 import Structure from './structure.model';
@@ -24,7 +24,7 @@ import {
 import { kindById } from './generic/fixture_kind';
 import DefinitionStore, { SHOW_SCOPE, showKey } from './definition_store';
 import VideoRouter from '../../plugins/visualizer/video_router';
-import { FILE_PREFIX } from '../../plugins/visualizer/video_feed';
+import Preferences from '../../plugins/visualizer/preferences';
 import SceneObjects from '../../plugins/visualizer/scene_objects';
 import Studio from './studio';
 import { normaliseMatrixProfile } from './ofl_matrix';
@@ -223,24 +223,14 @@ class Show extends EventEmitter {
      */
     this.objects = [];
     /**
-     * Named regions of a video feed that devices are patched to.
-     *
-     * Not scene items: a connector has no position and nothing draws it, so it
-     * is closer to a universe than to a fixture and stays out of the item
-     * list. See `video_connector.js`.
+     * The pictures this show receives: NDI streams and files. A display or
+     * projector names one by id. Not scene items: an input has no position
+     * and nothing draws it. See `video_input.js`.
      */
-    this.videoConnectors = [];
-    /**
-     * The image or video file the show's video comes from, by file name, or
-     * empty when it comes from an NDI sender. A file belongs to the show and
-     * travels with it; a sender is a fact about one machine and stays in
-     * Preferences.
-     */
-    this.videoFile = '';
-    // Installed once, on the array itself rather than its contents: the popup
-    // edits connectors in place and pushes new ones, and the lookup reads the
-    // live array each time, so it never needs re-installing.
-    this.publishVideoConnectors();
+    this.videoInputs = [];
+    // Installed once: the lookups read the live array each time, so inputs
+    // added or removed later are found without re-installing.
+    this.publishVideoInputs();
     /** Library models available to place, by key. Read once per load. */
     this.objectLibrary = {};
     /** Saved structure definitions, keyed by name, for placing again. */
@@ -343,11 +333,9 @@ class Show extends EventEmitter {
       // nothing references any more is not part of this show.
       definitions: this.pruneDefinitions().toJSON(),
       fixtures: this.fixturePool.fixtures.map(withListOrder),
-      // The rectangles, and deliberately not which sender fills them: that is
-      // a fact about one machine, and this file opens on others.
-      videoConnectors: this.videoConnectors.map((connector) => connector.showData),
-      // The file the picture comes from, when it is a file.
-      videoFile: this.videoFile || '',
+      // The inputs, and deliberately not which sender fills an NDI one: that
+      // is a fact about one machine, and this file opens on others.
+      videoInputs: this.videoInputs.map((input) => input.showData),
       // Views, not cameras: five numbers each, applied to the one camera the
       // visualizer has. They belong to the show because they are about this
       // scene -- a locked view onto a rig is how you see that a material
@@ -435,18 +423,58 @@ class Show extends EventEmitter {
   }
 
   /**
-   * Lets the scene turn a connector id into the connector itself.
+   * Lets the scene turn an input id into the input itself.
    *
    * Installed here because this is the only object that knows both -- a
    * renderer must not reach into the show, and the show must not know what a
-   * renderer wants. One function, set once, and `video_router.js` holds it.
+   * renderer wants. Set once, and `video_router.js` holds it.
    *
    * @public
    */
-  publishVideoConnectors() {
-    VideoRouter.resolveWith((id) => (
-      (this.videoConnectors || []).find((connector) => connector.id === id) || null
-    ));
+  publishVideoInputs() {
+    VideoRouter.resolveWith(
+      (id) => (this.videoInputs || []).find((input) => input.id === id) || null,
+      () => this.videoInputs || [],
+    );
+  }
+
+  /**
+   * Adds a video input to the show.
+   *
+   * @public
+   * @param {Object} data `{ kind, file, name }`
+   * @returns {Object} the VideoInput
+   */
+  addVideoInput(data = {}) {
+    const input = new VideoInput(data);
+    this.videoInputs.push(input);
+    this.touch();
+    VideoRouter.refresh();
+    return input;
+  }
+
+  /**
+   * Removes a video input. Devices that showed it show nothing.
+   *
+   * @public
+   * @param {Number} id
+   */
+  removeVideoInput(id) {
+    const at = this.videoInputs.findIndex((input) => input.id === id);
+    if (at < 0) return;
+    this.videoInputs.splice(at, 1);
+    this.touch();
+    VideoRouter.refresh();
+  }
+
+  /**
+   * Marks an input's name or file changed.
+   *
+   * @public
+   */
+  videoInputChanged() {
+    this.touch();
+    VideoRouter.refresh();
   }
 
   /**
@@ -505,8 +533,7 @@ class Show extends EventEmitter {
     SceneObjects.clear();
     // Nothing to dispose: a connector holds no scene node and no GPU
     // resource, only numbers.
-    this.videoConnectors = [];
-    this.videoFile = '';
+    this.videoInputs = [];
     this.definitions = new DefinitionStore();
     this.isSaved = true;
   }
@@ -662,7 +689,9 @@ class Show extends EventEmitter {
     const objects = new Set(this.objects
       .filter((object) => !object.isInline && object.model)
       .map((object) => object.model));
-    const media = this.videoFile ? [this.videoFile] : [];
+    const media = (this.videoInputs || [])
+      .filter((input) => input.kind === INPUT_KINDS.FILE && input.file)
+      .map((input) => input.file);
     return { profiles: [...profiles], objects: [...objects], media };
   }
 
@@ -785,7 +814,9 @@ class Show extends EventEmitter {
    * @async
    */
   async loadShowData(rawShowData, options = {}) {
-    const showData = migrateShowData(rawShowData);
+    // Connectors and a single video file become inputs; see `migrateVideo`.
+    const video = migrateVideo(migrateShowData(rawShowData), Preferences.get('videoSource'));
+    const { showData } = video;
     // A document may carry its own copy of a GDTF fixture, so what was read
     // for the last one does not stand for this one.
     this.gdtfTypes = new Map();
@@ -829,9 +860,9 @@ class Show extends EventEmitter {
     this.loading.message = 'Restoring structures';
     this.prepareStructures(showData);
 
-    this.videoConnectors = (showData.videoConnectors || [])
-      .map((data) => new VideoConnector(data));
-    this.videoFile = typeof showData.videoFile === 'string' ? showData.videoFile : '';
+    this.videoInputs = (showData.videoInputs || []).map((data) => new VideoInput(data));
+    // This machine's sender carries over to the input it now fills.
+    if (video.binding) VideoRouter.bind(video.binding.uid, video.binding.sender);
 
     // Cameras belong to the show, so the one arriving replaces the one that
     // was open. A file with no cameras empties the list rather than leaving
@@ -869,42 +900,10 @@ class Show extends EventEmitter {
       }
     }
 
-    this.applyVideoSource();
-  }
-
-  /**
-   * Points the scene's video at what this show uses: its file, or else the
-   * NDI sender this machine last chose.
-   *
-   * @public
-   * @async
-   */
-  async applyVideoSource() {
-    try {
-      if (this.videoFile) {
-        await VideoRouter.select(`${FILE_PREFIX}${this.videoFile}`);
-        return;
-      }
-      if (VideoRouter.name().startsWith(FILE_PREFIX)) VideoRouter.release();
-      if (this.visualizerHandle && this.visualizerHandle.restoreVideoSource) {
-        await this.visualizerHandle.restoreVideoSource();
-      }
-    } catch (err) {
-      // A missing file or sender leaves the devices unbound, which they say.
-    }
-  }
-
-  /**
-   * Makes a media file the show's video source, or none.
-   *
-   * @public
-   * @param {String} key file name, or empty for none
-   */
-  setVideoFile(key) {
-    const next = key || '';
-    if (next === this.videoFile) return;
-    this.videoFile = next;
-    this.touch();
+    VideoRouter.refresh();
+    // Said once, when the show opens: these devices showed part of a picture
+    // and now show all of it.
+    if (video.lostCrop.length) this.emit('videoCropsDropped', video.lostCrop);
   }
 
   /**

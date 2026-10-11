@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import VideoDecode from './video_decode';
+import { FILE_PREFIX } from '../../models/DMX/video_input';
 
 /**
  * @file A live video source, as a texture.
@@ -17,8 +18,7 @@ import VideoDecode from './video_decode';
  * nothing downstream can tell the two apart.
  */
 
-/** The prefix that marks a source name as a media file. */
-export const FILE_PREFIX = 'file:';
+export { FILE_PREFIX };
 
 /** Open feeds by handle, so an arriving frame can find the one it belongs to. */
 const feeds = new Map();

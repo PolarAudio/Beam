@@ -101,13 +101,14 @@
   async function projector() {
     const p = await bt.generic('T Proj', {}, 'projector', { x: 0, y: -4, z: 2 }, { x: 0, y: 0, z: 180 });
     await wall('screen', { x: 8, y: 0.2, z: 5 }, { x: 0, y: 6, z: 0 });
-    // The shipped test card, through the file source a user would pick.
-    bt.VideoRouter.release();
-    await bt.VideoRouter.select('file:Test card.png');
-    bt.show.videoConnectors.push(new bt.VideoConnector({ id: 1 }));
+    // The shipped test card, as an input a user would add.
+    const input = bt.show.addVideoInput({ kind: 'file', file: 'Test card.png', name: 'Test card' });
     // Dimmed so the card's white reads about 231 at 0% haze: every wedge step
     // and colour bar stays below clipping, where a change can show.
-    bt.device(p, { dimmer: 15, shutter: true, source: 1 });
+    bt.device(p, { dimmer: 15, shutter: true, source: input.id });
+    // Held open by the harness and waited for, so the first shot has the
+    // picture: frames here are drawn on demand, not by the app's loop.
+    await bt.holdInput(input.id);
     return {
       settle: 5,
       cameras: { front: { position: { x: 5, y: -10, z: 3 }, target: { x: 0, y: 1, z: 2 } } },

@@ -30,6 +30,13 @@ const DEFAULTS = {
    * being enabled is honoured.
    */
   videoSource: '',
+  /**
+   * Which NDI sender fills each NDI input on this machine, by the input's
+   * uid. A sender's name means nothing on another computer, so this is a
+   * setting, not show data. `videoSource` above is read once, to bind the
+   * input an older show opens with.
+   */
+  videoBindings: {},
   globalFoggingState: 1,
   /**
    * Haze intensity, as a percentage.

@@ -28,7 +28,6 @@
     VideoRouter: await M('/src/plugins/visualizer/video_router.js'),
     Shutter: await M('/src/plugins/visualizer/shutter.js'),
     Studio: await M('/src/models/DMX/studio.js'),
-    VideoConnector: await M('/src/models/DMX/video_connector.js'),
     Light: await M('/src/plugins/visualizer/light.js'),
     Laser: await M('/src/plugins/visualizer/laser.js'),
     Artnet: await M('/src/plugins/artnet.connection.js'),
@@ -59,6 +58,7 @@
 
   bt.reset = async () => {
     bt.universes = new Map();
+    bt.VideoRouter.drop(bt);
     const blank = await (await fetch('/demo/showfiles/blank.showfile.json')).json();
     await show.loadFromData(blank);
     await show.loadChain;
@@ -75,6 +75,16 @@
       show.patchFixture(f);
     }
     return f;
+  };
+  // Opens an input's feed for the harness and waits for its first picture.
+  bt.holdInput = async (id) => {
+    bt.VideoRouter.use(bt, id);
+    for (let i = 0; i < 100; i += 1) {
+      const feed = bt.VideoRouter.feedFor(id);
+      if (feed && feed.width) return feed;
+      await new Promise((ok) => { setTimeout(ok, 20); });
+    }
+    throw new Error(`input ${id} did not open`);
   };
   bt.generic = async (name, params, kind, position, rotation) => {
     const [m, n] = show.createDefinition(name, params, kind).split('/');

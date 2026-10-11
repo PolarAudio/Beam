@@ -296,6 +296,12 @@ export default {
         ));
       }
     });
+    this.$show.on('videoCropsDropped', (names) => {
+      EventBus.emit('app_error', new Error(
+        'Video connectors are gone: a display or projector now shows a whole input. '
+        + `These showed part of a picture and now show all of it: ${names.join(', ')}`,
+      ));
+    });
     EventBus.on('app_ready', () => {
       this.project = this.$show.documentTitle;
     });

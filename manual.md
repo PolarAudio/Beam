@@ -489,7 +489,7 @@ The widget says which of the two you're looking at. The **DMX Channels** table h
 
 **The gizmo.** Select something and it appears. **T** for translate, **R** for rotate, **S** for scale (one 3D model at a time), **H** to hide it, **Escape** to drop the selection.
 
-**Model size.** A model from a file has **Length (X)**, **Width (Y)** and **Height (Z)** in metres in the Placement widget, along the model's own axes, with its original size beneath. Fixtures and created shapes do not scale.
+**Model size.** A model from a file has **Length (X)**, **Width (Y)** and **Height (Z)** in metres in the Placement widget, along the model's own axes, with its original size beneath. Fixtures and created shapes do not scale. A size change keeps the model's lowest point where it was, so a model on the floor stays on the floor; a scale with the gizmo settles the same way when you let go.
 
 **The Position Tool.** In the modifier panel. Exact numeric entry:
 

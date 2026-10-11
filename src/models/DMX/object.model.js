@@ -498,8 +498,39 @@ class SceneObject extends withTransform(Object) {
    */
   writeScale(axis, value) {
     Controls.detach(this);
-    this.scale = { ...this._scale, [axis]: value };
+    this.scaleKeepingBottom({ ...this._scale, [axis]: value });
     Controls.attach(this);
+  }
+
+  /**
+   * Sets the scale with the model's lowest point left where it was. A model's
+   * origin is often its middle, and a new height would otherwise grow it into
+   * the floor. Used by the size fields and at the end of a gizmo scale.
+   *
+   * @public
+   * @param {Object} scale `{ x, y, z }`
+   */
+  scaleKeepingBottom(scale) {
+    const before = this.worldBottom();
+    this.scale = scale;
+    const after = this.worldBottom();
+    if (before !== null && after !== null && Math.abs(after - before) > 1e-9) {
+      this.position = { ...this._position, z: this._position.z + (before - after) };
+    }
+  }
+
+  /**
+   * The lowest point of the placed model, world z, or null before it loads.
+   *
+   * @private
+   * @returns {Number|null}
+   */
+  worldBottom() {
+    const local = SceneObjects.boundsOf(this.renderKey);
+    if (!local || local.isEmpty()) return null;
+    const box = new THREE.Box3();
+    this.expandBounds(box);
+    return box.isEmpty() ? null : box.min.z;
   }
 
   /**

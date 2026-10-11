@@ -678,7 +678,8 @@ class Controls {
       if (target) {
         const { x, y, z } = this.scaleProxy.scale;
         this.applyTransformation();
-        target.scale = { x, y, z };
+        if (target.scaleKeepingBottom) target.scaleKeepingBottom({ x, y, z });
+        else target.scale = { x, y, z };
       }
       this.showHelpers(); // Update modifications
     });

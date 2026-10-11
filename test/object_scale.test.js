@@ -9,7 +9,10 @@
  * Usage:
  *   npm test
  */
+import * as THREE from 'three';
 import SceneObject from '@/models/DMX/object.model';
+import SceneObjects from '@/plugins/visualizer/scene_objects';
+import Controls from '@/plugins/visualizer/controls';
 
 let failures = 0;
 
@@ -38,6 +41,28 @@ check('scale 1 is original size', object.isOriginalSize, true);
 check('a model from a file scales', object.isScalable, true);
 const shape = new SceneObject({ primitive: { type: 'cube', size: { x: 1, y: 1, z: 1 } } });
 check('a created shape does not', shape.isScalable, false);
+
+// A model whose origin is its middle, standing on the floor: a new height keeps
+// it on the floor rather than growing it into it.
+{
+  const box = new THREE.Box3(new THREE.Vector3(-0.5, -0.5, -1), new THREE.Vector3(0.5, 0.5, 1));
+  const realBounds = SceneObjects.boundsOf;
+  SceneObjects.boundsOf = () => box;
+  // No gizmo outside the app.
+  const realDetach = Controls.detach;
+  const realAttach = Controls.attach;
+  Controls.detach = () => {};
+  Controls.attach = () => {};
+  const standing = new SceneObject({ model: 'm', position: { x: 0, y: 0, z: 1 } });
+  standing.sizeZ = 4;
+  check('height doubled: scale z', standing.scale.z, 2);
+  check('height doubled: still on the floor', standing.position.z, 2);
+  standing.sizeX = 3;
+  check('width changed: height untouched', standing.position.z, 2);
+  SceneObjects.boundsOf = realBounds;
+  Controls.detach = realDetach;
+  Controls.attach = realAttach;
+}
 
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');
 process.exit(failures ? 1 : 0);

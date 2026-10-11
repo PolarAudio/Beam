@@ -1,19 +1,10 @@
 <template>
-  <uk-flex
-    col
-    class="visualizer"
-    :class="{ hidden }"
-  >
+  <div class="visualizer">
     <uk-flex
       class="header"
       gap="4"
     >
-      <!-- Only on the collapsed panel, where it says what the strip is. -->
-      <h3 v-show="hidden">
-        Visualizer
-      </h3>
       <uk-button
-        v-show="!hidden"
         :key="`translate-${gizmoMode}-${modeTick}`"
         square
         icon-only
@@ -26,7 +17,6 @@
         @click="setGizmoMode('translate')"
       />
       <uk-button
-        v-show="!hidden"
         :key="`rotate-${gizmoMode}-${modeTick}`"
         square
         icon-only
@@ -39,7 +29,6 @@
         @click="setGizmoMode('rotate')"
       />
       <uk-button
-        v-show="!hidden"
         :key="`scale-${gizmoMode}-${modeTick}`"
         square
         icon-only
@@ -53,11 +42,9 @@
         @click="setGizmoMode('scale')"
       />
       <div
-        v-show="!hidden"
         class="tool_divider"
       />
       <uk-button
-        v-show="!hidden"
         v-model="snapEnabled"
         square
         icon-only
@@ -69,7 +56,6 @@
         @click="toggleSnap"
       />
       <uk-button
-        v-show="!hidden"
         square
         icon-only
         label="Fit to view"
@@ -79,7 +65,6 @@
       <!-- Parallel projection, as a technical drawing's plan or elevation.
            Editing only: studio and recordings are perspective. -->
       <uk-button
-        v-show="!hidden"
         :key="`ortho-${orthographic}-${modeTick}`"
         square
         icon-only
@@ -93,7 +78,6 @@
         @click="toggleOrthographic"
       />
       <uk-button
-        v-show="!hidden"
         v-model="houseLights"
         square
         icon-only
@@ -105,11 +89,9 @@
         @click="toggleHouseLights"
       />
       <div
-        v-show="!hidden"
         class="tool_divider"
       />
       <uk-button
-        v-show="!hidden"
         square
         icon-only
         label="Copy (Ctrl+C)"
@@ -118,7 +100,6 @@
         @click="copySelection"
       />
       <uk-button
-        v-show="!hidden"
         square
         icon-only
         label="Paste (Ctrl+V)"
@@ -127,7 +108,6 @@
         @click="pasteClipboard"
       />
       <uk-button
-        v-show="!hidden"
         square
         icon-only
         label="Delete (Del)"
@@ -140,35 +120,20 @@
            keeps one colour in both modes. A toggleable one lights up in its
            active state, which would say "recording" when it means "here". -->
       <uk-button
-        v-show="!hidden"
         square
         :label="studioActive ? 'To Editor' : 'To Studio'"
         @click="toggleStudio"
       />
-      <uk-button
-        v-show="!hidden"
-        icon="hide"
-        style="margin-right: 8px"
-        label="Hide"
-        @click="toggleVisibility"
-      />
-      <uk-icon
-        v-show="hidden"
-        name="hide"
-        style="fill: var(--secondary-lighter); cursor: pointer"
-        @click="toggleVisibility"
-      />
     </uk-flex>
 
     <canvas
-      v-show="!hidden"
       id="visualizer"
       ref="visualizer"
       class="visualizer"
       :class="{ framed: studioActive }"
       :style="studioActive ? { '--record-aspect': studioAspect } : null"
     />
-  </uk-flex>
+  </div>
 </template>
 
 <script>
@@ -201,11 +166,9 @@ export default {
       /**
        * handle to popup window
        */
-      popupHandle: null,
       /**
        * Visibility state
        */
-      hidden: false,
       snapEnabled: true,
       houseLights: true,
       /**
@@ -468,56 +431,6 @@ export default {
       this.gizmoMode = mode;
     },
     /**
-     * Opens visualizer in a popup window
-     *
-     * @public
-     */
-    popout() {
-      this.hide();
-      this.popupHandle = window.open('/visualizer', 'visualizerWindow', 'popup');
-      this.popupHandle.$show = this.$show;
-      this.popupHandle.onbeforeunload = this.show;
-    },
-    /**
-     * Toggles visualizer's visibility state on/off
-     *
-     * @public
-     */
-    toggleVisibility() {
-      if (this.hidden) {
-        this.show();
-      } else {
-        this.hide();
-      }
-      // Dirty trick but it should do for now.
-      EventBus.emit('visualizer_visibility', !this.hidden);
-    },
-    /**
-     * Toggles visualizer's visibility state off
-     *
-     * @public
-     */
-    hide() {
-      this.hidden = true;
-      this.$show.visualizerHandle.stopRender();
-    },
-    /**
-     * Toggles visualizer's visibility state on
-     *
-     * @public
-     */
-    show() {
-      this.hidden = false;
-      if (this.popupHandle) {
-        this.popupHandle.close();
-        this.popupHandle = null;
-      }
-      this.$show.visualizerHandle.startRender();
-      this.$nextTick(() => {
-        this.$show.visualizerHandle.resize();
-      });
-    },
-    /**
      * Turns gizmo snapping on or off. The spacing lives in the visualizer
      * preferences; this is the part worth reaching for mid-layout.
      *
@@ -667,18 +580,11 @@ export default {
 }
 .visualizer {
   display: flex;
+  flex-direction: column;
   height: 100% !important;
   width: 100% !important;
   outline: none;
   border-left: var(--primary-dark);
-}
-.visualizer.hidden {
-  width: unset !important;
-}
-.visualizer.hidden h3 {
-  writing-mode: vertical-lr;
-  text-orientation: mixed;
-  transform: scale(-1);
 }
 .header {
   display: flex;
@@ -695,12 +601,5 @@ export default {
   align-self: stretch;
   margin: 6px 6px;
   background: var(--primary-dark);
-}
-.visualizer.hidden .header {
-  height: 100%;
-  width: 40px;
-  text-align: left;
-  flex-direction: column-reverse;
-  padding: 10px 0px;
 }
 </style>

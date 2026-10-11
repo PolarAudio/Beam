@@ -176,11 +176,10 @@ export const DEFAULT_PROJECTOR_PARAMS = {
 /**
  * Where the lens sits, in the fixture's own space, in metres.
  *
- * The origin is the **centre of the body**, because that is what gets placed:
- * you put a box on a shelf or in a yoke, and the beam leaves it from wherever
- * the maker happened to put the glass. So the renderer draws the box about the
- * origin and hangs the barrel off the front face here, and the frustum starts
- * at the end of the barrel rather than at the fixture's position.
+ * The origin is on the **optical axis**: a projector at x = 0 throws a picture
+ * centred on x = 0, whatever side of the body the maker put the glass. The
+ * body is drawn offset from the origin by `bodyCentre`, and the frustum
+ * starts at the end of the barrel rather than at the fixture's position.
  *
  * **The axes are the scene's own, so that a projector at zero rotation stands
  * on its feet and throws horizontally.** +Z is up, matching the Z-up world; the
@@ -198,9 +197,25 @@ export function lensOrigin(params) {
   const depth = Number(params.depth) || DEFAULT_PROJECTOR_PARAMS.depth;
   const protrusion = Number(params.lensProtrusion) || 0;
   return {
-    x: Number(params.lensX) || 0,
+    x: 0,
     y: -(depth / 2 + protrusion),
-    z: Number(params.lensY) || 0,
+    z: 0,
+  };
+}
+
+/**
+ * Where the centre of the body sits, in the fixture's own space, in metres:
+ * the lens offset reversed, so the lens lands on the origin's axis.
+ *
+ * @public
+ * @param {Object} params projector parameters
+ * @returns {Object} `{ x, y, z }`
+ */
+export function bodyCentre(params) {
+  return {
+    x: -(Number(params.lensX) || 0),
+    y: 0,
+    z: -(Number(params.lensY) || 0),
   };
 }
 
@@ -516,6 +531,7 @@ export default {
   imageAspect,
   imageSizeAt,
   lensOrigin,
+  bodyCentre,
   throwAngles,
   throwFrustum,
   illuminanceAt,

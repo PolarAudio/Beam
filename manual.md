@@ -601,6 +601,8 @@ A project receives pictures through **inputs**. An input is one NDI stream or on
 
 A feed only opens while a device shows its input, so an unused input costs nothing.
 
+A projector's position is on its lens axis, not the middle of its body. With the lens off to one side, the body sits to the other side of the position, and a projector at x = 0 throws a picture centred on x = 0.
+
 A projector's brightness is its lumens over the area of its picture, so a 4000-lumen projector throwing a 9 m picture puts about 80 lux on the surface. A surface returns that light in proportion to its colour: a mid-grey wall shows the picture at about a fifth of a white one.
 
 What a display or projector does to its input depends on the model, so it is part of the definition: each of these is Fixed, Adjustable or DMX in the create dialog, and a Fixed one is hidden from Fixture settings.

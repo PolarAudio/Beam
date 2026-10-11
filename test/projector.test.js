@@ -28,6 +28,7 @@ import {
   imageAspect,
   imageSizeAt,
   lensOrigin,
+  bodyCentre,
   throwAngles,
   throwFrustum,
   illuminanceAt,
@@ -160,10 +161,16 @@ console.log('\n-- where the lens sits on the body --');
     -(params.depth / 2 + params.lensProtrusion));
   check('the front face is forward, not up', centred.y < 0, true);
 
-  const offset = lensOrigin({ ...params, lensX: 0.12, lensY: -0.04 });
-  check('across the panel is local x', offset.x, 0.12);
-  check('up the panel is local z, signed', offset.z, -0.04);
+  // The origin is on the optical axis: an offset lens moves the body instead.
+  const offsetParams = { ...params, lensX: 0.12, lensY: -0.04 };
+  const offset = lensOrigin(offsetParams);
+  check('an offset lens stays on the axis', `${offset.x},${offset.z}`, '0,0');
   check('neither moves the lens forward', offset.y, centred.y);
+  const body = bodyCentre(offsetParams);
+  check('the body moves the other way across', body.x, -0.12);
+  check('and the other way up, signed', body.z, 0.04);
+  check('a centred lens leaves the body on the origin',
+    `${bodyCentre(params).x},${bodyCentre(params).z}`, '0,0');
 
   // A flush lens still leaves the panel, not the middle of the box: a frustum
   // starting at the fixture's position would begin inside its own housing.

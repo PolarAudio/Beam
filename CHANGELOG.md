@@ -22,6 +22,7 @@
 
 - Projected light is multiplied by the colour of the surface it lands on. A grey #808080 wall returns about 22% of what a white one does; before, every surface returned all of it.
 - The generic projector defaults to 4000 lumens, was 10000.
+- A projector's position is on its lens axis. A projector whose lens is off-centre keeps its position: its body moves by the lens offset and its picture is now centred on the position.
 
 ### Names
 

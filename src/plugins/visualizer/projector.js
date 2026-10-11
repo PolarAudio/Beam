@@ -5,7 +5,7 @@ import SceneManager from './scene_manager';
 import { PROJECTOR_NEAR, PROJECTOR_FAR } from './projector_depth';
 import { castsContactShadow } from './contact_shadows';
 import {
-  DEFAULT_PROJECTOR_PARAMS, lensOrigin, throwAngles, throwFrustum, throwRange,
+  DEFAULT_PROJECTOR_PARAMS, lensOrigin, bodyCentre, throwAngles, throwFrustum, throwRange,
 } from '../../models/DMX/generic/projector';
 import BodyFinish from './body_finish';
 import { setOutlined } from './selection_outline';
@@ -229,6 +229,8 @@ class Projector {
     // Width across, depth front-to-back, height up -- the box stands the way
     // the machine does.
     this._body.scale.set(width, depth, height);
+    const body = bodyCentre(params);
+    this._body.position.set(body.x, body.y, body.z);
 
     // The model measures the lens from the centre of the front panel, seen by
     // someone facing it. The panel faces -Y, so that observer stands at -Y and
@@ -386,9 +388,10 @@ class Projector {
     const width = Math.max(Number(params.width) || 0, 0.001);
     const height = Math.max(Number(params.height) || 0, 0.001);
     const depth = Math.max(Number(params.depth) || 0, 0.001);
+    const body = bodyCentre(params);
     this._dummy.updateMatrixWorld();
-    bodyBounds.min.set(-width / 2, -depth / 2, -height / 2);
-    bodyBounds.max.set(width / 2, depth / 2, height / 2);
+    bodyBounds.min.set(body.x - width / 2, body.y - depth / 2, body.z - height / 2);
+    bodyBounds.max.set(body.x + width / 2, body.y + depth / 2, body.z + height / 2);
     bodyBounds.applyMatrix4(this._dummy.matrixWorld);
     box.union(bodyBounds);
   }
@@ -414,7 +417,8 @@ class Projector {
    * @type {Number}
    */
   get floorOffset() {
-    return (Number((this._params || {}).height) || 0) / 2;
+    const params = this._params || {};
+    return (Number(params.height) || 0) / 2 - bodyCentre(params).z;
   }
 
   /**

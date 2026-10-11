@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import SceneManager from './scene_manager';
 import VideoRouter from './video_router';
-import { orientedSample } from '../../models/DMX/video_input';
+import { pictureOf, pictureMapping } from '../../models/DMX/picture_controls';
 import { createPanelMaterial } from './video_material';
 import { DEFAULT_DISPLAY_PARAMS, pixelFill, displayCurve } from '../../models/DMX/generic/display';
 import BodyFinish from './body_finish';
@@ -393,7 +393,7 @@ class Display {
       this._feedGeneration = VideoRouter.generation();
     }
 
-    this.writeScreenUvs(settings);
+    this.writeScreenUvs(settings, feed);
 
     // Dimmer and blank fold into one number, because from the screen's point of
     // view they are the same thing: how much of the picture comes out.
@@ -431,13 +431,15 @@ class Display {
    *
    * @public
    * @param {Object} settings the display's DisplaySettings, or null
+   * @param {Object} [feed] the input's feed, for its size
    */
-  writeScreenUvs(settings) {
-    const orientation = settings ? {
-      rotation: Number(settings.value('rotation')) || 0,
-      mirrorH: !!settings.value('mirrorH'),
-      mirrorV: !!settings.value('mirrorV'),
-    } : {};
+  writeScreenUvs(settings, feed = null) {
+    const params = this._params || {};
+    const mapping = pictureMapping(pictureOf(settings), {
+      aspect: (Number(params.width) || 16) / (Number(params.height) || 9),
+      pixelsWide: params.pixelsWide,
+      pixelsHigh: params.pixelsHigh,
+    }, feed ? { width: feed.width, height: feed.height } : {});
     const attribute = this._screen.geometry.attributes.uv;
     const panel = this._screen.geometry.attributes.panelUv;
     if (!attribute || !panel) return;
@@ -445,7 +447,7 @@ class Display {
     // screen -- which has as many vertices as it has facets -- maps the same way
     // a flat one does.
     const pick = (u, v) => {
-      const at = orientedSample(u, 1 - v, orientation);
+      const at = mapping.map(u, 1 - v);
       return { x: at.x, y: 1 - at.y };
     };
     for (let i = 0; i < attribute.count; i += 1) {
@@ -465,6 +467,12 @@ class Display {
     const alongY = pick(0, 1);
     uniforms.pictureAxisX.value.set(alongX.x - origin.x, alongX.y - origin.y);
     uniforms.pictureAxisY.value.set(alongY.x - origin.x, alongY.y - origin.y);
+    // Where the input holds picture, in the texture's coordinates: outside it
+    // is the black of a fitted picture's bars.
+    const { bounds } = mapping;
+    if (uniforms.pictureBounds) {
+      uniforms.pictureBounds.value.set(bounds.x0, 1 - bounds.y1, bounds.x1, 1 - bounds.y0);
+    }
   }
 
   /**

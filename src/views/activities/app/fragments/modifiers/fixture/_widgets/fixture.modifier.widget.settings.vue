@@ -268,9 +268,10 @@
           />
         </uk-flex>
 
-        <!-- What the panel or its processor does to the picture it receives. -->
+        <!-- What the panel, its processor or the projector does to the picture
+             it receives. A row the definition fixes is hidden. -->
         <uk-flex
-          v-if="isDisplay"
+          v-if="isScreen && showsAny(['rotation', 'mirrorH', 'mirrorV'])"
           :gap="8"
           class="row"
         >
@@ -295,6 +296,83 @@
             :model-value="!!read('mirrorV')"
             label="Mirror V"
             @update:model-value="writeDevice('mirrorV', $event)"
+          />
+        </uk-flex>
+        <template v-if="isScreen && showsAny(['cropLeft', 'cropRight', 'cropTop', 'cropBottom'])">
+          <span class="section_label">Crop %</span>
+          <uk-flex
+            :gap="8"
+            class="row"
+          >
+            <uk-num-input
+              v-show="byHand('cropLeft')"
+              :mixed="isMixed('cropLeft')"
+              :model-value="read('cropLeft')"
+              style="width: 72px"
+              label="Left"
+              :precision="1"
+              :min="0"
+              :max="45"
+              @update:model-value="writeDevice('cropLeft', $event)"
+            />
+            <uk-num-input
+              v-show="byHand('cropRight')"
+              :mixed="isMixed('cropRight')"
+              :model-value="read('cropRight')"
+              style="width: 72px"
+              label="Right"
+              :precision="1"
+              :min="0"
+              :max="45"
+              @update:model-value="writeDevice('cropRight', $event)"
+            />
+            <uk-num-input
+              v-show="byHand('cropTop')"
+              :mixed="isMixed('cropTop')"
+              :model-value="read('cropTop')"
+              style="width: 72px"
+              label="Top"
+              :precision="1"
+              :min="0"
+              :max="45"
+              @update:model-value="writeDevice('cropTop', $event)"
+            />
+            <uk-num-input
+              v-show="byHand('cropBottom')"
+              :mixed="isMixed('cropBottom')"
+              :model-value="read('cropBottom')"
+              style="width: 72px"
+              label="Bottom"
+              :precision="1"
+              :min="0"
+              :max="45"
+              @update:model-value="writeDevice('cropBottom', $event)"
+            />
+          </uk-flex>
+        </template>
+        <uk-flex
+          v-if="isScreen && showsAny(['scale', 'pictureZoom'])"
+          :gap="8"
+          class="row"
+        >
+          <uk-select-input
+            v-show="byHand('scale')"
+            :model-value="scaleIndex"
+            style="flex: 1"
+            label="Scale"
+            :options="scaleOptions"
+            @input="pickScale"
+          />
+          <uk-num-input
+            v-show="byHand('pictureZoom')"
+            :mixed="isMixed('pictureZoom')"
+            :model-value="read('pictureZoom')"
+            style="width: 92px"
+            label="Zoom %"
+            :precision="0"
+            :min="100"
+            :max="400"
+            @update:model-value="writeDevice('pictureZoom', $event)"
           />
         </uk-flex>
 
@@ -588,6 +666,7 @@
 <script>
 import { DMX_UNIVERSE_LENGTH } from '@/models/DMX/patch.model';
 import { ROTATIONS } from '@/models/DMX/video_input';
+import { SCALE_MODES } from '@/models/DMX/picture_controls';
 import { MAX_SHADOW_CASTERS } from '@/plugins/visualizer/light';
 import { imageSizeAt } from '@/models/DMX/generic/projector';
 import { GENERIC_KINDS } from '@/models/DMX/generic/kinds';
@@ -626,6 +705,11 @@ const WIRE_POLL_MS = 100;
 
 /** How long the copy button confirms for, in ms. */
 const COPY_FEEDBACK_MS = 1500;
+
+/** How each scale mode reads in the list. */
+const SCALE_NAMES = {
+  stretch: 'Stretch', fit: 'Fit', fill: 'Fill', native: 'Native',
+};
 
 /** How each rotation reads in the list. */
 const ROTATION_NAMES = {
@@ -1006,6 +1090,19 @@ export default {
     /** A screen: it turns and mirrors its picture. */
     isDisplay() {
       return !!(this.fixture && this.fixture.deviceKind === GENERIC_KINDS.DISPLAY);
+    },
+    /** Shows a picture: a display or a projector. */
+    isScreen() {
+      return this.isDisplay || this.isProjector;
+    },
+    scaleOptions() {
+      const list = SCALE_MODES.map((mode) => SCALE_NAMES[mode]);
+      return this.isMixed('scale') ? ['*', ...list] : list;
+    },
+    scaleIndex() {
+      if (this.isMixed('scale')) return 0;
+      const at = SCALE_MODES.indexOf(this.read('scale'));
+      return at < 0 ? 0 : at;
     },
     rotationOptions() {
       const list = ROTATIONS.map((r) => ROTATION_NAMES[r]);
@@ -1477,6 +1574,15 @@ export default {
       // that also tells the renderer to redraw; without it, picking a source
       // would leave a display black until some *other* field was touched.
       this.writeDevice('source', input ? input.id : null);
+    },
+    /** Whether any of these is set by hand here, so its row is worth drawing. */
+    showsAny(keys) {
+      return keys.some((key) => this.byHand(key));
+    },
+    pickScale(pick) {
+      const index = Number(pick) - (this.isMixed('scale') ? 1 : 0);
+      if (index < 0 || index >= SCALE_MODES.length) return;
+      this.writeDevice('scale', SCALE_MODES[index]);
     },
     pickRotation(pick) {
       const index = Number(pick) - (this.isMixed('rotation') ? 1 : 0);

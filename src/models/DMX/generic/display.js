@@ -22,15 +22,8 @@
  */
 
 import { COMMON_CONTROLS } from '../device_settings';
-import {
-  ControlSet, ControlDef, EnumType, SwitchType, orderOf, labelsOf,
-} from '../device_control';
-import { ROTATIONS } from '../video_input';
-
-/** How each rotation reads in a list. */
-const ROTATION_LABELS = {
-  0: '0°', 90: '90° clockwise', 180: '180°', 270: '90° anticlockwise',
-};
+import { ControlSet, orderOf, labelsOf } from '../device_control';
+import { PICTURE_DEFS } from '../picture_controls';
 
 /** Radians to degrees. The curve is authored in degrees and built in radians. */
 const DEG = 180 / Math.PI;
@@ -55,13 +48,8 @@ export const CONTROL_DEFS = [
   // there or it is not, so it reads as a shutter rather than a dimmer at nought.
   COMMON_CONTROLS.shutter('Blank', 'Showing'),
   COMMON_CONTROLS.source('Source Select', 'videoInputs'),
-  // What a panel or its processor can do to the picture it receives. Absent
-  // from a definition that predates them, they come up adjustable.
-  new ControlDef('rotation', 'Rotation', new EnumType({
-    options: ROTATIONS, initial: 0, labels: ROTATION_LABELS,
-  })),
-  new ControlDef('mirrorH', 'Mirror H', new SwitchType({ initial: false, onLabel: 'Mirrored' })),
-  new ControlDef('mirrorV', 'Mirror V', new SwitchType({ initial: false, onLabel: 'Mirrored' })),
+  // What a panel or its processor can do to the picture it receives.
+  ...PICTURE_DEFS,
 ];
 
 /**

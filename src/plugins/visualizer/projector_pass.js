@@ -222,6 +222,18 @@ const PICTURE_SLOTS = (() => {
   uniform float hasPicture[SLOTS];
   uniform vec2 pictureSize[SLOTS];
 
+  /** Where a point of projection i's frame reads its input's texture. */
+  vec2 pictureUv(int i, vec2 frame) {
+    vec3 f = vec3(frame, 1.0);
+    return vec2(dot(pictureRowX[i], f), dot(pictureRowY[i], f));
+  }
+
+  /** 1 where projection i's input holds picture, 0 in a fitted picture's bars. */
+  float pictureInside(int i, vec2 uv) {
+    vec4 b = pictureBounds[i];
+    return step(b.x, uv.x) * step(uv.x, b.z) * step(b.y, uv.y) * step(uv.y, b.w);
+  }
+
   /** Projection i's picture at an explicit level of detail. */
   vec4 pictureLod(int i, vec2 uv, float lod) {
     ${lod}
@@ -245,7 +257,9 @@ const FRAGMENT = /* glsl */`
   uniform mat4 camWorld;
   uniform sampler2D depthAtlas;
   uniform mat4 lensMatrix[SLOTS];
-  uniform vec4 sliceRect[SLOTS];
+  uniform vec3 pictureRowX[SLOTS];
+  uniform vec3 pictureRowY[SLOTS];
+  uniform vec4 pictureBounds[SLOTS];
   uniform vec4 atlasTile[SLOTS];
   uniform vec3 emission[SLOTS];
   uniform vec3 lensPos[SLOTS];
@@ -346,14 +360,15 @@ ${PICTURE_SLOTS}
     // How much of the picture the step to the next sample crosses, in the
     // slice's texels. An explicit level, because this runs inside a loop with
     // early exits, where derivatives are undefined.
-    vec4 rect = sliceRect[i];
     vec4 lensNext = lensMatrix[i] * vec4(next, 1.0);
     vec2 frameNext = lensNext.xy / max(lensNext.w, 0.0001) * 0.5 + 0.5;
-    vec2 texels = pictureSize[i] * rect.zw;
-    float span = length((frameNext - frame) * texels);
-    float floorLod = log2(max(texels.x * SHAFT_BLUR_SHARE, 1.0)) + travelled * SHAFT_BLUR_PER_METRE;
+    vec2 at = pictureUv(i, frame);
+    float span = length((pictureUv(i, frameNext) - at) * pictureSize[i]);
+    // Texels across the frame's width, after the crop, scale and turn.
+    float across = pictureSize[i].x * length(vec2(pictureRowX[i].x, pictureRowY[i].x));
+    float floorLod = log2(max(across * SHAFT_BLUR_SHARE, 1.0)) + travelled * SHAFT_BLUR_PER_METRE;
     float lod = max(floorLod, log2(max(span, 1.0)));
-    vec3 colour = mix(vec3(1.0), pictureLod(i, rect.xy + frame * rect.zw, lod).rgb, hasPicture[i]);
+    vec3 colour = mix(vec3(1.0), pictureLod(i, at, lod).rgb * pictureInside(i, at), hasPicture[i]);
 
     // The frame's own edge, a short gradient: scattering carries a little
     // light sideways out of the frustum.
@@ -475,17 +490,18 @@ ${PICTURE_SLOTS}
       float seen = unpackRGBAToDepth(texture2D(depthAtlas, tile.xy + frame * tile.zw));
       float visible = step(lens.w, linearDepth(seen) + DEPTH_BIAS);
 
-      // The slice of the frame this machine is fed.
-      vec4 rect = sliceRect[i];
       // Where the neighbouring pixels land in this projector's frame, for the
       // picture's gradients: the level a hardware read would pick.
       vec4 lensDx = lensMatrix[i] * vec4(world + worldDx, 1.0);
       vec4 lensDy = lensMatrix[i] * vec4(world + worldDy, 1.0);
       vec2 frameDx = clamp(lensDx.xy / max(lensDx.w, 0.0001) * 0.5 + 0.5, 0.0, 1.0) - frame;
       vec2 frameDy = clamp(lensDy.xy / max(lensDy.w, 0.0001) * 0.5 + 0.5, 0.0, 1.0) - frame;
-      vec3 colour = mix(vec3(1.0), pictureGrad(
-        i, rect.xy + frame * rect.zw, frameDx * rect.zw, frameDy * rect.zw
-      ).rgb, hasPicture[i]);
+      // The picture after the projector's own crop, scale and turn; the
+      // gradients go through the same map's linear part.
+      vec2 at = pictureUv(i, frame);
+      mat2 turn = mat2(pictureRowX[i].x, pictureRowY[i].x, pictureRowX[i].y, pictureRowY[i].y);
+      vec3 colour = mix(vec3(1.0), pictureGrad(i, at, turn * frameDx, turn * frameDy).rgb
+        * pictureInside(i, at), hasPicture[i]);
 
       // Illuminance falls with the square of the distance because the same
       // lumens are spread over a bigger picture -- that is the projector's own
@@ -562,7 +578,9 @@ class ProjectorEffect extends Effect {
    */
   constructor(camera) {
     const lensMatrix = [];
-    const sliceRect = [];
+    const pictureRowX = [];
+    const pictureRowY = [];
+    const pictureBounds = [];
     const atlasTile = [];
     const emission = [];
     const lensPos = [];
@@ -571,7 +589,9 @@ class ProjectorEffect extends Effect {
     for (let i = 0; i < MAX_PROJECTIONS; i += 1) {
       pictureSize.push(new THREE.Vector2(1, 1));
       lensMatrix.push(new THREE.Matrix4());
-      sliceRect.push(new THREE.Vector4(0, 0, 1, 1));
+      pictureRowX.push(new THREE.Vector3(1, 0, 0));
+      pictureRowY.push(new THREE.Vector3(0, 1, 0));
+      pictureBounds.push(new THREE.Vector4(0, 0, 1, 1));
       const tile = ProjectorDepth.tileUv(i);
       atlasTile.push(new THREE.Vector4(tile.x, tile.y, tile.width, tile.height));
       emission.push(new THREE.Vector3(0, 0, 0));
@@ -607,7 +627,9 @@ class ProjectorEffect extends Effect {
         ['pictureSize', new THREE.Uniform(pictureSize)],
         ['depthAtlas', new THREE.Uniform(null)],
         ['lensMatrix', new THREE.Uniform(lensMatrix)],
-        ['sliceRect', new THREE.Uniform(sliceRect)],
+        ['pictureRowX', new THREE.Uniform(pictureRowX)],
+        ['pictureRowY', new THREE.Uniform(pictureRowY)],
+        ['pictureBounds', new THREE.Uniform(pictureBounds)],
         ['atlasTile', new THREE.Uniform(atlasTile)],
         ['emission', new THREE.Uniform(emission)],
         ['lensPos', new THREE.Uniform(lensPos)],
@@ -682,7 +704,9 @@ class ProjectorEffect extends Effect {
     uniforms.get('depthAtlas').value = ProjectorDepth.texture();
 
     const matrices = uniforms.get('lensMatrix').value;
-    const rects = uniforms.get('sliceRect').value;
+    const rowsX = uniforms.get('pictureRowX').value;
+    const rowsY = uniforms.get('pictureRowY').value;
+    const bounds = uniforms.get('pictureBounds').value;
     const emission = uniforms.get('emission').value;
     const lensPos = uniforms.get('lensPos').value;
     const blendEdges = uniforms.get('blendEdges').value;
@@ -691,12 +715,10 @@ class ProjectorEffect extends Effect {
       blendEdges[i].set(blend.left, blend.right, blend.bottom, blend.top);
       lensPos[i].setFromMatrixPosition(projection.camera.matrixWorld);
       matrices[i].copy(projection.lensMatrix);
-      rects[i].set(
-        projection.rect.x,
-        projection.rect.y,
-        projection.rect.width,
-        projection.rect.height,
-      );
+      const map = projection.pictureMap;
+      rowsX[i].set(map.rowX[0], map.rowX[1], map.rowX[2]);
+      rowsY[i].set(map.rowY[0], map.rowY[1], map.rowY[2]);
+      bounds[i].set(map.bounds[0], map.bounds[1], map.bounds[2], map.bounds[3]);
       // x carries the lumens, y the dimmer and shutter folded together. Kept
       // apart so a dimmed machine still reads as the same machine.
       emission[i].set(projection.lumensPerArea * LUX_SCALE, projection.gain, 0);

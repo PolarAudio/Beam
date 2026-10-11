@@ -600,7 +600,12 @@ A project receives pictures through **inputs**. An input is one NDI stream or on
 
 A feed only opens while a device shows its input, so an unused input costs nothing.
 
-A display's settings also have **Rotation** and **Mirror H** / **Mirror V**, for a panel mounted in portrait or seen from behind. The picture is turned first, then mirrored. Each projector shows its own input as it arrives.
+What a display or projector does to its input depends on the model, so it is part of the definition: each of these is Fixed, Adjustable or DMX in the create dialog, and a Fixed one is hidden from Fixture settings.
+
+- **Rotation** and **Mirror H** / **Mirror V** — for a panel in portrait, a projector on the ceiling or behind the screen. The picture is turned first, then mirrored.
+- **Crop %** — taken off each side of the input, up to 45%: overscan, or a processor's input window.
+- **Scale** — **Stretch** fills the picture whatever the shape; **Fit** shows all of the input with black bars, so a square video on a 16:9 screen has bars at the sides; **Fill** covers the picture and crops what overflows; **Native** shows one input pixel per device pixel.
+- **Zoom %** — digital zoom, 100 to 400.
 
 A project saved with connectors opens with one input in their place. A device on a connector that covered the whole frame keeps its turn and mirrors. A device on a smaller connector now shows the whole picture, and Beam lists those devices once when the project opens.
 

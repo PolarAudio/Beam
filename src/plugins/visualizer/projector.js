@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import VideoRouter from './video_router';
+import { pictureOf, pictureMapping } from '../../models/DMX/picture_controls';
 import SceneManager from './scene_manager';
 import { PROJECTOR_NEAR, PROJECTOR_FAR } from './projector_depth';
 import { castsContactShadow } from './contact_shadows';
@@ -37,11 +38,6 @@ import { setOutlined } from './selection_outline';
  */
 
 /** Every projector in the scene, so the statics can sweep them. */
-
-/** The whole picture, as the pass reads a rectangle of it. */
-const FULL_FRAME = {
-  x: 0, y: 0, width: 1, height: 1,
-};
 const instances = new Set();
 
 /** Unit body, scaled per projector. */
@@ -588,9 +584,7 @@ class Projector {
     return {
       camera: this._camera,
       lensMatrix: this._lensMatrix,
-      // The whole picture: cropping and scaling are a device feature still
-      // to come, not a slice of a shared frame.
-      rect: FULL_FRAME,
+      pictureMap: this.pictureMap(settings, input),
       inputId: input.id,
       // Lux times metres squared: divide by distance squared for lux.
       lumensPerArea: Math.max(Number(params.lumens) || 0, 0) / areaAtOneMetre,
@@ -601,6 +595,34 @@ class Projector {
         top: edge('blendTop'),
         bottom: edge('blendBottom'),
       },
+    };
+  }
+
+  /**
+   * Where each point of the throw comes from in the input, as the pass reads
+   * it: two rows of an affine map from the frame (0..1, y up) to the input's
+   * texture (y up), and the rectangle of the texture that holds picture.
+   *
+   * @param {Object} settings ProjectorSettings
+   * @param {Object} input VideoInput
+   * @returns {Object} `{ rowX, rowY, bounds }`, arrays of 3, 3 and 4
+   */
+  pictureMap(settings, input) {
+    const params = this._params || {};
+    const feed = VideoRouter.feedFor(input.id);
+    const m = pictureMapping(pictureOf(settings), {
+      aspect: (Number(params.pixelsWide) || 16) / (Number(params.pixelsHigh) || 9),
+      pixelsWide: params.pixelsWide,
+      pixelsHigh: params.pixelsHigh,
+    }, feed ? { width: feed.width, height: feed.height } : {});
+    // The mapping counts down from the top-left on both sides; the frame and
+    // the texture both count up. With u = fx and v = 1 - fy:
+    //   x = ax fx - bx fy + (bx + cx)
+    //   1 - y = -ay fx + by fy + (1 - by - cy)
+    return {
+      rowX: [m.ax, -m.bx, m.bx + m.cx],
+      rowY: [-m.ay, m.by, 1 - m.by - m.cy],
+      bounds: [m.bounds.x0, 1 - m.bounds.y1, m.bounds.x1, 1 - m.bounds.y0],
     };
   }
 

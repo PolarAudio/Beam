@@ -274,6 +274,7 @@ export function createPanelMaterial(picture, panel) {
   const fragment = /* glsl */`
     uniform sampler2D picture;
     uniform float gain;
+    uniform vec4 pictureBounds;
     varying vec2 vUv;
     varying vec2 vPanelUv;
     ${GRID_PRELUDE}
@@ -288,7 +289,12 @@ export function createPanelMaterial(picture, panel) {
       vec2 gapGive;
       vec2 cellGive;
       panelFades(vPanelUv, drawn, gapGive, cellGive);
-      vec3 colour = texture2D(picture, panelSample(vPanelUv, vUv, cellGive)).rgb;
+      vec2 at = panelSample(vPanelUv, vUv, cellGive);
+      // Outside the input's picture -- a fitted picture's bars, a crop -- the
+      // panel is black.
+      float inside = step(pictureBounds.x, at.x) * step(at.x, pictureBounds.z)
+        * step(pictureBounds.y, at.y) * step(at.y, pictureBounds.w);
+      vec3 colour = texture2D(picture, at).rgb * inside;
       gl_FragColor = vec4(colour * gain * panelMask(vPanelUv, drawn, gapGive), 1.0);
       #include <colorspace_fragment>
     }
@@ -315,6 +321,7 @@ export function createPanelMaterial(picture, panel) {
       // Overwritten whenever the connector's rectangle is written.
       pictureAxisX: { value: new THREE.Vector2(1, 0) },
       pictureAxisY: { value: new THREE.Vector2(0, 1) },
+      pictureBounds: { value: new THREE.Vector4(0, 0, 1, 1) },
     },
     vertexShader: vertex,
     fragmentShader: fragment,

@@ -1,4 +1,5 @@
 import { COMMON_CONTROLS } from '../device_settings';
+import { PICTURE_DEFS } from '../picture_controls';
 import {
   ControlSet, ControlDef, PercentType, RatioType, orderOf, labelsOf,
 } from '../device_control';
@@ -421,6 +422,9 @@ export const CONTROL_DEFS = [
     initial: 0, limit: (params) => shiftLimit(params, 'V'),
   }), { capability: { type: 'BeamPosition' } }),
   COMMON_CONTROLS.source('Source Select', 'videoInputs'),
+  // What the projector does to the picture it receives: ceiling and rear
+  // modes, overscan, aspect, digital zoom.
+  ...PICTURE_DEFS,
 ];
 
 /** Derived, so a parameter cannot be in one of these and missing from another. */

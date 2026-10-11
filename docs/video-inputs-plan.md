@@ -60,7 +60,8 @@ devices.
 **Device** (fixture settings): `source` names an input id instead of a
 connector id. Picture features, where the definition lists them:
 orientation (rotation 0, 90, 180, 270 and mirror H/V), crop (a rectangle
-of the input) and scale (fit, fill, stretch or native, and a zoom factor).
+of the input) and scale (fit, fill, stretch or native, and a zoom factor;
+fit puts a 1:1 input in a 16:9 picture with black bars at the sides).
 Processing delay sits in the same definition.
 
 **Names.** "HDMI n" was the default name of a connector, a slice of the

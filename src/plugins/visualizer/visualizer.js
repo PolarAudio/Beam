@@ -1356,7 +1356,6 @@ class Visualizer {
     Perf.init(this.renderer);
     // Reported beside the timings: it is the number you read off while
     // moving around to work out how far away something is.
-    Perf.watchCamera(this.camera);
 
     // Anything the debug panel was left holding, put back. Here rather than
     // beside `Preferences.load()` because half of these targets -- the bloom,
@@ -1973,7 +1972,6 @@ class Visualizer {
     this.controls.object = camera;
     Light.setCamera(camera);
     if (this.viewCube) this.viewCube.camera = camera;
-    Perf.watchCamera(camera);
     [renderPass, laserPass, mainPass].forEach((pass) => {
       if (pass) pass.mainCamera = camera;
     });

@@ -511,6 +511,9 @@ export default {
   padding: 16px;
   width: 980px;
   max-width: 94vw;
+  /* Stated here: nothing above the popup sets a text colour, so anything
+     that inherits would otherwise come out black on the dark panel. */
+  color: var(--secondary-lighter);
 }
 
 .intro { max-width: 640px; }
@@ -544,10 +547,14 @@ export default {
   border: 0;
   border-top: 1px solid var(--primary-dark);
   background: none;
-  color: inherit;
+  /* A button: the global rule makes it uppercase at 11px, which suits a
+     command and not a list of names. */
+  color: var(--secondary-lighter);
+  text-transform: none;
+  font-family: Roboto-Regular, sans-serif;
+  font-size: 12px;
   text-align: left;
   cursor: pointer;
-  font: inherit;
 }
 
 .input_row:hover { background: var(--secondary-darker); }
@@ -555,7 +562,7 @@ export default {
 .input_row:focus-visible { outline: 1px solid var(--accent-teal); outline-offset: -1px; }
 
 .input_text { display: flex; flex-direction: column; min-width: 0; }
-.input_name { font-family: Roboto-Medium, sans-serif; }
+.input_name { font-family: Roboto-Medium, sans-serif; color: var(--secondary-lighter); }
 .input_sub {
   font-size: 11px;
   color: var(--secondary-light-alt);
@@ -579,7 +586,7 @@ export default {
 }
 
 .detail { flex: 1; min-width: 0; }
-.detail_title { margin: 0; }
+.detail_title { margin: 0; color: var(--secondary-lighter); }
 
 .stage {
   display: flex;
@@ -596,6 +603,8 @@ export default {
 .used { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .used_label {
   font-family: Roboto-Medium, sans-serif;
+  font-size: 12px;
+  color: var(--secondary-lighter);
   margin-right: 6px;
 }
 .chip {
@@ -603,5 +612,6 @@ export default {
   padding: 2px 9px;
   border-radius: 10px;
   font-size: 11px;
+  color: var(--secondary-lighter);
 }
 </style>

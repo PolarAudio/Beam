@@ -36,6 +36,7 @@ flat varying vec4 vGobo;             //The gobos in the beam, see the attribute
 flat varying vec4 vPrism;            //The prism in the beam, see the attribute
 flat varying vec4 vColorB;           //Colour past a colour wheel split; w the split
 flat varying float vIris;            //How far the iris is open, 1 fully
+flat varying float vShaperRow;       //This light's row of the shaper table: its instance
 varying float vSpread;          //Drawn cone radius over the field's: 1, or more with a prism
 
 /**
@@ -87,6 +88,7 @@ void main() {
   vPrism = prism;
   vColorB = colorB;
   vIris = depthSlot.y;
+  vShaperRow = float(gl_InstanceID);
 
   // A prism throws copies of the beam out past the field by its spread, so
   // the drawn cone widens to hold them; otherwise the cone is the field.

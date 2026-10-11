@@ -204,6 +204,7 @@ varying vec3 vDirection;     // Intance direction
 varying vec3 vColor;         // Instance colour, the near side of any colour split
 flat varying vec4 vColorB;        // Colour past a colour wheel split, rgb; w the split, 0 none
 flat varying float vIris;         // How far the iris is open, 1 fully to 0 closed
+flat varying float vShaperRow;    // This light's row of the shaper table
 varying vec4 vWorldPosition; // Vertex world position
 varying vec4 vAbsoluteWorldPosition;
 varying float vIntensity;    // Instance intensity
@@ -534,10 +535,14 @@ float beamBlurLevels(float blur) {
 vec2 beamStencil(vec2 p, vec2 along, float lod) {
   int facets = int(abs(vPrism.x));
   bool linear = vPrism.x < 0.0;
+  // Framing blades sit in the gate with the gobos, as sharp as the focus
+  // makes them.
+  float bladeSoft = 0.01 + 0.06 * sampleDefocus;
   if (facets < 2) {
     float v = beamEdge(length(p))
       * beamGobos(p, along, lod)
-      * beamIris(p);
+      * beamIris(p)
+      * shaperMask(shaperTable, vShaperRow, p, bladeSoft);
     float far = beamSplit(p);
     return vec2(v * (1.0 - far), v * far);
   }
@@ -547,7 +552,8 @@ vec2 beamStencil(vec2 p, vec2 along, float lod) {
     vec2 q = p - prismOffset(k, facets, linear, vPrism.y, vPrism.z);
     float v = beamEdge(length(q))
       * beamGobos(q, along, lod)
-      * beamIris(q);
+      * beamIris(q)
+      * shaperMask(shaperTable, vShaperRow, q, bladeSoft);
     float far = beamSplit(q);
     sum += vec2(v * (1.0 - far), v * far);
   }

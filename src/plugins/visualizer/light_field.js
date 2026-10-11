@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import Shapers, { SHAPER_GLSL } from './shapers';
 
 /**
  * What one unit of light-field intensity is worth, in candela.
@@ -115,6 +116,7 @@ const SCENE_INTENSITY_PER_UNIT = CANDELA_PER_UNIT * LUX_SCALE;
  *      1 / focus distance, 1/m, 0 infinity; cosine of the cone's outer edge.
  *      An iris of -1 marks an area light, a display: the lens radius is then
  *      the radius of a disc of the panel's area
+ *  11: the light's row of the shaper table, -1 for no blades
  *
  * `direction` is stored three's way round -- `normalize(position - target)`,
  * pointing back up the beam rather than along it -- so that the angle test
@@ -126,7 +128,7 @@ const SCENE_INTENSITY_PER_UNIT = CANDELA_PER_UNIT * LUX_SCALE;
  *
  * @constant {Number}
  */
-const TEXELS_PER_LIGHT = 11;
+const TEXELS_PER_LIGHT = 12;
 
 /** Lights the texture holds before it is grown. Doubles on demand. */
 const INITIAL_CAPACITY = 128;
@@ -181,6 +183,8 @@ const record = {
   cosReach: null,
   /** How far the iris is open, 1 fully to 0 closed. */
   iris: 1,
+  /** The light's row of the shaper table, -1 for no blades. */
+  shaperRow: -1,
 };
 
 /**
@@ -206,6 +210,8 @@ const uniforms = {
   lightFieldSoftShadow: { value: 1 },
   // The gobo patterns, one atlas, set with the depth atlas.
   lightFieldGobo: { value: null },
+  // Every light's framing blades; see shapers.js.
+  lightFieldShapers: { value: Shapers.texture },
 };
 
 /** Builds the texture, or rebuilds it after the store has grown. */
@@ -315,7 +321,8 @@ const FIELD_LIGHT_CHUNK = /* glsl */`
         // The lens's blur at this surface, in field radii: the lens radius times
         // how far the surface is from the focus, over the field's radius here.
         float blur = packedLens.y * abs( 1.0 - along * packedLens.z ) / max( along * tanField, 1e-5 );
-        vec2 sides = fieldStencil( aperture, packedOrigin.w, packedGobo, packedPrism, packedColorB.w, packedLens.x, blur );
+        float shaperRow = texelFetch( lightField, ivec2( 11, i ), 0 ).x;
+        vec2 sides = fieldStencil( aperture, packedOrigin.w, packedGobo, packedPrism, packedColorB.w, packedLens.x, blur, shaperRow );
         float shape = sides.x + sides.y;
         if ( shape <= 0.0 ) continue;
         attenuation *= shape;
@@ -378,6 +385,8 @@ uniform float lightFieldDepthBias;
 uniform float lightFieldDepthTile;
 uniform float lightFieldSoftShadow;
 uniform sampler2D lightFieldGobo;
+uniform sampler2D lightFieldShapers;
+${SHAPER_GLSL}
 
 // Soft shadows. The lens is a disc, not a point: a surface point sees the part
 // of it no blocker hides, and that share is the light it gets. Seen from the
@@ -585,15 +594,18 @@ float fieldBlurLevels( float blur ) {
   return sigma < 2.5 ? sigma / 2.5 : 1.0 + min( ( sigma - 2.5 ) / 4.5, 1.0 );
 }
 
-vec2 fieldStencil( vec2 p, float inner, vec4 gobo, vec4 prism, float split, float iris, float blur ) {
+vec2 fieldStencil( vec2 p, float inner, vec4 gobo, vec4 prism, float split, float iris, float blur, float shaperRow ) {
   int facets = int( abs( prism.x ) );
   bool linear = prism.x < 0.0;
   // The gobo is as soft as the frost or the lens makes it, whichever is more.
   float defocus = max( prism.w, fieldBlurLevels( blur ) );
+  // Framing blades sit in the gate with the gobos.
+  float bladeSoft = 0.01 + 0.06 * defocus;
   if ( facets < 2 ) {
     float v = fieldEdge( length( p ), inner, blur )
       * fieldGobos( p, gobo, defocus )
-      * fieldIris( p, iris, defocus );
+      * fieldIris( p, iris, defocus )
+      * shaperMask( lightFieldShapers, shaperRow, p, bladeSoft );
     float far = fieldSplit( p, split, defocus );
     return vec2( v * ( 1.0 - far ), v * far );
   }
@@ -603,7 +615,8 @@ vec2 fieldStencil( vec2 p, float inner, vec4 gobo, vec4 prism, float split, floa
     vec2 q = p - fieldPrismOffset( k, facets, linear, prism.y, prism.z );
     float v = fieldEdge( length( q ), inner, blur )
       * fieldGobos( q, gobo, defocus )
-      * fieldIris( q, iris, defocus );
+      * fieldIris( q, iris, defocus )
+      * shaperMask( lightFieldShapers, shaperRow, q, bladeSoft );
     float far = fieldSplit( q, split, defocus );
     sum += vec2( v * ( 1.0 - far ), v * far );
   }
@@ -676,6 +689,7 @@ const LightField = {
       record.lensRadius = 0;
       record.invFocus = 0;
       record.cosReach = null;
+      record.shaperRow = -1;
       if (sources[i].readLight(record)) {
         LightField.ensureCapacity(count + 1);
         const at = count * TEXELS_PER_LIGHT * 4;
@@ -734,6 +748,11 @@ const LightField = {
         data[at + 41] = record.lensRadius;
         data[at + 42] = record.invFocus;
         data[at + 43] = record.cosOuter;
+
+        data[at + 44] = record.shaperRow;
+        data[at + 45] = 0;
+        data[at + 46] = 0;
+        data[at + 47] = 0;
         count += 1;
       }
     }

@@ -577,6 +577,7 @@ A beam is light scattered by the haze, so with haze off there is no beam, only t
 - **Colour wheels.** A colour slot's colour comes from its name. Set the wheel between two slots and the beam shows half of each.
 - **Prisms.** The prism channel splits the beam into copies of the whole cross-section, so where copies overlap they add up. The facet count and a linear layout come from the profile; if it says nothing you get three facets in a circle. The glass costs some light. Prism rotation spins it.
 - **Iris.** The iris channel closes the beam down.
+- **Framing blades.** A GDTF profile with shaper channels gets them: each blade's two ends (Blade A and B), the blade's own angle and the shaper rotation. Blades cut the pool and the beam in the air alike, as sharp as the focus makes the gobo. A blade with only an A channel moves parallel. Insertion runs from out at 0 to across the whole field at 1. Up to eight blades per light are drawn.
 - **Specifications.** **Model** shows make, model, lumens and power. **Specifications** below it has the rest of the profile: lamp, colour temperature, zoom range, weight, size, connector and modes. For a moving head it also gives the peak intensity at the narrowest and widest zoom. When the lumens are an estimate from the power, the line says so.
 - **Quick guide.** Select a fixture and open **Model → Quick guide** for what to set before it gives light, and what every channel does across its DMX range.
 

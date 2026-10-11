@@ -11,6 +11,7 @@ import LightField, {
   CANDELA_PER_UNIT, REFERENCE_INTENSITY, REFERENCE_LUMENS, SCENE_INTENSITY_PER_UNIT, LUX_SCALE,
 } from './light_field';
 import { castsContactShadow } from './contact_shadows';
+import Shapers, { bladePlanes, SHAPER_GLSL } from './shapers';
 import { DepthAtlas } from './projector_depth';
 import {
   goboTexture, goboLayerFor, goboImageCell, GOBO_BLUR_LEVELS,
@@ -337,7 +338,10 @@ export const HAZE_SCATTER_AT_FULL = Math.log(50) / 10;
  *
  * @constant {String}
  */
-const BEAM_FRAGMENT_SHADER = hazeShaderPrelude() + VOLUMETRIC_BEAM_FRAGMENT_SHADER;
+const BEAM_FRAGMENT_SHADER = `${hazeShaderPrelude()}
+uniform sampler2D shaperTable;
+${SHAPER_GLSL}
+${VOLUMETRIC_BEAM_FRAGMENT_SHADER}`;
 
 const SPOTLIGHT_PHYSICALLY_CORRECT_DISTANCE = 0;
 /**
@@ -964,6 +968,13 @@ class Light {
      */
     this._iris = 1;
     this._irisWheel = null;
+    /**
+     * Framing blades, `{ a, b, rot }` each, and the shaper's rotation in
+     * degrees. See shapers.js. Empty for a light without them.
+     */
+    this._blades = [];
+    this._shaperRotation = 0;
+    this.writeBlades();
     this._prism = {
       on: false, facets: PRISM_DEFAULT_FACETS, linear: false, angle: 0, speedRpm: 0,
     };
@@ -1034,6 +1045,7 @@ class Light {
     if (this._writtenMatrices) this._writtenMatrices.forEach((m) => m.elements.fill(NaN));
     this._matrixNeedsUpdate = true;
     this.rewriteSlot();
+    this.writeBlades();
   }
 
   get id() {
@@ -1389,6 +1401,9 @@ class Light {
     };
     this._iris = 1;
     this._irisWheel = null;
+    this._blades = [];
+    this._shaperRotation = 0;
+    this.writeBlades();
     this._frostWheel = null;
     this._frostEffect = null;
     this.applyFrost(0);
@@ -1954,6 +1969,56 @@ class Light {
     this._iris = Math.min(Math.max(open, 0), 1);
     this._irisWheel = null;
     this.writeOptics();
+  }
+
+  /**
+   * Sets one end or the rotation of a framing blade, from a shaper channel.
+   *
+   * @public
+   * @param {Number} n the blade, from 1
+   * @param {String} part 'A' or 'B', the insertion of that end 0..1, or
+   *   'Rot', the blade's rotation in degrees
+   * @param {Number} value
+   */
+  setBlade(n, part, value) {
+    const index = Math.floor(Number(n)) - 1;
+    if (!(index >= 0) || !Number.isFinite(value)) return;
+    while (this._blades.length <= index) this._blades.push({ a: 0, b: 0, rot: 0 });
+    const blade = this._blades[index];
+    if (part === 'A') {
+      blade.a = value;
+    } else if (part === 'B') {
+      blade.b = value;
+      blade.hasB = true;
+    } else if (part === 'Rot') {
+      blade.rot = value;
+    } else {
+      return;
+    }
+    this.writeBlades();
+  }
+
+  /**
+   * Turns every blade about the axis, from a shaper rotation channel.
+   *
+   * @public
+   * @param {Number} degrees
+   */
+  setShaperRotation(degrees) {
+    if (!Number.isFinite(degrees)) return;
+    this._shaperRotation = degrees;
+    this.writeBlades();
+  }
+
+  /**
+   * Writes the blades into this light's row of the shaper table, which the
+   * beam and the pool both read.
+   *
+   * @private
+   */
+  writeBlades() {
+    if (!(this._id >= 0) || !this._blades) return;
+    Shapers.write(this._id, bladePlanes(this._blades, this._shaperRotation));
   }
 
   /**
@@ -3380,6 +3445,8 @@ class Light {
         },
         // Every gobo pattern, one texture array layer each.
         goboAtlas: { value: goboTexture() },
+        // Every light's framing blades, a row each; see shapers.js.
+        shaperTable: { value: Shapers.texture },
         // What each beam's own lens sees, from `renderDepth`.
         depthAtlas: { value: null },
         depthColumns: { value: MOVER_DEPTH.columns },
@@ -3556,6 +3623,7 @@ class Light {
       this._goboDefocus,
     );
     record.iris = this._iris;
+    record.shaperRow = this._blades && this._blades.length ? this._id : -1;
 
     // The beam's depth tile, so the pool stops where the beam does. The slot
     // is last frame's, written by `renderDepth` after the field is read,

@@ -110,6 +110,13 @@ function gdtfAction(c, origins, type = null) {
   }
   if (/^Focus\d+$/.test(a)) return { kind: 'Focus', values: { focus: physical * 100 } };
   if (a === 'Iris') return { kind: 'Iris', values: { openPercent: physical * 100 } };
+  // Framing blades: each end's insertion, 0 out to 1 across the whole field,
+  // and the blade's own turn in degrees; the shaper's turn in degrees.
+  const blade = /^Blade(\d+)(A|B|Rot)$/.exec(a);
+  if (blade) {
+    return { kind: 'Blade', values: { blade: Number(blade[1]), part: blade[2], value: physical } };
+  }
+  if (a === 'ShaperRot') return { kind: 'ShaperRotation', values: { degrees: physical } };
   if (/^Frost\d+$/.test(a)) return { kind: 'Frost', values: { frostIntensity: physical * 100 } };
 
   const wheel = /^(Color|Gobo|Prism)(\d+)(.*)$/.exec(a);
@@ -419,6 +426,12 @@ export default class HeadDispatch {
         break;
       case 'Iris':
         if (typeof head.setIris === 'function') head.setIris(values.openPercent / 100);
+        break;
+      case 'Blade':
+        if (typeof head.setBlade === 'function') head.setBlade(values.blade, values.part, values.value);
+        break;
+      case 'ShaperRotation':
+        if (typeof head.setShaperRotation === 'function') head.setShaperRotation(values.degrees);
         break;
       case 'Zoom':
         if (typeof head.setZoom === 'function') head.setZoom(values.zoom, action.inDegrees);

@@ -6,7 +6,9 @@ import { createPanelMaterial } from './video_material';
 import { DEFAULT_DISPLAY_PARAMS, pixelFill, displayCurve } from '../../models/DMX/generic/display';
 import BodyFinish from './body_finish';
 import { castsContactShadow } from './contact_shadows';
-import { SCENE_PER_NIT } from './light_field';
+import LightField, { SCENE_PER_NIT } from './light_field';
+import Light from './light';
+import DisplayLight from './display_light';
 import { setOutlined } from './selection_outline';
 
 /**
@@ -29,6 +31,20 @@ import { setOutlined } from './selection_outline';
 
 /** Every display in the scene, so the statics can sweep them. */
 const instances = new Set();
+
+/**
+ * The display's depth tile: a camera at the screen looking out along its
+ * normal, wide enough for the light it throws at any useful angle. Points
+ * past it are left unshadowed.
+ */
+const AREA_TILE_FOV = 150;
+
+/** How far a display's light is followed, in metres. */
+const AREA_RANGE = 60;
+
+const screenNormal = new THREE.Vector3();
+const screenCentre = new THREE.Vector3();
+const lookTarget = new THREE.Vector3();
 
 /**
  * A point on the display's surface, in the fixture's own space.
@@ -319,6 +335,14 @@ class Display {
     this.applyGeometry();
     this.refresh();
     instances.add(this);
+    // The display lights the room with its picture's average, and casts
+    // shadows from its own depth tile.
+    if (this._level === undefined) this._level = 0;
+    this._depthSlot = -1;
+    this._depthRect = null;
+    this._depthCam = new THREE.PerspectiveCamera(AREA_TILE_FOV, 1, 0.05, 100);
+    LightField.register(this);
+    Light.addAreaDepthSource(this);
   }
 
   /**
@@ -415,6 +439,7 @@ class Display {
    * @param {Number} level 0..1, dimmer and shutter
    */
   setGain(level) {
+    this._level = level;
     const material = this._material;
     if (!material) return;
     const stated = Number(this._params.nits);
@@ -638,6 +663,115 @@ class Display {
   }
 
   /**
+   * Averages every lit display's picture, for the light it throws.
+   *
+   * @static
+   * @param {THREE.WebGLRenderer} renderer
+   */
+  static updateLight(renderer) {
+    const entries = [];
+    instances.forEach((display) => {
+      if (!display.lights()) return;
+      const input = display._inputAt();
+      const feed = input ? VideoRouter.feedFor(input.id) : null;
+      if (!feed || !feed.displayTexture) return;
+      entries.push({ owner: display, texture: feed.displayTexture });
+    });
+    DisplayLight.update(renderer, entries);
+  }
+
+  /** Whether the display is showing anything, and so lighting the room. */
+  lights() {
+    return !this._hidden && this._level > 0 && this._material !== null;
+  }
+
+  /** The screen's centre and outward normal, world. */
+  screenFrame() {
+    this._dummy.updateMatrixWorld();
+    // The screen faces -Y in the display's own frame.
+    screenNormal.set(0, -1, 0).transformDirection(this._dummy.matrixWorld);
+    this._dummy.getWorldPosition(screenCentre);
+  }
+
+  /**
+   * The display as an area light, for `LightField`: a matte emitter at its
+   * nits, coloured by its picture's average, with a disc of its own area as
+   * the radius that softens its light and its shadows.
+   *
+   * @public
+   * @param {Object} record
+   * @returns {Boolean} whether it is lighting anything
+   */
+  readLight(record) {
+    if (!this.lights()) return false;
+    const average = DisplayLight.averageOf(this);
+    if (!average) return false;
+    const params = this._params || {};
+    const width = Math.max(Number(params.width) || 0, 0.001);
+    const height = Math.max(Number(params.height) || 0, 0.001);
+    const area = width * height;
+    const stated = Number(params.nits);
+    const nits = stated > 0 ? stated : DEFAULT_DISPLAY_PARAMS.nits;
+
+    this.screenFrame();
+    record.position.copy(screenCentre).addScaledVector(screenNormal, 0.01);
+    record.direction.copy(screenNormal).negate();
+    record.color.copy(average);
+    // Luminance times area is the candela straight out; on the field's scale.
+    record.intensity = nits * this._level * area * SCENE_PER_NIT;
+    record.range = AREA_RANGE;
+    record.cosOuter = 0;
+    record.cosInner = 0;
+    record.iris = -1;
+    record.lensRadius = Math.sqrt(area / Math.PI);
+    if (this._depthSlot >= 0 && this._depthRect) {
+      const cam = this._depthCam;
+      record.hasTile = true;
+      record.tile.copy(this._depthRect);
+      record.tileOrigin.copy(cam.position);
+      // The field reads the tile with x mirrored, as the movers' cameras are.
+      record.axisX.set(-1, 0, 0).applyQuaternion(cam.quaternion);
+      record.axisY.set(0, 1, 0).applyQuaternion(cam.quaternion);
+      record.tanHalf = Math.tan(THREE.MathUtils.degToRad(AREA_TILE_FOV / 2));
+    }
+    return true;
+  }
+
+  /**
+   * The depth tile this display wants this frame, for `Light.renderDepth`.
+   *
+   * @public
+   * @param {Number} near the atlas's near plane
+   * @param {Number} far the atlas's far plane
+   * @returns {Object|null} `{ camera, priority }`
+   */
+  depthRequest(near, far) {
+    if (!this.lights()) return null;
+    const cam = this._depthCam;
+    if (cam.near !== near || cam.far !== far) {
+      cam.near = near;
+      cam.far = far;
+      cam.updateProjectionMatrix();
+    }
+    this.screenFrame();
+    cam.position.copy(screenCentre).addScaledVector(screenNormal, 0.02);
+    cam.up.set(0, 0, 1).transformDirection(this._dummy.matrixWorld);
+    cam.lookAt(lookTarget.copy(cam.position).add(screenNormal));
+    cam.updateMatrixWorld();
+    return { camera: cam, priority: this._level };
+  }
+
+  /**
+   * @public
+   * @param {Number} slot the atlas slot, -1 none
+   * @param {THREE.Vector4|null} rect the tile in the atlas, uv
+   */
+  setDepthSlot(slot, rect) {
+    this._depthSlot = slot;
+    this._depthRect = rect;
+  }
+
+  /**
    * @public
    */
   sync() {
@@ -660,6 +794,9 @@ class Display {
   static deleteInstance(instance) {
     if (!instance) return;
     instances.delete(instance);
+    LightField.unregister(instance);
+    Light.removeAreaDepthSource(instance);
+    DisplayLight.forget(instance);
     VideoRouter.drop(instance);
     if (instance._material) instance._material.dispose();
     if (instance._body) instance._body.geometry.dispose();

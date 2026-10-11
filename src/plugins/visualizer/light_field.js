@@ -112,7 +112,9 @@ const SCENE_INTENSITY_PER_UNIT = CANDELA_PER_UNIT * LUX_SCALE;
  *   9: the colour past a colour wheel split, rgb scaled by intensity; w the
  *      split, 0 none
  *  10: how far the iris is open, 1 fully to 0 closed; the lens radius, m;
- *      1 / focus distance, 1/m, 0 infinity; cosine of the cone's outer edge
+ *      1 / focus distance, 1/m, 0 infinity; cosine of the cone's outer edge.
+ *      An iris of -1 marks an area light, a display: the lens radius is then
+ *      the radius of a disc of the panel's area
  *
  * `direction` is stored three's way round -- `normalize(position - target)`,
  * pointing back up the beam rather than along it -- so that the angle test
@@ -264,6 +266,17 @@ const FIELD_LIGHT_CHUNK = /* glsl */`
     float farShare = 0.0;
     vec3 farColor = packedColor.rgb;
 
+    // An area light -- a display -- is a matte emitter: cosine-weighted, with
+    // its light falling as 1 / (d^2 + R^2) for a disc of radius R of the same
+    // area, so a surface at its face receives pi times its luminance and one
+    // far off sees a point. Its colour is its luminance times its area.
+    vec4 packedLens = texelFetch( lightField, ivec2( 10, i ), 0 );
+    bool areaLight = packedLens.x < -0.5;
+    if ( areaLight ) {
+      attenuation = angleCos / ( lightDistance * lightDistance + packedLens.y * packedLens.y )
+        * exp( -lightFieldExtinction * lightDistance );
+    }
+
     // The pool's shape, and whether this point is the first thing the
     // light's lens sees. A light with a depth tile carries its beam frame:
     // the tile was drawn from a camera at the tile origin looking down the
@@ -288,26 +301,27 @@ const FIELD_LIGHT_CHUNK = /* glsl */`
       vec3 offset = geometryPosition - tileOrigin;
       float along = dot( offset, tileAxisZ );
       if ( along <= 0.0 ) continue;
-      vec4 packedGobo = texelFetch( lightField, ivec2( 7, i ), 0 );
-      vec4 packedPrism = texelFetch( lightField, ivec2( 8, i ), 0 );
-      vec4 packedLens = texelFetch( lightField, ivec2( 10, i ), 0 );
-      // The aperture coordinate is measured against the field's own tangent:
-      // the outer cone's, which a prism widens by its spread, taken back out.
-      // Not the tile's, which also holds the lens's blur.
-      float drawnSpread = abs( packedPrism.x ) >= 2.0 ? 1.0 + packedPrism.z : 1.0;
-      float cosOuter = max( packedLens.w, 1e-4 );
-      float tanField = sqrt( max( 1.0 - cosOuter * cosOuter, 0.0 ) ) / cosOuter / drawnSpread;
-      vec2 aperture = vec2( dot( offset, tileAxisX ), dot( offset, tileAxisY ) ) / ( along * tanField );
-      vec4 packedColorB = texelFetch( lightField, ivec2( 9, i ), 0 );
-      // The lens's blur at this surface, in field radii: the lens radius times
-      // how far the surface is from the focus, over the field's radius here.
-      float blur = packedLens.y * abs( 1.0 - along * packedLens.z ) / max( along * tanField, 1e-5 );
-      vec2 sides = fieldStencil( aperture, packedOrigin.w, packedGobo, packedPrism, packedColorB.w, packedLens.x, blur );
-      float shape = sides.x + sides.y;
-      if ( shape <= 0.0 ) continue;
-      attenuation *= shape;
-      farShare = sides.y / shape;
-      farColor = packedColorB.rgb;
+      if ( !areaLight ) {
+        vec4 packedGobo = texelFetch( lightField, ivec2( 7, i ), 0 );
+        vec4 packedPrism = texelFetch( lightField, ivec2( 8, i ), 0 );
+        // The aperture coordinate is measured against the field's own tangent:
+        // the outer cone's, which a prism widens by its spread, taken back out.
+        // Not the tile's, which also holds the lens's blur.
+        float drawnSpread = abs( packedPrism.x ) >= 2.0 ? 1.0 + packedPrism.z : 1.0;
+        float cosOuter = max( packedLens.w, 1e-4 );
+        float tanField = sqrt( max( 1.0 - cosOuter * cosOuter, 0.0 ) ) / cosOuter / drawnSpread;
+        vec2 aperture = vec2( dot( offset, tileAxisX ), dot( offset, tileAxisY ) ) / ( along * tanField );
+        vec4 packedColorB = texelFetch( lightField, ivec2( 9, i ), 0 );
+        // The lens's blur at this surface, in field radii: the lens radius times
+        // how far the surface is from the focus, over the field's radius here.
+        float blur = packedLens.y * abs( 1.0 - along * packedLens.z ) / max( along * tanField, 1e-5 );
+        vec2 sides = fieldStencil( aperture, packedOrigin.w, packedGobo, packedPrism, packedColorB.w, packedLens.x, blur );
+        float shape = sides.x + sides.y;
+        if ( shape <= 0.0 ) continue;
+        attenuation *= shape;
+        farShare = sides.y / shape;
+        farColor = packedColorB.rgb;
+      }
 
       float texel = 2.0 * along * packedAxisX.w / lightFieldDepthTile;
       vec3 lifted = offset + geometryNormal * ( texel * 1.5 );
@@ -337,9 +351,9 @@ const FIELD_LIGHT_CHUNK = /* glsl */`
           continue;
         }
       }
-    } else {
+    } else if ( !areaLight ) {
       // The cone's own edge, not the reach the cone test above allowed for.
-      float cosOuter = texelFetch( lightField, ivec2( 10, i ), 0 ).w;
+      float cosOuter = packedLens.w;
       attenuation *= getSpotAttenuation( cosOuter, packedColor.w, angleCos );
       if ( attenuation <= 0.0 ) continue;
     }

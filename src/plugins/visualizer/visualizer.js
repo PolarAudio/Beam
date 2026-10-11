@@ -1162,6 +1162,8 @@ class Visualizer {
       // because that is what they will be drawing from.
       VideoDecode.decodeAll(this.renderer, VideoFeed.all());
       Display.syncAll();
+      // Each display's picture averaged, for the light it throws.
+      Display.updateLight(this.renderer);
       // Rebuild each laser's beam from the points its DAC has played since the
       // last frame. Stream-fed like the video devices, not DMX-driven, so it
       // updates here rather than through setChannel.

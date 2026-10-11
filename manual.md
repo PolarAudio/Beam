@@ -606,7 +606,7 @@ A projector's position is on its lens axis, not the middle of its body. With the
 
 A projector's brightness is its lumens over the area of its picture, so a 4000-lumen projector throwing a 9 m picture puts about 80 lux on the surface. A surface returns that light in proportion to its colour: a mid-grey wall shows the picture at about a fifth of a white one. A projector's black is its white divided by its contrast, across the whole frame. The soft edge dims only the picture above that black, so two blended projectors show a brighter black where they overlap.
 
-A display's full white has the luminance of its **nits**. A 600-nit display overexposes a camera set for a dark room, as a real LED wall does; dim it, as is done for filming.
+A display's full white has the luminance of its **nits**. A 600-nit display overexposes a camera set for a dark room, as a real LED wall does; dim it, as is done for filming. A display lights the room in front of it with its picture's average colour, softly, as a large panel does, and things in front of it cast soft shadows. Up to 16 displays light the room.
 
 What a display or projector does to its input depends on the model, so it is part of the definition: each of these is Fixed, Adjustable or DMX in the create dialog, and a Fixed one is hidden from Fixture settings.
 

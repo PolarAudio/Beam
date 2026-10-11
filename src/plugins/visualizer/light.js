@@ -272,6 +272,17 @@ const MOVER_DEPTH = new DepthAtlas({
 });
 
 /**
+ * Slots at the top of the atlas kept for area lights -- displays -- so their
+ * shadows read through the same tiles and code as a pool's. A mover whose id
+ * lands here gets no tile, as one past the end of the atlas does.
+ */
+const AREA_DEPTH_SLOTS = 16;
+const FIRST_AREA_SLOT = MOVER_DEPTH.maxProjections - AREA_DEPTH_SLOTS;
+
+/** Sources that ask for an area tile: `depthRequest(near, far)`, `setDepthSlot(slot, rect)`. */
+const areaDepthSources = [];
+
+/**
  * How many tiles may be redrawn in one frame.
  *
  * One head panning dirties the scene for every tile, so a chase across two
@@ -2845,8 +2856,29 @@ class Light {
   }
 
   /**
+   * Adds an area light that wants a depth tile; it takes a slot at the top of
+   * the atlas.
+   *
+   * @public
+   * @param {Object} source `depthRequest(near, far)` and `setDepthSlot(slot, rect)`
+   */
+  static addAreaDepthSource(source) {
+    if (!areaDepthSources.includes(source)) areaDepthSources.push(source);
+  }
+
+  /**
+   * @public
+   * @param {Object} source
+   */
+  static removeAreaDepthSource(source) {
+    const at = areaDepthSources.indexOf(source);
+    if (at > -1) areaDepthSources.splice(at, 1);
+  }
+
+  /**
    * Draws each lit beam's view of the scene into its tile, within the frame's
-   * budget, and tells the beams which tiles are theirs.
+   * budget, and tells the beams which tiles are theirs. Area lights take the
+   * slots at the top of the atlas.
    *
    * Dark beams submit nothing: a tile no one can see is not worth a pass.
    * Dark is the dimmer at nought, not the shutter closed: a strobe is closed
@@ -2864,6 +2896,7 @@ class Light {
     if (!beamMesh || !beamMesh.material || !beamMesh.material.uniforms) return;
     const u = beamMesh.material.uniforms;
     if (!occlusionEnabled) {
+      areaDepthSources.forEach((source) => source.setDepthSlot(-1, null));
       instances.forEach((instance) => depth_slot_attribute.setX(instance._id, -1));
       depth_slot_attribute.needsUpdate = true;
       return;
@@ -2873,7 +2906,7 @@ class Light {
     instances.forEach((instance) => {
       const id = instance._id;
       const dimmer = instance._intensity || 0;
-      if (id >= MOVER_DEPTH.maxProjections || dimmer <= 0 || instance._hidden) return;
+      if (id >= FIRST_AREA_SLOT || dimmer <= 0 || instance._hidden) return;
       instance.updateDepthCamera();
       instance._beamDummy.getWorldDirection(vector_beam);
       const turned = 1 - Math.max(vector_beam.dot(instance._depthDir), 0);
@@ -2883,7 +2916,34 @@ class Light {
         priority: (dimmer / distance) * (1 + 4 * turned),
       };
     });
+    // Area lights after the movers, each in a slot of its own from the top.
+    const areaSlots = [];
+    areaDepthSources.forEach((source) => {
+      const slot = FIRST_AREA_SLOT + areaSlots.length;
+      const request = slot < MOVER_DEPTH.maxProjections
+        ? source.depthRequest(MOVER_DEPTH.near, MOVER_DEPTH.far) : null;
+      if (!request) {
+        source.setDepthSlot(-1, null);
+        return;
+      }
+      projections[slot] = request;
+      areaSlots.push([source, slot]);
+    });
     const drawn = MOVER_DEPTH.render(renderer, scene, projections, DEPTH_TILE_BUDGET);
+    areaSlots.forEach(([source, slot]) => {
+      if (!MOVER_DEPTH.hasTile(slot)) {
+        source.setDepthSlot(-1, null);
+        return;
+      }
+      const column = slot % MOVER_DEPTH.columns;
+      const row = Math.floor(slot / MOVER_DEPTH.columns);
+      source.setDepthSlot(slot, new THREE.Vector4(
+        column / MOVER_DEPTH.columns,
+        row / MOVER_DEPTH.rows,
+        1 / MOVER_DEPTH.columns,
+        1 / MOVER_DEPTH.rows,
+      ));
+    });
     drawn.forEach((slot) => {
       const instance = instances[slot];
       if (instance) instance._beamDummy.getWorldDirection(instance._depthDir);

@@ -608,7 +608,7 @@ A projector's brightness is its lumens over the area of its picture, so a 4000-l
 What a display or projector does to its input depends on the model, so it is part of the definition: each of these is Fixed, Adjustable or DMX in the create dialog, and a Fixed one is hidden from Fixture settings.
 
 - **Rotation** and **Mirror H** / **Mirror V** — for a panel in portrait, a projector on the ceiling or behind the screen. The picture is turned first, then mirrored.
-- **Crop %** — taken off each side of the input, up to 45%: overscan, or a processor's input window.
+- **Crop px** — whole pixels of the input taken off each side: overscan, or a processor's input window. A crop larger than the input leaves a sliver of it.
 - **Scale** — **Stretch** fills the picture whatever the shape; **Fit** shows all of the input with black bars, so a square video on a 16:9 screen has bars at the sides; **Fill** covers the picture and crops what overflows; **Native** shows one input pixel per device pixel.
 - **Zoom %** — digital zoom, 25 to 400. Below 100 the picture shrinks into the middle with black around it.
 

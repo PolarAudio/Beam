@@ -91,12 +91,18 @@ console.log('\n-- digital zoom --');
 
 console.log('\n-- crop --');
 {
-  const m = pictureMapping(pictureOf(settings({ cropLeft: 10, cropTop: 20 })), WIDE, SQUARE);
+  // Pixels of the input: 108 and 216 of a 1080 square.
+  const m = pictureMapping(pictureOf(settings({ cropLeft: 108, cropTop: 216 })), WIDE, SQUARE);
   check('stretched, the device shows the cropped part', at(m, 0, 0), '0.1,0.2');
   check('to the far corner', at(m, 1, 1), '1,1');
   check('the crop is the picture\'s edge', `${r(m.bounds.x0)},${r(m.bounds.y0)}`, '0.1,0.2');
-  const over = pictureMapping(pictureOf(settings({ cropLeft: 45, cropRight: 45 })), WIDE, SQUARE);
-  check('a crop is capped per side', r(over.bounds.x0), 0.45);
+  const hd = pictureMapping(pictureOf(settings({ cropLeft: 192 })), WIDE, { width: 1920, height: 1080 });
+  check('the same pixels are a share of a wider input', r(hd.bounds.x0), 0.1);
+  check('a crop is whole pixels', pictureOf(settings({ cropLeft: 10.6 })).crop.left, 11);
+  const over = pictureMapping(pictureOf(settings({ cropLeft: 540, cropRight: 540 })), WIDE, SQUARE);
+  check('a crop leaves a sliver of the input', r(over.bounds.x0), 0.49);
+  const early = pictureMapping(pictureOf(settings({ cropLeft: 192 })), WIDE, {});
+  check('before a frame, the device\'s own size', r(early.bounds.x0), 0.1);
 }
 
 console.log('\n-- turned, then fitted --');
@@ -119,7 +125,7 @@ console.log('\n-- the map is affine and its coefficients agree with it --');
 {
   const m = pictureMapping(
     pictureOf(settings({
-      rotation: 270, mirrorH: true, scale: 'fit', pictureZoom: 150, cropRight: 10,
+      rotation: 270, mirrorH: true, scale: 'fit', pictureZoom: 150, cropRight: 108,
     })),
     WIDE,
     SQUARE,

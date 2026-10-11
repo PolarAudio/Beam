@@ -309,7 +309,7 @@
           />
         </uk-flex>
         <template v-if="isScreen && showsAny(['cropLeft', 'cropRight', 'cropTop', 'cropBottom'])">
-          <span class="section_label">Crop %</span>
+          <span class="section_label">Crop px</span>
           <uk-flex
             :gap="8"
             class="row"
@@ -320,9 +320,9 @@
               :model-value="read('cropLeft')"
               style="width: 72px"
               label="Left"
-              :precision="1"
+              :precision="0"
               :min="0"
-              :max="45"
+              :max="8192"
               @update:model-value="writeDevice('cropLeft', $event)"
             />
             <uk-num-input
@@ -331,9 +331,9 @@
               :model-value="read('cropRight')"
               style="width: 72px"
               label="Right"
-              :precision="1"
+              :precision="0"
               :min="0"
-              :max="45"
+              :max="8192"
               @update:model-value="writeDevice('cropRight', $event)"
             />
             <uk-num-input
@@ -342,9 +342,9 @@
               :model-value="read('cropTop')"
               style="width: 72px"
               label="Top"
-              :precision="1"
+              :precision="0"
               :min="0"
-              :max="45"
+              :max="8192"
               @update:model-value="writeDevice('cropTop', $event)"
             />
             <uk-num-input
@@ -353,9 +353,9 @@
               :model-value="read('cropBottom')"
               style="width: 72px"
               label="Bottom"
-              :precision="1"
+              :precision="0"
               :min="0"
-              :max="45"
+              :max="8192"
               @update:model-value="writeDevice('cropBottom', $event)"
             />
           </uk-flex>

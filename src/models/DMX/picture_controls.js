@@ -1,5 +1,5 @@
 import {
-  ControlDef, EnumType, PercentType, RangeType, SwitchType,
+  ControlDef, EnumType, RangeType, SwitchType,
 } from './device_control';
 import { ROTATIONS, orientedSample } from './video_input';
 
@@ -42,8 +42,16 @@ class ZoomType extends RangeType {
   initial() { return 100; }
 }
 
-/** The most a crop may take from one side, in per cent. */
-const MAX_CROP = 45;
+/**
+ * The most a crop may take from one side, in input pixels. The bound of the
+ * control; what the input can lose is limited by its size in `pictureMapping`.
+ */
+const MAX_CROP = 8192;
+
+/** A crop: whole input pixels taken off one side. */
+const cropType = () => new RangeType({
+  bounds: () => ({ min: 0, max: MAX_CROP }), unit: 'px', precision: 0,
+});
 
 /**
  * The picture controls, in addressing order, shared by displays and
@@ -58,10 +66,10 @@ export const PICTURE_DEFS = [
   })),
   new ControlDef('mirrorH', 'Mirror H', new SwitchType({ initial: false, onLabel: 'Mirrored' })),
   new ControlDef('mirrorV', 'Mirror V', new SwitchType({ initial: false, onLabel: 'Mirrored' })),
-  new ControlDef('cropLeft', 'Crop Left', new PercentType({ initial: 0, max: MAX_CROP })),
-  new ControlDef('cropRight', 'Crop Right', new PercentType({ initial: 0, max: MAX_CROP })),
-  new ControlDef('cropTop', 'Crop Top', new PercentType({ initial: 0, max: MAX_CROP })),
-  new ControlDef('cropBottom', 'Crop Bottom', new PercentType({ initial: 0, max: MAX_CROP })),
+  new ControlDef('cropLeft', 'Crop Left', cropType()),
+  new ControlDef('cropRight', 'Crop Right', cropType()),
+  new ControlDef('cropTop', 'Crop Top', cropType()),
+  new ControlDef('cropBottom', 'Crop Bottom', cropType()),
   new ControlDef('scale', 'Scale', new EnumType({
     options: SCALE_MODES, initial: 'stretch', labels: SCALE_LABELS,
   })),
@@ -78,7 +86,8 @@ export const PICTURE_KEYS = PICTURE_DEFS.map((def) => def.key);
  * any the definition does not have.
  *
  * @param {Object} [settings] DeviceSettings, or null
- * @returns {Object} `{ rotation, mirrorH, mirrorV, crop, scale, zoom }`
+ * @returns {Object} `{ rotation, mirrorH, mirrorV, crop, scale, zoom }`, crop in
+ *   input pixels
  */
 export function pictureOf(settings) {
   const read = (key, fallback) => {
@@ -86,7 +95,7 @@ export function pictureOf(settings) {
     const value = settings.value(key);
     return value === undefined || value === null ? fallback : value;
   };
-  const pct = (key) => Math.min(Math.max(Number(read(key, 0)) || 0, 0), MAX_CROP) / 100;
+  const px = (key) => Math.round(Math.min(Math.max(Number(read(key, 0)) || 0, 0), MAX_CROP));
   const rotation = Number(read('rotation', 0));
   const scale = read('scale', 'stretch');
   return {
@@ -94,7 +103,7 @@ export function pictureOf(settings) {
     mirrorH: !!read('mirrorH', false),
     mirrorV: !!read('mirrorV', false),
     crop: {
-      left: pct('cropLeft'), right: pct('cropRight'), top: pct('cropTop'), bottom: pct('cropBottom'),
+      left: px('cropLeft'), right: px('cropRight'), top: px('cropTop'), bottom: px('cropBottom'),
     },
     scale: SCALE_MODES.includes(scale) ? scale : 'stretch',
     zoom: Math.min(Math.max(Number(read('pictureZoom', 100)) || 100, ZOOM_MIN), ZOOM_MAX) / 100,
@@ -116,18 +125,6 @@ export function pictureOf(settings) {
  *   `{ x0, y0, x1, y1 }`
  */
 export function pictureMapping(picture, device, input = {}) {
-  const { crop } = picture;
-  // A crop that would leave less than a sliver is scaled back to leave one.
-  let {
-    left, right, top, bottom,
-  } = crop;
-  const wide = left + right;
-  if (wide > 0.98) { left *= 0.98 / wide; right *= 0.98 / wide; }
-  const tall = top + bottom;
-  if (tall > 0.98) { top *= 0.98 / tall; bottom *= 0.98 / tall; }
-  const keptW = 1 - left - right;
-  const keptH = 1 - top - bottom;
-
   // The frame the picture is fitted to: the device's own, turned with it.
   const quarter = picture.rotation === 90 || picture.rotation === 270;
   const aspect = Number(device.aspect) > 0 ? Number(device.aspect) : 16 / 9;
@@ -135,10 +132,28 @@ export function pictureMapping(picture, device, input = {}) {
   const pixW = Math.max(Number(quarter ? device.pixelsHigh : device.pixelsWide) || 1, 1);
   const pixH = Math.max(Number(quarter ? device.pixelsWide : device.pixelsHigh) || 1, 1);
 
-  // The cropped input, in pixels. Before a frame has arrived it is taken as
-  // the frame's own shape, so nothing jumps when it does.
-  const inW = (Number(input.width) > 0 ? Number(input.width) : pixW) * keptW;
-  const inH = (Number(input.height) > 0 ? Number(input.height) : pixH) * keptH;
+  // The input, in pixels. Before a frame has arrived it is taken as the
+  // frame's own size, so nothing jumps when it does.
+  const fullW = Number(input.width) > 0 ? Number(input.width) : pixW;
+  const fullH = Number(input.height) > 0 ? Number(input.height) : pixH;
+
+  // The crop as fractions of the input. One that would leave less than a
+  // sliver is scaled back to leave one.
+  const { crop } = picture;
+  let left = crop.left / fullW;
+  let right = crop.right / fullW;
+  let top = crop.top / fullH;
+  let bottom = crop.bottom / fullH;
+  const wide = left + right;
+  if (wide > 0.98) { left *= 0.98 / wide; right *= 0.98 / wide; }
+  const tall = top + bottom;
+  if (tall > 0.98) { top *= 0.98 / tall; bottom *= 0.98 / tall; }
+  const keptW = 1 - left - right;
+  const keptH = 1 - top - bottom;
+
+  // The cropped input, in pixels.
+  const inW = fullW * keptW;
+  const inH = fullH * keptH;
   const contentAspect = inW / inH;
 
   // How much of the frame the content covers along each axis.

@@ -42,6 +42,7 @@
           :items="listItems"
           :selected-id="activeKind === 'fixtures' ? selectedRowId : undefined"
           filterable
+          open-folders
           @select="selectItem"
         >
           <template #filters>

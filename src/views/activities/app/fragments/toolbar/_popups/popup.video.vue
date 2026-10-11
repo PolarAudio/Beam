@@ -76,6 +76,12 @@
             </h4>
             <uk-spacer />
             <uk-button
+              v-if="forDevices.length"
+              :label="useLabel"
+              :disabled="alreadyUsed"
+              @click="useSelected"
+            />
+            <uk-button
               v-if="!selected.builtIn"
               label="Remove"
               @click="remove"
@@ -163,6 +169,7 @@ import VideoFeed from '@/plugins/visualizer/video_feed';
 import VideoRouter from '@/plugins/visualizer/video_router';
 import createVideoMaterial from '@/plugins/visualizer/video_material';
 import { INPUT_KINDS } from '@/models/DMX/video_input';
+import EventBus from '@/plugins/eventbus';
 
 /**
  * @namespace views/activities/app/fragments/toolbar/popups
@@ -202,6 +209,11 @@ export default {
       type: Number,
       default: null,
     },
+    /** The devices the window was opened from, by fixture id. */
+    forFixtures: {
+      type: Array,
+      default: () => [],
+    },
   },
   data() {
     return {
@@ -223,6 +235,24 @@ export default {
     },
     selected() {
       return this.inputs.find((input) => input.id === this.selectedId) || null;
+    },
+    /** The devices the window was opened from, as fixtures. */
+    forDevices() {
+      const pool = this.$show && this.$show.fixturePool;
+      const fixtures = (pool && pool.fixtures) || [];
+      return this.forFixtures
+        .map((id) => fixtures.find((fixture) => fixture.id === id))
+        .filter((fixture) => fixture && fixture.device);
+    },
+    useLabel() {
+      const devices = this.forDevices;
+      return devices.length === 1 ? `Use for ${devices[0].name}` : `Use for ${devices.length} devices`;
+    },
+    /** Whether every device it was opened from already shows the selection. */
+    alreadyUsed() {
+      void this.tick; // eslint-disable-line no-void
+      if (!this.selected) return true;
+      return this.forDevices.every((fixture) => fixture.device.value('source') === this.selected.id);
     },
     /** The built-in test card first, then the project's own inputs. */
     listed() {
@@ -339,6 +369,38 @@ export default {
     addNdi() {
       const input = this.$show.addVideoInput({ kind: INPUT_KINDS.NDI });
       this.selectedId = input.id;
+      this.assignNew(input);
+    },
+    /**
+     * Sets devices to an input, the way their own panel would: the value,
+     * then a redraw of each device.
+     *
+     * @param {Array} fixtures
+     * @param {Number} id input id
+     */
+    assign(fixtures, id) {
+      fixtures.forEach((fixture) => {
+        fixture.device.set('source', id);
+        const model = fixture._3DModel;
+        if (model && model.refresh) model.refresh();
+      });
+      if (fixtures.length) {
+        this.$show.touch();
+        EventBus.emit('video_input_assigned');
+        this.tick += 1;
+      }
+    },
+    /** Puts the selected input on the devices the window was opened from. */
+    useSelected() {
+      if (this.selected) this.assign(this.forDevices, this.selected.id);
+    },
+    /** A new input made from a device's panel goes on the devices that had none. */
+    assignNew(input) {
+      const empty = this.forDevices.filter((fixture) => {
+        const value = fixture.device.value('source');
+        return value === null || value === undefined;
+      });
+      this.assign(empty, input.id);
     },
     async addFile() {
       const result = await VideoFeed.addFile();
@@ -349,6 +411,7 @@ export default {
       await this.loadLists();
       const input = this.$show.addVideoInput({ kind: INPUT_KINDS.FILE, file: result.entry.key });
       this.selectedId = input.id;
+      this.assignNew(input);
     },
     remove() {
       if (!this.selected || this.selected.builtIn) return;

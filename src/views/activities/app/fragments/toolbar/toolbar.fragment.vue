@@ -26,6 +26,7 @@
     <video-popup
       v-model="videoPopupState"
       :focus-id="videoFocusId"
+      :for-fixtures="videoForFixtures"
     />
   </uk-flex>
 </template>
@@ -74,6 +75,8 @@ export default {
       videoPopupState: false,
       /** The input the Video inputs window opens on, or null for its own choice. */
       videoFocusId: null,
+      /** The devices the window was opened from, by fixture id. */
+      videoForFixtures: [],
       /** Whether Beam is in sender mode, and who else is on its universes. */
       sending: false,
       otherSenders: [],
@@ -324,10 +327,13 @@ export default {
   },
   methods: {
     /**
-     * @param {Number} [id] the input to open on: a device's own, from its gear
+     * @param {Object} [from] `{ inputId, fixtureIds }` when a device's panel
+     *   opens it: the input to show and the devices it can set
      */
-    openVideoInputs(id = null) {
-      this.videoFocusId = typeof id === 'number' ? id : null;
+    openVideoInputs(from = null) {
+      const { inputId = null, fixtureIds = [] } = from || {};
+      this.videoFocusId = typeof inputId === 'number' ? inputId : null;
+      this.videoForFixtures = Array.isArray(fixtureIds) ? [...fixtureIds] : [];
       this.videoPopupState = true;
     },
     /** Ctrl+Shift+I opens the Video inputs window. */

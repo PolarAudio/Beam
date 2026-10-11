@@ -803,6 +803,10 @@ export default {
       if (this.fixtures && this.fixtures.length > 1) return this.fixtures;
       return this.fixture ? [this.fixture] : [];
     },
+    /** The ids of the fixtures this panel stands for. */
+    targetIds() {
+      return this.targets.map((target) => target.id);
+    },
     /** Whether the panel stands for several fixtures. */
     many() {
       return this.targets.length > 1;
@@ -1442,8 +1446,11 @@ export default {
       this.channelRevision += 1;
       if (this.device) this.deviceRevision += 1;
     }, WIRE_POLL_MS);
+    // The Video inputs window can set a device's input; the rows re-read.
+    EventBus.on('video_input_assigned', this.onInputAssigned);
   },
   beforeUnmount() {
+    EventBus.off('video_input_assigned', this.onInputAssigned);
     if (this.streamTimer) clearInterval(this.streamTimer);
     this.streamTimer = null;
     if (this.wireTimer) clearInterval(this.wireTimer);
@@ -1592,7 +1599,7 @@ export default {
         return;
       }
       if (index === this.videoInputs.length + 1) {
-        EventBus.emit('open_video_inputs');
+        EventBus.emit('open_video_inputs', { inputId: null, fixtureIds: this.targetIds });
         // Redrawn so the list shows the input it had, not the action.
         this.sourceListKey += 1;
         return;
@@ -1612,11 +1619,18 @@ export default {
       if (index < 0 || index >= SCALE_MODES.length) return;
       this.writeDevice('scale', SCALE_MODES[index]);
     },
+    onInputAssigned() {
+      this.deviceRevision += 1;
+      this.sourceListKey += 1;
+    },
     /** Opens the Video inputs window on this device's input, if it has one. */
     editInput() {
       const value = this.isMixed('source') ? null : this.read('source');
       const input = this.videoInputs.find((candidate) => candidate.id === value);
-      EventBus.emit('open_video_inputs', input ? input.id : null);
+      EventBus.emit('open_video_inputs', {
+        inputId: input ? input.id : null,
+        fixtureIds: this.targetIds,
+      });
     },
     pickRotation(pick) {
       const index = Number(pick) - (this.isMixed('rotation') ? 1 : 0);

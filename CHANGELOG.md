@@ -17,7 +17,7 @@
 ### Preferences
 
 - The default floor is a dark grey of about 10% reflectance, #595959, was #b9babb (about 49%). Existing projects keep their floor.
-- The grid cancels the camera's exposure, so its lines look the same at any EV, and draws dark lines while the house lights are up.
+- The grid cancels the camera's exposure, so its lines look the same at any EV, and its lines are near white, #e6e9ed, was #7d858e.
 - House lights up and down are set in lux on a white floor, to one decimal, on the same scale as projectors and fixtures. Defaults are 300 lux up and 2 lux down.
 - Each house state has its own camera exposure, **Exposure, house up (EV)** and **Exposure, house down (EV)**, defaults 7 and 5.25. A lit room at 300 lux and a dark show both read correctly. Each environment image is measured once, so a lux figure means the same light whichever image is chosen. Earlier percentages are not carried over.
 

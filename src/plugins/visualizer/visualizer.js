@@ -899,7 +899,6 @@ class Visualizer {
     setHouseBrightness(this._globalBrightness);
     if (ambientHazeEffect) ambientHazeEffect.setHouseBrightness(this._globalBrightness);
     this.applyExposure();
-    if (helpers.grid && helpers.grid.setLit) helpers.grid.setLit(this._houseLights);
   }
 
   /**
@@ -1221,7 +1220,6 @@ class Visualizer {
     // same depth. The material declines to write depth of its own.
     gridHelper.renderOrder = 1;
     helpers.grid = gridHelper;
-    gridHelper.setLit(this._houseLights);
     applyGridStyle();
     SceneManager.add(gridHelper);
 

@@ -70,11 +70,11 @@ const DEFAULT_OPACITY = 0.4;
  */
 const DEFAULT_LINE_WIDTH_PX = 0.3;
 
-/** A cool grey that reads against a dark room. */
-const DEFAULT_COLOR = '#7d858e';
-
-/** Dark lines for a lit room, where the floor is near white. */
-const LIT_COLOR = '#2b3036';
+/**
+ * Near white, as seen after the exposure: the default floor is dark grey with
+ * the house lights up or down, so light lines contrast in both.
+ */
+const DEFAULT_COLOR = '#e6e9ed';
 
 class InfiniteGridHelper extends THREE.Mesh {
   /**
@@ -207,20 +207,9 @@ ${anchor}
 
     super(geometry, material);
     this.frustumCulled = false;
-    this._darkColor = (color || new THREE.Color(DEFAULT_COLOR)).clone();
     this.onBeforeRender = (renderer) => {
       this.material.uniforms.uExposure.value = Math.max(renderer.toneMappingExposure || 1, 1e-4);
     };
-  }
-
-  /**
-   * Whether the room is lit: dark lines over a lit floor, light ones in the dark.
-   *
-   * @public
-   * @param {Boolean} on
-   */
-  setLit(on) {
-    this.material.uniforms.uColor.value.copy(on ? new THREE.Color(LIT_COLOR) : this._darkColor);
   }
 
   /**

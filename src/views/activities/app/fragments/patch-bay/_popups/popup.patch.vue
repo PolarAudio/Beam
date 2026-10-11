@@ -1098,6 +1098,17 @@ export default {
               copy.fixtureType = fixtureType || null;
               const fixture = this.$show.fixturePool.addRaw(copy);
               this.$show.patchFixture(fixture);
+              // Placed on the floor, not through it: a fixture whose body reaches
+              // below its origin -- a display, a projector -- is lifted until it
+              // rests on the floor. A height set above that stays as it is.
+              const model = fixture._3DModel;
+              const sunk = model ? (Number(model.floorOffset) || 0) - fixture.position.z : 0;
+              if (sunk > 0) {
+                fixture.position = {
+                  ...fixture.position,
+                  z: Math.round((fixture.position.z + sunk) * 100) / 100,
+                };
+              }
               // Collected rather than left empty: this list is returned, and
               // something has to name what was added.
               fixtures.push(fixture);

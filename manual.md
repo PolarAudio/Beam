@@ -546,7 +546,8 @@ Each group owns its mappings independently — one group can go out as a front e
 - **Turbulence** — 0–100, how much it moves over time. Far more range than it used to have, and the same setting now means the same speed whatever the haze is scaled to, so changing density no longer changes how fast the air drifts. At the top of the range the room is genuinely churning.
 
 **Lighting**
-- **Global Brightness** — 25–200. Scales the whole scene. Turn it down for a dark rig, up for a bright one.
+- **House lights up (lux)** and **House lights down (lux)** — the room's own light, as illuminance on a white floor, 0 to 2000. Defaults are 8 and 2. The toolbar's house lights button swaps between them. Fixtures and projectors are on the same lux scale, so a projector's picture against the room is the ratio you would see in the real space. For reference, a dark venue is 1 to 5 lux, a mapping projection on a facade 50 to 150, and a lit room 100 to 500.
+- The room's environment image sets where the house light comes from and its colour. Beam measures each image once, so the same lux gives the same light on the floor whichever image is chosen.
 
 **Reference** — turn these off for a clean render
 - **Floor** — the checkered ground plane
@@ -599,6 +600,8 @@ A project receives pictures through **inputs**. An input is one NDI stream or on
 - **Test card** is built in: every project has it, it is listed first, and it cannot be removed or changed. It has a grey wedge, colour bars, a fine grid, a circle and an F in the top-left corner, so a picture that is too bright, the wrong colour, soft, stretched, mirrored or turned shows it.
 
 A feed only opens while a device shows its input, so an unused input costs nothing.
+
+A projector's brightness is its lumens over the area of its picture, so a 4000-lumen projector throwing a 9 m picture puts about 80 lux on the surface. A surface returns that light in proportion to its colour: a mid-grey wall shows the picture at about a fifth of a white one.
 
 What a display or projector does to its input depends on the model, so it is part of the definition: each of these is Fixed, Adjustable or DMX in the create dialog, and a Fixed one is hidden from Fixture settings.
 

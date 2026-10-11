@@ -98,32 +98,32 @@
       </uk-flex>
       <uk-flex center-h>
         <div>
-          <h4>House lights up:</h4>
+          <h4>House lights up (lux):</h4>
           <p class="subtitle">
-            Brightness with the house lights on, for looking at the rig.
+            Light on the floor with the house lights on, for looking at the rig.
           </p>
         </div>
         <uk-spacer />
         <uk-num-input
           v-model="$show.visualizerHandle.houseLightsUp"
           :min="0"
-          :max="200"
+          :max="2000"
           style="width: 100px"
         />
       </uk-flex>
       <uk-flex center-h>
         <div>
-          <h4>House lights down:</h4>
+          <h4>House lights down (lux):</h4>
           <p class="subtitle">
-            Brightness with them off, for watching the show. The toolbar swaps
-            between the two.
+            Light on the floor with them off, for watching the show. The
+            toolbar swaps between the two.
           </p>
         </div>
         <uk-spacer />
         <uk-num-input
           v-model="$show.visualizerHandle.houseLightsDown"
           :min="0"
-          :max="200"
+          :max="2000"
           style="width: 100px"
         />
       </uk-flex>
@@ -484,8 +484,8 @@ export default {
       this.$show.visualizerHandle.globalFoggingScale = this.initialValues.globalFoggingScale;
       // eslint-disable-next-line max-len
       this.$show.visualizerHandle.globalFoggingTurbulences = this.initialValues.globalFoggingTurbulences;
-      this.$show.visualizerHandle.houseLightsUp = this.initialValues.globalBrightness;
-      this.$show.visualizerHandle.houseLightsDown = this.initialValues.brightnessHouseOff;
+      this.$show.visualizerHandle.houseLightsUp = this.initialValues.houseLuxUp;
+      this.$show.visualizerHandle.houseLightsDown = this.initialValues.houseLuxDown;
       this.$show.visualizerHandle.snapSpacing = this.initialValues.snapSpacing;
       this.$show.visualizerHandle.showGrid = this.initialValues.showGrid;
       this.$show.visualizerHandle.gridOpacity = this.initialValues.gridOpacity;

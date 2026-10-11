@@ -256,6 +256,8 @@ const FRAGMENT = /* glsl */`
   uniform mat4 projInverse;
   uniform mat4 camWorld;
   uniform sampler2D depthAtlas;
+  uniform sampler2D surfaceAlbedo;
+  uniform bool hasAlbedo;
   uniform mat4 lensMatrix[SLOTS];
   uniform vec3 pictureRowX[SLOTS];
   uniform vec3 pictureRowY[SLOTS];
@@ -533,6 +535,8 @@ ${PICTURE_SLOTS}
 
       total += colour * lux * emission[i].y * facing * inside * visible * blend;
     }
+    // A surface returns the projected light in proportion to its colour.
+    if (hasAlbedo) total *= texture2D(surfaceAlbedo, uv).rgb;
     }
 
     // The shaft, the mover beam's way: for each projector, the stretch of the
@@ -626,6 +630,8 @@ class ProjectorEffect extends Effect {
         ['hasPicture', new THREE.Uniform(new Array(MAX_PROJECTIONS).fill(0))],
         ['pictureSize', new THREE.Uniform(pictureSize)],
         ['depthAtlas', new THREE.Uniform(null)],
+        ['surfaceAlbedo', new THREE.Uniform(null)],
+        ['hasAlbedo', new THREE.Uniform(false)],
         ['lensMatrix', new THREE.Uniform(lensMatrix)],
         ['pictureRowX', new THREE.Uniform(pictureRowX)],
         ['pictureRowY', new THREE.Uniform(pictureRowY)],
@@ -665,6 +671,17 @@ class ProjectorEffect extends Effect {
    */
   setProjections(projections) {
     this.projections = projections || [];
+  }
+
+  /**
+   * The surface colour for this frame, from `SurfaceAlbedo`, or null.
+   *
+   * @public
+   * @param {THREE.Texture|null} texture
+   */
+  setAlbedo(texture) {
+    this.uniforms.get('surfaceAlbedo').value = texture || null;
+    this.uniforms.get('hasAlbedo').value = !!texture;
   }
 
   /**

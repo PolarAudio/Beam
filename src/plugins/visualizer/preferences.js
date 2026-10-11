@@ -62,13 +62,13 @@ const DEFAULTS = {
    */
   globalFoggingTurbulences: 33,
   /**
-   * Global brightness with the house lights up. The scene keeps two, because
-   * looking at a rig and looking at a show want different rooms, and the one
-   * you are not in should not have to be dialled back every time.
+   * House light with the house lights up, in lux on a white floor. The scene
+   * keeps two, because looking at a rig and looking at a show want different
+   * rooms, and the one you are not in should not have to be dialled back.
    */
-  globalBrightness: 100,
-  /** Global brightness with the house lights down. */
-  brightnessHouseOff: 25,
+  houseLuxUp: 8,
+  /** House light with the house lights down, in lux on a white floor. */
+  houseLuxDown: 2,
   /** Which of the two is in force. */
   houseLights: true,
   /**

@@ -16,7 +16,12 @@
 
 ### Preferences
 
-- House lights down defaults to 25%, was 30%.
+- House lights up and down are set in lux on a white floor, on the same scale as projectors and fixtures. Defaults are 8 lux up and 2 lux down, the levels 100% and 25% gave. Each environment image is measured once, so a lux figure means the same light whichever image is chosen. Earlier percentages are not carried over.
+
+### Projectors
+
+- Projected light is multiplied by the colour of the surface it lands on. A grey #808080 wall returns about 22% of what a white one does; before, every surface returned all of it.
+- The generic projector defaults to 4000 lumens, was 10000.
 
 ### Names
 
@@ -24,7 +29,7 @@
 
 ### Development
 
-- Regression set: the projector shows the test card at a dimmer of 15, so its white sits below clipping; the laser draws a triangle with a red, a green and a blue side. The room uses house lights down at 25%.
+- Regression set: the projector shows the test card at a dimmer of 70 on a grey screen, so its white sits below clipping; the laser draws a triangle with a red, a green and a blue side. The room uses house lights down at 2 lux.
 
 ## 0.1.0-alpha.19
 

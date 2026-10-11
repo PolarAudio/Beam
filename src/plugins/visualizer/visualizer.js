@@ -101,6 +101,7 @@ const panStep = new THREE.Vector3();
 import SceneEnv from './scene_env';
 import {
   installAmbient, setHouseBrightness, setHouseState, setEnvironments,
+  houseLevelFor, onRoomChange, KEY_LIGHT_INTENSITY, KEY_LIGHT_POSITION,
 } from './ambient';
 import AmbientHazeEffect from './ambient_haze';
 import BeamHaloEffect from './beam_halo';
@@ -117,6 +118,7 @@ import VideoRouter from './video_router';
 import VideoDecode from './video_decode';
 import ProjectorDepth from './projector_depth';
 import ProjectorEffect from './projector_pass';
+import SurfaceAlbedo from './surface_albedo';
 import ContactShadows from './contact_shadows';
 import LaserEffect from './laser_pass';
 import Strobe from './strobe';
@@ -348,8 +350,8 @@ THREE.Vector3.prototype.round = function vector3RoundPolyfill(digits) {
  * @default
  */
 const DEFAULT_PREFERENCES = {
-  GLOBAL_BRIGHTNESS: 100,
-  BRIGHTNESS_HOUSE_OFF: 30,
+  HOUSE_LUX_UP: 8,
+  HOUSE_LUX_DOWN: 2,
 };
 
 // The haze defaults live in `preferences.js` only, and `SceneEnv` reads them.
@@ -447,13 +449,19 @@ class Visualizer {
     setEnvironments({ on: this._environmentHouseOn, off: this._environmentHouseOff });
     setHouseState(this._houseLights);
     this._brightnessUp = Visualizer.asBrightness(
-      source.globalBrightness,
-      DEFAULT_PREFERENCES.GLOBAL_BRIGHTNESS,
+      source.houseLuxUp,
+      DEFAULT_PREFERENCES.HOUSE_LUX_UP,
     );
     this._brightnessDown = Visualizer.asBrightness(
-      source.brightnessHouseOff,
-      DEFAULT_PREFERENCES.BRIGHTNESS_HOUSE_OFF,
+      source.houseLuxDown,
+      DEFAULT_PREFERENCES.HOUSE_LUX_DOWN,
     );
+    // The lux-to-level conversion depends on the environment, which loads
+    // asynchronously and can be changed; the level follows it.
+    if (!this._followsRoom) {
+      this._followsRoom = true;
+      onRoomChange(() => this.applyBrightness());
+    }
     this.applyBrightness();
     // One call, and the conversion from stored percentages lives in the room
     // rather than being repeated in four setters here.
@@ -692,7 +700,7 @@ class Visualizer {
    * @type {Number}
    */
   /**
-   * The brightness in force, as a percentage.
+   * The house light in force, in lux on the floor.
    *
    * Kept as the one name the rest of the app already used; it writes whichever
    * of the two rooms is showing.
@@ -714,11 +722,11 @@ class Visualizer {
    * @type {String}
    */
   get brightnessKey() {
-    return this._houseLights ? 'globalBrightness' : 'brightnessHouseOff';
+    return this._houseLights ? 'houseLuxUp' : 'houseLuxDown';
   }
 
   /**
-   * Brightness with the house lights up, as a percentage.
+   * House light with the house lights up, in lux on the floor.
    *
    * Held on the instance rather than read from Preferences on every access.
    * Preferences is a plain module, so nothing watching it can be told when it
@@ -729,8 +737,8 @@ class Visualizer {
    * @type {Number}
    */
   set houseLightsUp(value) {
-    this._brightnessUp = Visualizer.asBrightness(value, DEFAULT_PREFERENCES.GLOBAL_BRIGHTNESS);
-    Preferences.set('globalBrightness', this._brightnessUp);
+    this._brightnessUp = Visualizer.asBrightness(value, DEFAULT_PREFERENCES.HOUSE_LUX_UP);
+    Preferences.set('houseLuxUp', this._brightnessUp);
     if (this._houseLights) this.applyBrightness();
   }
 
@@ -739,13 +747,13 @@ class Visualizer {
   }
 
   /**
-   * Brightness with the house lights down, as a percentage.
+   * House light with the house lights down, in lux on the floor.
    *
    * @type {Number}
    */
   set houseLightsDown(value) {
-    this._brightnessDown = Visualizer.asBrightness(value, DEFAULT_PREFERENCES.BRIGHTNESS_HOUSE_OFF);
-    Preferences.set('brightnessHouseOff', this._brightnessDown);
+    this._brightnessDown = Visualizer.asBrightness(value, DEFAULT_PREFERENCES.HOUSE_LUX_DOWN);
+    Preferences.set('houseLuxDown', this._brightnessDown);
     if (!this._houseLights) this.applyBrightness();
   }
 
@@ -832,9 +840,10 @@ class Visualizer {
    * @public
    */
   applyBrightness() {
-    this._globalBrightness = (this._houseLights ? this._brightnessUp : this._brightnessDown) / 100;
+    const lux = this._houseLights ? this._brightnessUp : this._brightnessDown;
+    this._globalBrightness = houseLevelFor(lux);
     if (this.globalLightHandle) {
-      this.globalLightHandle.intensity = this._globalBrightness * 0.25;
+      this.globalLightHandle.intensity = this._globalBrightness * KEY_LIGHT_INTENSITY;
     }
     // The environment is fill for the same room, so it follows the same
     // control rather than being a second thing to remember to turn down.
@@ -1055,9 +1064,9 @@ class Visualizer {
    * @async
    */
   async main() {
-    this.globalLightHandle = new THREE.DirectionalLight('white', this._globalBrightness * 100);
+    this.globalLightHandle = new THREE.DirectionalLight('white', this._globalBrightness * KEY_LIGHT_INTENSITY);
     this.globalLightHandle.castShadow = false;
-    this.globalLightHandle.position.set(-10, -10, 10);
+    this.globalLightHandle.position.copy(KEY_LIGHT_POSITION);
 
     Light.prepareInstanciation(this.camera, SceneManager);
 
@@ -1118,6 +1127,9 @@ class Visualizer {
           // machine in a still room costs nothing. The atlas works that out
           // itself, per tile; see `DepthAtlas.render`.
           ProjectorDepth.render(this.renderer, SceneManager, projections);
+          projectorEffect.setAlbedo(SurfaceAlbedo.render(this.renderer, SceneManager, this.camera));
+        } else {
+          projectorEffect.setAlbedo(null);
         }
         // Each projector its own input's picture.
         projections.forEach((projection) => {

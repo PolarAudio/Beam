@@ -201,10 +201,48 @@ const SHAFT_GAIN = 0.02;
  */
 const SHAFT_SCATTER_AMOUNT = 0.37;
 
+/**
+ * One sampler per projection, and the reads that pick one by index.
+ *
+ * Each projector shows its own input, so the pass takes a picture per slot.
+ * The shading language cannot index an array of samplers with a loop
+ * variable, so the samplers are named and chosen by a chain of comparisons.
+ * The index is the same for every fragment of a projection, so the branch is
+ * uniform and a mipmapped read inside it keeps its derivatives.
+ *
+ * @constant {String}
+ */
+const PICTURE_SLOTS = (() => {
+  const slots = Array.from({ length: MAX_PROJECTIONS }, (_, k) => k);
+  const declare = slots.map((k) => `uniform sampler2D picture${k};`).join('\n  ');
+  const lod = slots.map((k) => `if (i == ${k}) return textureLod(picture${k}, uv, lod);`).join('\n    ');
+  const grad = slots.map((k) => `if (i == ${k}) return textureGrad(picture${k}, uv, dx, dy);`).join('\n    ');
+  return `
+  ${declare}
+  uniform float hasPicture[SLOTS];
+  uniform vec2 pictureSize[SLOTS];
+
+  /** Projection i's picture at an explicit level of detail. */
+  vec4 pictureLod(int i, vec2 uv, float lod) {
+    ${lod}
+    return vec4(1.0);
+  }
+
+  /**
+   * Projection i's picture with its gradients given. Inside the loop over
+   * projections a read that takes its own derivatives is one the compiler
+   * cannot vouch for, so they are worked out from the surface instead.
+   */
+  vec4 pictureGrad(int i, vec2 uv, vec2 dx, vec2 dy) {
+    ${grad}
+    return vec4(1.0);
+  }
+`;
+})();
+
 const FRAGMENT = /* glsl */`
   uniform mat4 projInverse;
   uniform mat4 camWorld;
-  uniform sampler2D picture;
   uniform sampler2D depthAtlas;
   uniform mat4 lensMatrix[SLOTS];
   uniform vec4 sliceRect[SLOTS];
@@ -218,8 +256,8 @@ const FRAGMENT = /* glsl */`
   uniform float drift;
   uniform float hazeDensity;
   uniform int liveCount;
-  uniform float hasPicture;
   uniform float scatterAmount;
+${PICTURE_SLOTS}
 
   /**
    * How much of the picture survives this far in from an edge.
@@ -311,11 +349,11 @@ const FRAGMENT = /* glsl */`
     vec4 rect = sliceRect[i];
     vec4 lensNext = lensMatrix[i] * vec4(next, 1.0);
     vec2 frameNext = lensNext.xy / max(lensNext.w, 0.0001) * 0.5 + 0.5;
-    vec2 texels = vec2(textureSize(picture, 0)) * rect.zw;
+    vec2 texels = pictureSize[i] * rect.zw;
     float span = length((frameNext - frame) * texels);
     float floorLod = log2(max(texels.x * SHAFT_BLUR_SHARE, 1.0)) + travelled * SHAFT_BLUR_PER_METRE;
     float lod = max(floorLod, log2(max(span, 1.0)));
-    vec3 colour = mix(vec3(1.0), textureLod(picture, rect.xy + frame * rect.zw, lod).rgb, hasPicture);
+    vec3 colour = mix(vec3(1.0), pictureLod(i, rect.xy + frame * rect.zw, lod).rgb, hasPicture[i]);
 
     // The frame's own edge, a short gradient: scattering carries a little
     // light sideways out of the frustum.
@@ -405,7 +443,9 @@ const FRAGMENT = /* glsl */`
     // The surface's facing, from how the reconstructed position moves across
     // the screen. A projector's picture falls off with the angle it strikes at,
     // and on a building that is most of what tells one wall from the next.
-    vec3 surfaceNormal = normalize(cross(dFdx(world), dFdy(world)));
+    vec3 worldDx = dFdx(world);
+    vec3 worldDy = dFdy(world);
+    vec3 surfaceNormal = normalize(cross(worldDx, worldDy));
     // Turned to face the eye. The cross product's sign follows the triangle's
     // winding on screen, not the surface's outside, and every surface we can
     // see faces us -- so this makes the sign mean something.
@@ -437,7 +477,15 @@ const FRAGMENT = /* glsl */`
 
       // The slice of the frame this machine is fed.
       vec4 rect = sliceRect[i];
-      vec3 colour = mix(vec3(1.0), texture2D(picture, rect.xy + frame * rect.zw).rgb, hasPicture);
+      // Where the neighbouring pixels land in this projector's frame, for the
+      // picture's gradients: the level a hardware read would pick.
+      vec4 lensDx = lensMatrix[i] * vec4(world + worldDx, 1.0);
+      vec4 lensDy = lensMatrix[i] * vec4(world + worldDy, 1.0);
+      vec2 frameDx = clamp(lensDx.xy / max(lensDx.w, 0.0001) * 0.5 + 0.5, 0.0, 1.0) - frame;
+      vec2 frameDy = clamp(lensDy.xy / max(lensDy.w, 0.0001) * 0.5 + 0.5, 0.0, 1.0) - frame;
+      vec3 colour = mix(vec3(1.0), pictureGrad(
+        i, rect.xy + frame * rect.zw, frameDx * rect.zw, frameDy * rect.zw
+      ).rgb, hasPicture[i]);
 
       // Illuminance falls with the square of the distance because the same
       // lumens are spread over a bigger picture -- that is the projector's own
@@ -519,7 +567,9 @@ class ProjectorEffect extends Effect {
     const emission = [];
     const lensPos = [];
     const blendEdges = [];
+    const pictureSize = [];
     for (let i = 0; i < MAX_PROJECTIONS; i += 1) {
+      pictureSize.push(new THREE.Vector2(1, 1));
       lensMatrix.push(new THREE.Matrix4());
       sliceRect.push(new THREE.Vector4(0, 0, 1, 1));
       const tile = ProjectorDepth.tileUv(i);
@@ -552,7 +602,9 @@ class ProjectorEffect extends Effect {
       uniforms: new Map([
         ['projInverse', new THREE.Uniform(new THREE.Matrix4())],
         ['camWorld', new THREE.Uniform(new THREE.Matrix4())],
-        ['picture', new THREE.Uniform(null)],
+        ...Array.from({ length: MAX_PROJECTIONS }, (_, k) => [`picture${k}`, new THREE.Uniform(null)]),
+        ['hasPicture', new THREE.Uniform(new Array(MAX_PROJECTIONS).fill(0))],
+        ['pictureSize', new THREE.Uniform(pictureSize)],
         ['depthAtlas', new THREE.Uniform(null)],
         ['lensMatrix', new THREE.Uniform(lensMatrix)],
         ['sliceRect', new THREE.Uniform(sliceRect)],
@@ -561,7 +613,6 @@ class ProjectorEffect extends Effect {
         ['lensPos', new THREE.Uniform(lensPos)],
         ['blendEdges', new THREE.Uniform(blendEdges)],
         ['liveCount', new THREE.Uniform(0)],
-        ['hasPicture', new THREE.Uniform(0)],
         ['scatterAmount', new THREE.Uniform(SHAFT_SCATTER_AMOUNT)],
         ['camPos', new THREE.Uniform(new THREE.Vector3())],
         ['camOrtho', new THREE.Uniform(false)],
@@ -576,7 +627,6 @@ class ProjectorEffect extends Effect {
 
     this.camera = camera;
     this.projections = [];
-    this.picture = null;
     this.elapsed = 0;
   }
 
@@ -588,12 +638,11 @@ class ProjectorEffect extends Effect {
    * reaching into it.
    *
    * @public
-   * @param {Array} projections each `{ lensMatrix, rect, lumensPerArea, gain }`
-   * @param {Object} picture the decoded video texture, or null
+   * @param {Array} projections each `{ lensMatrix, rect, lumensPerArea, gain,
+   *   picture }`, picture the decoded texture of the projector's input or null
    */
-  setProjections(projections, picture) {
+  setProjections(projections) {
     this.projections = projections || [];
-    this.picture = picture || null;
   }
 
   /**
@@ -620,8 +669,16 @@ class ProjectorEffect extends Effect {
 
     const live = this.projections.slice(0, MAX_PROJECTIONS);
     uniforms.get('liveCount').value = live.length;
-    uniforms.get('picture').value = this.picture;
-    uniforms.get('hasPicture').value = this.picture ? 1 : 0;
+    // Each slot its own projector's picture; an empty slot holds nothing.
+    const hasPicture = uniforms.get('hasPicture').value;
+    const pictureSize = uniforms.get('pictureSize').value;
+    for (let i = 0; i < MAX_PROJECTIONS; i += 1) {
+      const picture = (live[i] && live[i].picture) || null;
+      uniforms.get(`picture${i}`).value = picture;
+      hasPicture[i] = picture ? 1 : 0;
+      const image = picture && picture.image;
+      pictureSize[i].set((image && image.width) || 1, (image && image.height) || 1);
+    }
     uniforms.get('depthAtlas').value = ProjectorDepth.texture();
 
     const matrices = uniforms.get('lensMatrix').value;

@@ -101,9 +101,18 @@ The pass takes one `picture` sampler for every projector. Options:
    zero on this machine before (the gobo atlas), so this needs proving
    first, and every input would share one size.
 
-Proposed: slots. To measure before and after on the projector regression
-scene and a scene with 8 projectors: gpuMs, and a diff to 0 for one
-projector on one input.
+Built: slots, one per projection. The pass draws at most six projectors
+(`MAX_PROJECTIONS`), so six samplers cover every case and projectors on one
+input bind the same texture. Samplers cannot be indexed by a loop variable,
+so they are named and chosen by comparison; the surface read takes explicit
+gradients from the world position's derivatives, which also fixed the
+projected picture's moire (the old read sat in per-pixel control flow and
+fell back to the full-size level).
+
+Measured on six projectors in 50% haze: 2.42 ms GPU before, 2.29-2.32 ms
+after with one input, 2.28 ms with two. Regression set: every scene at 0
+except the projector, where the test card's grid now averages instead of
+aliasing.
 
 ## Bandwidth
 
@@ -141,7 +150,7 @@ selected one. The canvas, connector drawing, Split and Snap go.
 
 1. Router per input, devices pick inputs, migration. Displays first:
    no shader change.
-2. Projector pass with slots, measured.
+2. Projector pass with slots, measured. Done.
 3. Device picture features: orientation, crop and scale as controls in the
    display and projector definitions.
 4. Window.

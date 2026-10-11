@@ -1119,11 +1119,12 @@ class Visualizer {
           // itself, per tile; see `DepthAtlas.render`.
           ProjectorDepth.render(this.renderer, SceneManager, projections);
         }
-        // One picture for every projector until the pass has a slot per
-        // input: the first projector whose input has a feed.
-        const lit = projections.find((p) => VideoRouter.feedFor(p.inputId));
-        const feed = lit ? VideoRouter.feedFor(lit.inputId) : null;
-        projectorEffect.setProjections(projections, feed ? feed.displayTexture : null);
+        // Each projector its own input's picture.
+        projections.forEach((projection) => {
+          const feed = VideoRouter.feedFor(projection.inputId);
+          projection.picture = feed ? feed.displayTexture : null;
+        });
+        projectorEffect.setProjections(projections);
       }
     });
 

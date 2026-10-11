@@ -10,7 +10,8 @@
 - Image and video files: PNG, JPEG, WebP, MP4, MOV or WebM, copied into `Library/Media`. A video plays muted and loops. A file belongs to the project: it is saved with it, Export carries it, and an opened export plays its own copy. An NDI sender stays a setting of the machine.
 - A **Test card** is built into every project: grey wedge, colour bars, a one-pixel grid, a circle and an F in one corner. It cannot be removed, and Export does not carry it, since Beam ships it.
 - Displays have **Rotation** and **Mirror H** / **Mirror V**.
-- Projectors all show the first projector's input until the projector pass takes a picture per input.
+- Each projector shows its own input; up to six projectors draw at once, as before.
+- A projected picture is read at the level of detail its size on the surface needs, so fine detail no longer breaks into moiré on a wall.
 - A project saved with connectors opens with one input. A device on a whole-frame connector keeps its turn and mirrors; one on a smaller connector shows the whole picture and is listed once on opening.
 
 ### Preferences

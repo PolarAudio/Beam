@@ -600,7 +600,7 @@ A project receives pictures through **inputs**. An input is one NDI stream or on
 
 A feed only opens while a device shows its input, so an unused input costs nothing.
 
-A display's settings also have **Rotation** and **Mirror H** / **Mirror V**, for a panel mounted in portrait or seen from behind. The picture is turned first, then mirrored. Projectors show their input as it arrives; until a later update every projector shows the first projector's input.
+A display's settings also have **Rotation** and **Mirror H** / **Mirror V**, for a panel mounted in portrait or seen from behind. The picture is turned first, then mirrored. Each projector shows its own input as it arrives.
 
 A project saved with connectors opens with one input in their place. A device on a connector that covered the whole frame keeps its turn and mirrors. A device on a smaller connector now shows the whole picture, and Beam lists those devices once when the project opens.
 

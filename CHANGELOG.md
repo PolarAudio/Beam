@@ -32,6 +32,7 @@
 - Displays light the room: an area light at the picture's average colour, which falls as 1 / (d² + R²) for a disc of the panel's area, with soft shadows from a depth tile. Up to 16 displays; one costs about 0.2 ms of GPU time.
 - A projector's light in the haze is sampled only where the frame holds picture. A cropped, fitted or zoomed-out picture no longer breaks into bands in the air.
 - Changing a device value in Fixture settings marks the project as changed. Crop, zoom, shift and the other controls were lost on closing without a prompt.
+- The Edit menu has Copy and Paste, and the preferences moved into it: Visualizer preferences, Art-Net preferences and Reset preferences. The Preferences menu is gone.
 - Changing a model's size, in Placement or with the gizmo, keeps its lowest point where it was, so a model on the floor no longer grows into it.
 - The toolbar no longer has Auto-rotate and Auto-focus. The performance panel no longer shows the camera position.
 - With Native scale a crop only blacks out the edges; the kept pixels stay in place. With Stretch, Fit and Fill the kept part is scaled to the picture.

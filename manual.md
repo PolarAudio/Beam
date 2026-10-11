@@ -185,13 +185,13 @@ Start it up and you'll get a splash screen, then the main window.
 
 The important bits:
 
-- **The menu bar**, top left — File, Edit, Preferences, About.
+- **The menu bar**, top left — File, Edit, About.
 - **The patch bay**, down the left — every fixture in your scene. Empty right now.
 - **The viewport** — the big 3D view, with a checkered floor, a grid and an axis indicator at the origin.
 - **The view cube**, in a corner of the viewport — click a face to snap the camera to that elevation.
 - **The modifier panel** — appears when you select something, and holds that thing's settings.
 
-If the reference floor and grid annoy you later, they're all switchable under **Preferences → Visualizer**.
+If the reference floor and grid annoy you later, they're all switchable under **Edit → Visualizer preferences**.
 
 ## Moving the camera
 
@@ -330,7 +330,7 @@ Tick **Front** on the `Diamond` group. Leave `Movers` unticked for now — anyth
 
 Time to make it move.
 
-Open **Preferences → Art-Net** (**Ctrl+Shift+A**) and set **Receive** to **enabled**.
+Open **Edit → Art-Net preferences** (**Ctrl+Shift+A**) and set **Receive** to **enabled**.
 
 It'll say *Listening on UDP 6454*. If instead it says *Unavailable in the browser*, you're running the web version — you need the desktop app for this.
 
@@ -538,7 +538,7 @@ Each group owns its mappings independently — one group can go out as a front e
 
 ## The visualizer
 
-**Preferences → Visualizer** (**Ctrl+Shift+V**).
+**Edit → Visualizer preferences** (**Ctrl+Shift+V**).
 
 **Fogging**
 - **State** — on or off
@@ -582,7 +582,7 @@ A beam is light scattered by the haze, so with haze off there is no beam, only t
 
 ## Art-Net input
 
-**Preferences → Art-Net** (**Ctrl+Shift+A**). **Mode** is Off, Receive or Send.
+**Edit → Art-Net preferences** (**Ctrl+Shift+A**). **Mode** is Off, Receive or Send.
 
 - **Receive** listens for Art-Net on **UDP 6454** and sACN on **UDP 5568**. No IP to set, no subscription to manage. Universe numbers are read from the full 15-bit Art-Net field, so any universe a source can address, Beam will accept — up to the 512 it can hold.
 - **Send** puts the fixtures' own values, the ones set by hand in their widgets, on the wire, so a real fixture can be tested with the same controls. **Send as** picks sACN multicast or Art-Net; for Art-Net, **Send to** takes a node's address, or empty to broadcast. Every launch starts in Receive.
@@ -771,9 +771,7 @@ Files are MP4, H.264 video and AAC audio, constant frame rate. They play on phon
 
 **File** — New Project, Open Project, Import JSON Project, Import GDTF..., Save Project, Export Project to..., Refresh from Library, Export MadMapper Layout
 
-**Edit** — Undo, Redo
-
-**Preferences** — Visualizer, Art-Net, Reset to defaults. Reset puts every preference and debug value back to its default and reloads Beam; save the project first.
+**Edit** — Undo, Redo, Copy, Paste, Visualizer preferences, Art-Net preferences, Reset preferences. Reset puts every preference and debug value back to its default and reloads Beam; save the project first.
 
 **About** — Manual, License, Credits, Contact
 
@@ -793,7 +791,7 @@ Being alpha, the project file format can change between versions. Keep exported 
 
 **Nothing lights up.**
 Check, in order:
-1. Is Art-Net input **enabled** in Preferences?
+1. Is Art-Net input **enabled** in Edit → Art-Net preferences?
 2. Are you running the **desktop app**? The browser can't receive UDP.
 3. Is your source pointed at this machine's IP, on **port 6454**?
 4. Do the **universe numbers match**? A source on universe 1 lights nothing patched to universe 0.

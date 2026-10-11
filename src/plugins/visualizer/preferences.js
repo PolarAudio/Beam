@@ -24,7 +24,7 @@ const DEFAULTS = {
    * machine. Opening a show on another computer is the normal case.
    *
    * Restored on startup, so a project full of video panels comes up connected
-   * instead of black until someone opens Preferences > Video. Reconnecting to a
+   * instead of black until someone opens the Video inputs window. Reconnecting to a
    * sender the user themselves chose here is not opening a receiver behind
    * their back -- it is honouring the setting, the same way Art-Net input
    * being enabled is honoured.

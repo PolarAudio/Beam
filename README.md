@@ -134,7 +134,7 @@ npm run dist:win
 
 ## DMX in and out
 
-Beam receives Art-Net (UDP 6454) and sACN (UDP 5568) and drives the visualizer from it. **Preferences → Art-Net → Mode** switches it to Send, which puts the fixtures' own values on the wire as sACN multicast or Art-Net, so a real fixture can be tested with the same controls. Lasers are fed over Ponk, IDN, Ether Dream or LaserCube; Beam answers on the network as the device, so the sending software needs nothing installed. Desktop app only: browsers cannot do UDP.
+Beam receives Art-Net (UDP 6454) and sACN (UDP 5568) and drives the visualizer from it. **Edit → Art-Net preferences → Mode** switches it to Send, which puts the fixtures' own values on the wire as sACN multicast or Art-Net, so a real fixture can be tested with the same controls. Lasers are fed over Ponk, IDN, Ether Dream or LaserCube; Beam answers on the network as the device, so the sending software needs nothing installed. Desktop app only: browsers cannot do UDP.
 
 ---
 

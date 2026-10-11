@@ -17,7 +17,7 @@ import Tuning from './tuning';
  *
  * Double-clicking a control's name puts it back to its default. The button at
  * the top does the same for every control at once. Clearing every preference
- * is Preferences > Reset to defaults.
+ * is Edit > Reset preferences.
  *
  * The panel floats in the viewport's top-right corner, over the view cube,
  * and grows downwards as folders open; past the viewport's bottom it
@@ -192,7 +192,7 @@ export default function createLEDDebugPanel(visualizer, host) {
 
   // The camera: fixed numbers in visualizer.js, moved here by hand to judge
   // a setting by eye; nothing is stored. See the glare constants there.
-  // Exposure is a preference per house state, in Preferences > Visualizer.
+  // Exposure is a preference per house state, in Edit > Visualizer preferences.
   const camera = folder(gui, 'Camera');
   resettable(camera.add(state, 'cameraCurve', ['ACES_FILMIC', 'NEUTRAL', 'AGX'])
     .name('tone curve')

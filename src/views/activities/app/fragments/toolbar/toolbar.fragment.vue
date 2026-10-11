@@ -12,7 +12,7 @@
       v-if="sending"
       class="sending"
       :class="{ contested: otherSenders.length }"
-      title="Beam is sending DMX. Preferences > Art-Net to receive again."
+      title="Beam is sending DMX. Edit > Art-Net preferences to receive again."
       @click="artnetPopupState = true"
     >
       {{ sendingLabel }}
@@ -33,6 +33,7 @@
 
 <script>
 import EventBus from '@/plugins/eventbus';
+import Selection from '@/models/DMX/selection';
 import confirm from '@/plugins/confirm';
 import Preferences from '@/plugins/visualizer/preferences';
 import importGdtfFiles from '@/plugins/gdtf_import';
@@ -182,14 +183,26 @@ export default {
                 this.$show.redo();
               },
             },
-          ],
-        },
-        {
-          name: 'Preferences',
-          selected: false,
-          items: [
             {
-              name: 'Visualizer',
+              // The scene handles the keys itself; the menu only shows them.
+              name: 'Copy',
+              hint: 'Ctrl+C',
+              icon: 'copy',
+              callback: () => {
+                if (!Selection.items.length) return;
+                EventBus.emit('copy_requested', Selection.items.map((entry) => ({ ...entry })));
+              },
+            },
+            {
+              name: 'Paste',
+              hint: 'Ctrl+V',
+              icon: 'paste',
+              callback: () => {
+                EventBus.emit('paste_requested');
+              },
+            },
+            {
+              name: 'Visualizer preferences',
               shortcut: 'Ctrl+Shift+V',
               icon: 'visualizer',
               callback: () => {
@@ -197,7 +210,7 @@ export default {
               },
             },
             {
-              name: 'Art-Net',
+              name: 'Art-Net preferences',
               shortcut: 'Ctrl+Shift+A',
               icon: 'zoom',
               callback: () => {
@@ -205,7 +218,7 @@ export default {
               },
             },
             {
-              name: 'Reset to defaults',
+              name: 'Reset preferences',
               icon: 'undo',
               callback: () => {
                 this.resetToDefaults();

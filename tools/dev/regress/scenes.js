@@ -128,6 +128,45 @@
     };
   }
 
+  /**
+   * A glossy floor with something to reflect: the test card on a display, a
+   * grey cube under a head pointed straight down at it, and the head and its
+   * beam above. Created shapes are always matte, so the slab is made glossy
+   * here, on its material, for the harness only.
+   */
+  async function reflect() {
+    const SLAB = '#1c1e21';
+    await wall('slab', { x: 8, y: 8, z: 0.02 }, { x: 0, y: 2, z: 0 }, SLAB);
+    await wall('cube', { x: 0.5, y: 0.5, z: 0.5 }, { x: 1.2, y: 1.5, z: 0.02 }, '#808080');
+    const d = await bt.generic('T Display', { nits: 40 }, 'display', { x: -0.8, y: 1.5, z: 0.72 }, { x: 0, y: 0, z: 0 });
+    const input = bt.show.videoInputs.find((candidate) => candidate.builtIn);
+    bt.device(d, { dimmer: 100, shutter: true, source: input.id });
+    await bt.holdInput(input.id);
+    const head = await bt.place(...MOVER, { x: 1.2, y: 1.5, z: 4 }, { x: 180, y: 0, z: 0 }, 'Standard');
+    const ch = (name) => bt.channel(head, name);
+    bt.setCh(head, ch('Strobe'), 30);
+    bt.setCh(head, ch('Dimmer'), 255);
+    bt.setCh(head, ch('Zoom'), 120);
+    bt.setCh(head, ch('Pan'), 128);
+    bt.setCh(head, ch('Tilt'), 128);
+    bt.flush();
+    if (head._3DModel && head._3DModel.snapOrientation) head._3DModel.snapOrientation();
+    const Scene = (await import(window.__live('/src/plugins/visualizer/scene_manager.js'))).default;
+    let glossy = 0;
+    Scene.traverse((o) => {
+      const m = o.isMesh && o.material;
+      if (m && m.isMeshStandardMaterial && m.color.getHex() === new m.color.constructor(SLAB).getHex()) {
+        m.roughness = 0.1;
+        glossy += 1;
+      }
+    });
+    if (!glossy) throw new Error('reflect: slab material not found');
+    return {
+      settle: 40,
+      cameras: { front: { position: { x: 0.4, y: -3.5, z: 1.3 }, target: { x: 0.2, y: 1.5, z: 0.5 } } },
+    };
+  }
+
   async function strobe() {
     const s = await bt.generic('T Strobe', {}, 'strobe', { x: 0, y: 0, z: 3 }, { x: 0, y: 0, z: 0 });
     bt.device(s, { dimmer: 100, mode: 'on' });
@@ -137,6 +176,6 @@
     };
   }
 
-  window.__scenes = { movers, leds, laser, projector, display, strobe };
+  window.__scenes = { movers, leds, laser, projector, display, strobe, reflect };
   return Object.keys(window.__scenes).join(',');
 })()

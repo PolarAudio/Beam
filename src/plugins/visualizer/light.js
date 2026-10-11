@@ -3485,6 +3485,9 @@ class Light {
       depthWrite: false,
       side: THREE.DoubleSide,
     });
+    // Something a reflection can meet, though it writes no depth: see
+    // reflections.js.
+    capMaterial.userData.reflectionTarget = true;
 
     capGeometry.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 0, LENS_FACE_OFFSET));
 

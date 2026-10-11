@@ -24,6 +24,11 @@
 - **Debug → Camera** has **house up EV** and **house down EV** sliders, the same stored preferences as the window.
 - Each house state has its own camera exposure, **Exposure, house up (EV)** and **Exposure, house down (EV)**, defaults 7 and 6.5. A lit room at 300 lux and a dark show both read correctly. Each environment image is measured once, so a lux figure means the same light whichever image is chosen. Earlier percentages are not carried over.
 
+### Reflections
+
+- Glossy surfaces reflect what is on screen (screen-space reflections), on any surface: a floor, a deck, steps, a metal object. The reflection is blurred by the surface's roughness and the distance to what it reflects, and replaces the environment image's share of the reflection where something is found. Lens faces are reflected; beams in the air are not. **Preferences → Visualizer → Reflections**, on by default. While it is on, displays no longer add their rectangle highlight, since their picture is reflected.
+- Regression set: a reflect scene, a glossy slab with the test card on a display, a grey cube and a head pointed down at it.
+
 ### View
 
 - A **View** menu: **Full window** (F10) shows only the 3D view and its toolbar, also from a button at the right of that toolbar. **Full screen** (F11) is full window across the monitor, with the toolbar shown while the pointer is at the top edge; Escape leaves it before deselecting. **Stay on top** keeps the window above other applications and is remembered; the other two start off.

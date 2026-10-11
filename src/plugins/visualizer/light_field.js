@@ -224,6 +224,9 @@ const uniforms = {
   // The rectangle-light tables three's own RectAreaLight reads; half float is
   // filterable on every WebGL2 device.
   lightFieldLtc1: { value: THREE.UniformsLib.LTC_HALF_1 },
+  // 0 while screen-space reflections show the displays' own picture, so a
+  // display is not reflected twice.
+  lightFieldAreaSpecular: { value: 1 },
   lightFieldLtc2: { value: THREE.UniformsLib.LTC_HALF_2 },
 };
 
@@ -400,7 +403,7 @@ const FIELD_LIGHT_CHUNK = /* glsl */`
       vec4 ltc2 = texture2D( lightFieldLtc2, ltcUv );
       mat3 ltcInverse = mat3( vec3( ltc1.x, 0.0, ltc1.y ), vec3( 0.0, 1.0, 0.0 ), vec3( ltc1.z, 0.0, ltc1.w ) );
       vec3 fresnel = material.specularColor * ltc2.x + ( vec3( 1.0 ) - material.specularColor ) * ltc2.y;
-      reflectedLight.directSpecular += luminance * fresnel
+      reflectedLight.directSpecular += lightFieldAreaSpecular * luminance * fresnel
         * LTC_Evaluate( geometryNormal, geometryViewDir, geometryPosition, ltcInverse, rectCoords );
       reflectedLight.directDiffuse += luminance * material.diffuseColor
         * LTC_Evaluate( geometryNormal, geometryViewDir, geometryPosition, mat3( 1.0 ), rectCoords );
@@ -430,6 +433,7 @@ uniform sampler2D lightFieldGobo;
 uniform sampler2D lightFieldShapers;
 uniform sampler2D lightFieldLtc1;
 uniform sampler2D lightFieldLtc2;
+uniform float lightFieldAreaSpecular;
 ${SHAPER_GLSL}
 
 // Soft shadows. The lens is a disc, not a point: a surface point sees the part

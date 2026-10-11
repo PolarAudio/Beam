@@ -73,6 +73,17 @@
       />
     </div>
 
+    <div
+      class="row"
+      :title="tips.reflections"
+    >
+      <span class="label">Reflections</span>
+      <uk-checkbox
+        v-model="$show.visualizerHandle.reflections"
+        class="span"
+      />
+    </div>
+
     <div class="section">
       Haze
     </div>
@@ -243,6 +254,7 @@ export default {
     return {
       /** Each row's explanation, shown as its tooltip. */
       tips: {
+        reflections: 'Glossy surfaces reflect what is on screen. Off, they reflect only the environment image. Costs an extra pass over the scene.',
         light: 'Light on a white floor, in lux. House up is for looking at the rig, house down for watching the show; the toolbar swaps between them.',
         exposure: 'The camera\'s exposure at ISO 100. One higher halves the picture\'s brightness. Set it for the brightest thing you want to see, as on a camera.',
         environment: 'The image lighting the room. A dark room still wants something in it, or metal and gloss have nothing to reflect.',
@@ -414,6 +426,7 @@ export default {
       handle.gridOpacity = initial.gridOpacity;
       handle.gridLineWidth = initial.gridLineWidth;
       handle.showAxes = initial.showAxes;
+      handle.reflections = initial.reflections;
     },
   },
 };

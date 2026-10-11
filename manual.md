@@ -544,6 +544,7 @@ On the **Visualizer** tab:
 
 **Room** — house up and house down side by side
 - **Light (lux)**, **Exposure (EV)** and **Environment** for each state, described below. **Add...** copies a .hdr or .exr into the library for the environment lists.
+- **Reflections** — glossy surfaces reflect what is on screen: a shiny floor shows the cube standing on it, the pool on the cube and the picture on a display, blurred as much as the surface is rough. Any surface can reflect, a stage deck, steps or a chrome object as well as the floor. Only what is in the frame can be reflected: something behind the camera, off the edge or hidden behind something else shows the environment image instead, and the reflection fades to it near those limits. Beams in the air are not reflected. Off, glossy surfaces reflect the environment image and each display as a soft rectangle. It costs one more pass over the scene.
 
 **Haze**
 - **State** — on or off

@@ -79,6 +79,8 @@ const DEFAULTS = {
   houseLights: true,
   /** Whether the window stays above other applications. */
   stayOnTop: false,
+  /** Whether glossy surfaces reflect what is on screen. */
+  reflections: true,
   /**
    * Environment image lighting the room, one per house-lights state.
    *

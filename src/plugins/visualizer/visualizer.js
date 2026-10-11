@@ -104,6 +104,7 @@ import {
   houseLevelFor, onRoomChange, KEY_LIGHT_INTENSITY, KEY_LIGHT_POSITION,
 } from './ambient';
 import AmbientHazeEffect from './ambient_haze';
+import ReflectionsEffect from './reflections';
 import BeamHaloEffect from './beam_halo';
 import Perf from './perf_overlay';
 import Preferences from './preferences';
@@ -147,6 +148,8 @@ let finalComposer = null;
 /** The passes that are given the camera, kept so a camera swap reaches them. */
 let renderPass = null;
 let laserPass = null;
+let reflectionsPass = null;
+let reflectionsEffect = null;
 let mainPass = null;
 
 /** The projection pass, module-scoped for the same reason the composer is. */
@@ -489,6 +492,7 @@ class Visualizer {
     this.snapEnabled = source.snapEnabled !== false;
     this.snapSpacing = source.snapSpacing;
     this.showGrid = source.showGrid;
+    this.reflections = source.reflections;
     this.gridOpacity = source.gridOpacity;
     this.gridLineWidth = source.gridLineWidth;
     this.showAxes = source.showAxes;
@@ -584,6 +588,22 @@ class Visualizer {
   // eslint-disable-next-line class-methods-use-this
   get showGrid() {
     return helpers.gridVisible;
+  }
+
+  /**
+   * Whether glossy surfaces reflect what is on screen. Off, they reflect only
+   * the environment image, and the displays their rectangle.
+   *
+   * @type {Boolean}
+   */
+  set reflections(on) {
+    this._reflections = on !== false;
+    Preferences.set('reflections', this._reflections);
+    if (reflectionsEffect) reflectionsEffect.setOn(this._reflections);
+  }
+
+  get reflections() {
+    return this._reflections !== false;
   }
 
   /**
@@ -1448,6 +1468,15 @@ class Visualizer {
     // mapping show looks.
     laserPass = new EffectPass(this.camera, laserEffect);
     finalComposer.addPass(laserPass);
+    // A pass of its own: the trace reads the frame at other pixels than its
+    // own, which a merged effect cannot. After the scene and the laser figure,
+    // before the projector, the air and the tone curve, so a reflection is
+    // veiled by the haze in front of it and goes through bloom like any light.
+    reflectionsEffect = new ReflectionsEffect(SceneManager, this.camera);
+    reflectionsPass = new EffectPass(this.camera, reflectionsEffect);
+    reflectionsEffect.pass = reflectionsPass;
+    reflectionsEffect.setOn(this._reflections !== false);
+    finalComposer.addPass(reflectionsPass);
     // Last, after the tone curve: the outline is a mark on the picture, not
     // light in the scene, and its orange is the orange it is drawn in.
     selectionOutlineEffect = new SelectionOutlineEffect(this.camera);
@@ -1972,10 +2001,11 @@ class Visualizer {
     this.controls.object = camera;
     Light.setCamera(camera);
     if (this.viewCube) this.viewCube.camera = camera;
-    [renderPass, laserPass, mainPass].forEach((pass) => {
+    [renderPass, laserPass, reflectionsPass, mainPass].forEach((pass) => {
       if (pass) pass.mainCamera = camera;
     });
-    [ambientHazeEffect, beamHaloEffect, projectorEffect, laserEffect, selectionOutlineEffect].forEach((effect) => {
+    [ambientHazeEffect, beamHaloEffect, projectorEffect, laserEffect, selectionOutlineEffect,
+      reflectionsEffect].forEach((effect) => {
       if (effect) effect.camera = camera;
     });
   }

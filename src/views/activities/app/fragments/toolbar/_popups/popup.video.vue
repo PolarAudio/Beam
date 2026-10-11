@@ -181,6 +181,9 @@ import { INPUT_KINDS } from '@/models/DMX/video_input';
  */
 const PREVIEW_FPS = 10;
 
+/** How often the sender and file lists are read again while open, in ms. */
+const RESCAN_MS = 5000;
+
 const STATUS_TEXT = {
   live: 'Live',
   waiting: 'Waiting for the first frame…',
@@ -201,6 +204,8 @@ export default {
       files: [],
       hasPicture: false,
       previewStatus: '',
+      /** Measured frames a second of the previewed feed. */
+      rate: 0,
       /** Bumped by the timer, so statuses and counts reread. */
       tick: 0,
     };
@@ -266,13 +271,18 @@ export default {
       this.timer = setInterval(() => {
         this.tick += 1;
         this.drawPreview();
+        this.measureRate();
       }, 1000 / PREVIEW_FPS);
+      // A sender started after the window opened is found within a few
+      // seconds rather than never.
+      this.rescan = setInterval(() => this.loadLists(), RESCAN_MS);
       await this.loadLists();
       this.$nextTick(() => this.openPreview());
     },
 
     closed() {
       if (this.timer) { clearInterval(this.timer); this.timer = null; }
+      if (this.rescan) { clearInterval(this.rescan); this.rescan = null; }
       if (this.unlisten) { this.unlisten(); this.unlisten = null; }
       this.closePreview();
       if (this.renderer) {
@@ -398,6 +408,26 @@ export default {
       this.textureSource = null;
       this.lastFrame = -1;
       this.hasPicture = false;
+      this.rate = 0;
+      this.rateFrom = null;
+    },
+
+    /**
+     * Frames the preview's feed delivers a second, measured over about a
+     * second: what the sender or the file is really doing, not what it says.
+     */
+    measureRate() {
+      const feed = this.previewFeed;
+      if (!feed) return;
+      const now = performance.now();
+      if (!this.rateFrom) {
+        this.rateFrom = { at: now, frames: feed.frameCount };
+        return;
+      }
+      const elapsed = now - this.rateFrom.at;
+      if (elapsed < 1000) return;
+      this.rate = ((feed.frameCount - this.rateFrom.frames) * 1000) / elapsed;
+      this.rateFrom = { at: now, frames: feed.frameCount };
     },
 
     mountPreview() {
@@ -428,6 +458,20 @@ export default {
      *
      * @param {Object} texture THREE.Texture
      */
+    /**
+     * What the preview is showing, in a line: live or still, the size, and
+     * the frame rate once one has been measured.
+     *
+     * @param {Object} feed
+     * @returns {String}
+     */
+    describeFeed(feed) {
+      const size = `${feed.width} × ${feed.height}`;
+      if (feed.kind === 'image') return `Still image · ${size}`;
+      const fps = this.rate >= 0.5 ? ` · ${Math.round(this.rate)} fps` : '';
+      return `● Live · ${size}${fps}`;
+    },
+
     smoothShrink(texture) {
       texture.minFilter = THREE.LinearMipmapLinearFilter;
       texture.magFilter = THREE.LinearFilter;
@@ -498,7 +542,7 @@ export default {
       }
       this.renderer.render(this.scene, this.camera);
       this.hasPicture = true;
-      this.previewStatus = `${feed.width} × ${feed.height} ${feed.kind || feed.format}`;
+      this.previewStatus = this.describeFeed(feed);
     },
   },
 };

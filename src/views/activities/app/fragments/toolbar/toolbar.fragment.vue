@@ -152,6 +152,15 @@ export default {
                 this.refreshFromLibrary();
               },
             },
+            {
+              // Part of the project, so beside the project's other commands.
+              name: 'Video Inputs...',
+              shortcut: 'Ctrl+Shift+I',
+              icon: 'visualizer',
+              callback: () => {
+                this.videoPopupState = true;
+              },
+            },
           ],
         },
         {
@@ -194,14 +203,6 @@ export default {
               icon: 'zoom',
               callback: () => {
                 this.artnetPopupState = true;
-              },
-            },
-            {
-              name: 'Video',
-              shortcut: 'Ctrl+Shift+I',
-              icon: 'visualizer',
-              callback: () => {
-                this.videoPopupState = true;
               },
             },
             {

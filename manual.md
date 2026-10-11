@@ -592,7 +592,7 @@ A beam is light scattered by the haze, so with haze off there is no beam, only t
 
 A project receives pictures through **inputs**. An input is one NDI stream or one image or video file. Each display or projector picks an input in its settings and shows all of it; several devices can share one. Laying content out across outputs is the media server's job, so send one NDI stream per output from MadMapper or Resolume.
 
-**Preferences → Video** lists the project's inputs, with a dot for each: green live, yellow waiting, orange not bound or not found, grey when no device shows it. The number beside an input is how many devices use it.
+**File → Video Inputs…** (**Ctrl+Shift+I**) lists the project's inputs, with a dot for each: green live, yellow waiting, orange not bound or not found, grey when no device shows it. The number beside an input is how many devices use it.
 
 - **Add NDI input** adds one, and **Sender** picks the NDI sender that fills it. Which sender is a setting of this machine, because a sender's name means nothing on another one. A new input takes the sender's name until you rename it.
 - **Add file…** copies a PNG, JPEG or WebP image, or an MP4, MOV or WebM video, into `Documents\Beatline\Beam\Library\Media` and adds it as an input. A video plays muted and loops. A file belongs to the project: it is saved with it, and **Export Project to...** carries the file, so the project opens with its picture on another machine.
@@ -761,11 +761,11 @@ Files are MP4, H.264 video and AAC audio, constant frame rate. They play on phon
 
 ## Menus
 
-**File** — New Project, Open Project, Import JSON Project, Save Project, Export Project to..., Export MadMapper Layout
+**File** — New Project, Open Project, Import JSON Project, Import GDTF..., Save Project, Export Project to..., Refresh from Library, Video Inputs..., Export MadMapper Layout
 
 **Edit** — Undo, Redo
 
-**Preferences** — Visualizer, Art-Net, Video, Reset to defaults. Reset puts every preference and debug value back to its default and reloads Beam; save the project first.
+**Preferences** — Visualizer, Art-Net, Reset to defaults. Reset puts every preference and debug value back to its default and reloads Beam; save the project first.
 
 **About** — Manual, License, Credits, Contact
 

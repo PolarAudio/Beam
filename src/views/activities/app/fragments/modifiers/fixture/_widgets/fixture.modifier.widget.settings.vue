@@ -260,11 +260,20 @@
         >
           <uk-select-input
             v-show="byHand('source')"
+            :key="`source-${sourceListKey}`"
             :model-value="sourceIndex"
             style="flex: 1"
             label="Input"
             :options="sourceOptions"
             @input="pickSource"
+          />
+          <uk-button
+            v-show="byHand('source')"
+            icon="gear"
+            icon-only
+            square
+            title="Edit this input"
+            @click="editInput"
           />
         </uk-flex>
 
@@ -670,6 +679,7 @@ import { SCALE_MODES } from '@/models/DMX/picture_controls';
 import { MAX_SHADOW_CASTERS } from '@/plugins/visualizer/light';
 import { imageSizeAt } from '@/models/DMX/generic/projector';
 import { GENERIC_KINDS } from '@/models/DMX/generic/kinds';
+import EventBus from '@/plugins/eventbus';
 import LaserStream from '@/plugins/laser_stream';
 import Laser from '@/plugins/visualizer/laser';
 import { SELECTABLE_PROTOCOLS, PROTOCOL_LABELS } from '@/models/DMX/laser_settings';
@@ -705,6 +715,9 @@ const WIRE_POLL_MS = 100;
 
 /** How long the copy button confirms for, in ms. */
 const COPY_FEEDBACK_MS = 1500;
+
+/** The action at the bottom of a device's Input list. */
+const CREATE_INPUT = 'Create input…';
 
 /** How each scale mode reads in the list. */
 const SCALE_NAMES = {
@@ -774,6 +787,8 @@ export default {
        * video popup hit reading a frame's size off a class instance.
        */
       deviceRevision: 0,
+      /** Bumped to redraw the Input list after its action entry is picked. */
+      sourceListKey: 0,
     };
   },
   computed: {
@@ -1235,9 +1250,11 @@ export default {
     },
     sourceOptions() {
       // A laser's source is which Ponk stream feeds it, not a video input.
+      // The last entry of a video list is an action: it opens the window
+      // where inputs are made.
       const list = this.isLaser
         ? this.laserSources.map((source) => source.label)
-        : ['— none —', ...this.videoInputs.map((input) => input.name)];
+        : ['— none —', ...this.videoInputs.map((input) => input.name), CREATE_INPUT];
       return this.isMixed('source') ? ['*', ...list] : list;
     },
     sourceIndex() {
@@ -1569,6 +1586,12 @@ export default {
         this.writeDevice('source', (this.laserSources[index] || {}).value || null);
         return;
       }
+      if (index === this.videoInputs.length + 1) {
+        EventBus.emit('open_video_inputs');
+        // Redrawn so the list shows the input it had, not the action.
+        this.sourceListKey += 1;
+        return;
+      }
       const input = index > 0 ? this.videoInputs[index - 1] : null;
       // Through `writeDevice` rather than writing here: that is the one path
       // that also tells the renderer to redraw; without it, picking a source
@@ -1583,6 +1606,12 @@ export default {
       const index = Number(pick) - (this.isMixed('scale') ? 1 : 0);
       if (index < 0 || index >= SCALE_MODES.length) return;
       this.writeDevice('scale', SCALE_MODES[index]);
+    },
+    /** Opens the Video inputs window on this device's input, if it has one. */
+    editInput() {
+      const value = this.isMixed('source') ? null : this.read('source');
+      const input = this.videoInputs.find((candidate) => candidate.id === value);
+      EventBus.emit('open_video_inputs', input ? input.id : null);
     },
     pickRotation(pick) {
       const index = Number(pick) - (this.isMixed('rotation') ? 1 : 0);

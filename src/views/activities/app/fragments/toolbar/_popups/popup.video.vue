@@ -196,6 +196,13 @@ export default {
   name: 'VideoPopup',
   compatConfig: { MODE: 3 },
   mixins: [PopupMixin],
+  props: {
+    /** The input to show when the window opens, or null for the last one shown. */
+    focusId: {
+      type: Number,
+      default: null,
+    },
+  },
   data() {
     return {
       headerData: { title: 'Video inputs' },
@@ -266,7 +273,11 @@ export default {
   },
   methods: {
     async opened() {
-      if (!this.selected && this.listed.length) this.selectedId = this.listed[0].id;
+      if (this.focusId !== null && this.inputs.some((input) => input.id === this.focusId)) {
+        this.selectedId = this.focusId;
+      } else if (!this.selected && this.listed.length) {
+        this.selectedId = this.listed[0].id;
+      }
       this.unlisten = VideoRouter.listen(() => { this.tick += 1; });
       this.timer = setInterval(() => {
         this.tick += 1;

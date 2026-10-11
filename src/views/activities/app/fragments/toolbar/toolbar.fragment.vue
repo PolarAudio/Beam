@@ -23,7 +23,10 @@
     <credits-popup v-model="creditsPopupState" />
     <newshow-popup v-model="newProjectPopupState" />
     <artnet-popup v-model="artnetPopupState" />
-    <video-popup v-model="videoPopupState" />
+    <video-popup
+      v-model="videoPopupState"
+      :focus-id="videoFocusId"
+    />
   </uk-flex>
 </template>
 
@@ -69,6 +72,8 @@ export default {
        */
       artnetPopupState: false,
       videoPopupState: false,
+      /** The input the Video inputs window opens on, or null for its own choice. */
+      videoFocusId: null,
       /** Whether Beam is in sender mode, and who else is on its universes. */
       sending: false,
       otherSenders: [],
@@ -150,15 +155,6 @@ export default {
               icon: 'folder',
               callback: () => {
                 this.refreshFromLibrary();
-              },
-            },
-            {
-              // Part of the project, so beside the project's other commands.
-              name: 'Video Inputs...',
-              shortcut: 'Ctrl+Shift+I',
-              icon: 'visualizer',
-              callback: () => {
-                this.videoPopupState = true;
               },
             },
           ],
@@ -297,6 +293,10 @@ export default {
         ));
       }
     });
+    // The Video inputs window opens from a device's Input list, and from its
+    // own shortcut, which has no menu entry to carry it.
+    EventBus.on('open_video_inputs', this.openVideoInputs);
+    window.addEventListener('keydown', this.onVideoInputsKey);
     this.$show.on('videoCropsDropped', (names) => {
       EventBus.emit('app_error', new Error(
         'Video connectors are gone: a display or projector now shows a whole input. '
@@ -319,8 +319,24 @@ export default {
   beforeUnmount() {
     window.removeEventListener('dragover', this.onFileDragOver);
     window.removeEventListener('drop', this.onFileDrop);
+    window.removeEventListener('keydown', this.onVideoInputsKey);
+    EventBus.off('open_video_inputs', this.openVideoInputs);
   },
   methods: {
+    /**
+     * @param {Number} [id] the input to open on: a device's own, from its gear
+     */
+    openVideoInputs(id = null) {
+      this.videoFocusId = typeof id === 'number' ? id : null;
+      this.videoPopupState = true;
+    },
+    /** Ctrl+Shift+I opens the Video inputs window. */
+    onVideoInputsKey(event) {
+      if (event.ctrlKey && event.shiftKey && !event.altKey && event.code === 'KeyI') {
+        event.preventDefault();
+        this.openVideoInputs(null);
+      }
+    },
     /**
      * Resets every preference and debug value to its default, after asking,
      * and reloads so each module starts from its own constants.

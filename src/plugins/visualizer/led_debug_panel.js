@@ -147,6 +147,8 @@ export default function createLEDDebugPanel(visualizer, host) {
     beamDebug: 0,
     // Camera
     cameraCurve: visualizer.cameraSettings.curve || 'ACES_FILMIC',
+    houseEVUp: Number(Preferences.get('houseEVUp')),
+    houseEVDown: Number(Preferences.get('houseEVDown')),
     glareStrength: visualizer.bloom ? visualizer.bloom.intensity : 0,
     glareSpread: visualizer.bloom ? visualizer.bloom.radius : 0,
     // Laser
@@ -192,8 +194,23 @@ export default function createLEDDebugPanel(visualizer, host) {
 
   // The camera: fixed numbers in visualizer.js, moved here by hand to judge
   // a setting by eye; nothing is stored. See the glare constants there.
-  // Exposure is a preference per house state, in Edit > Visualizer preferences.
   const camera = folder(gui, 'Camera');
+  // Exposure per house state: the same stored preferences as Edit >
+  // Preferences, so they persist. A double-click puts back the default.
+  [['houseEVUp', 'houseExposureUp', 'house up EV'], ['houseEVDown', 'houseExposureDown', 'house down EV']]
+    .forEach(([key, property, name]) => {
+      const controller = camera.add(state, key, 2, 12, 0.05)
+        .name(name)
+        .onChange((v) => { visualizer[property] = v; });
+      const reset = () => {
+        visualizer[property] = undefined;
+        state[key] = visualizer[property];
+        controller.updateDisplay();
+      };
+      controller.$name.title = 'Double-click to reset';
+      controller.$name.addEventListener('dblclick', reset);
+      resets.push(reset);
+    });
   resettable(camera.add(state, 'cameraCurve', ['ACES_FILMIC', 'NEUTRAL', 'AGX'])
     .name('tone curve')
     .onChange((v) => visualizer.setCamera({ curve: v })));

@@ -146,7 +146,6 @@ export default function createLEDDebugPanel(visualizer, host) {
     beamHalo: true,
     beamDebug: 0,
     // Camera
-    cameraEV: Math.round(visualizer.cameraSettings.ev * 100) / 100,
     cameraCurve: visualizer.cameraSettings.curve || 'ACES_FILMIC',
     glareStrength: visualizer.bloom ? visualizer.bloom.intensity : 0,
     glareSpread: visualizer.bloom ? visualizer.bloom.radius : 0,
@@ -192,12 +191,9 @@ export default function createLEDDebugPanel(visualizer, host) {
     .name('Reset all');
 
   // The camera: fixed numbers in visualizer.js, moved here by hand to judge
-  // a setting by eye; nothing is stored. See CAMERA_EV and the glare
-  // constants there.
+  // a setting by eye; nothing is stored. See the glare constants there.
+  // Exposure is a preference per house state, in Preferences > Visualizer.
   const camera = folder(gui, 'Camera');
-  resettable(camera.add(state, 'cameraEV', 0, 16, 0.25)
-    .name('exposure EV')
-    .onChange((v) => visualizer.setCamera({ ev: v })));
   resettable(camera.add(state, 'cameraCurve', ['ACES_FILMIC', 'NEUTRAL', 'AGX'])
     .name('tone curve')
     .onChange((v) => visualizer.setCamera({ curve: v })));

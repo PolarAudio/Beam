@@ -16,11 +16,12 @@
 
 ### Preferences
 
-- House lights up and down are set in lux on a white floor, on the same scale as projectors and fixtures. Defaults are 8 lux up and 2 lux down, the levels 100% and 25% gave. Each environment image is measured once, so a lux figure means the same light whichever image is chosen. Earlier percentages are not carried over.
+- House lights up and down are set in lux on a white floor, to one decimal, on the same scale as projectors and fixtures. Defaults are 300 lux up and 2 lux down.
+- Each house state has its own camera exposure, **Exposure, house up (EV)** and **Exposure, house down (EV)**, defaults 7 and 5.25. A lit room at 300 lux and a dark show both read correctly. Each environment image is measured once, so a lux figure means the same light whichever image is chosen. Earlier percentages are not carried over.
 
 ### Projectors
 
-- The camera's exposure is an EV at ISO 100: a luminance of 1.2 x 2^EV cd/m² reaches the top of the tone curve. EV 5.25 is the old exposure of 1.0. **Debug → Camera → exposure EV** replaces the exposure multiplier.
+- The camera's exposure is an EV at ISO 100: a luminance of 1.2 x 2^EV cd/m² reaches the top of the tone curve. EV 5.25 is the old exposure of 1.0. The exposure multiplier in Debug → Camera is gone; exposure is set per house state in Preferences.
 - Surfaces are lit in luminance: a matte surface under E lux has luminance reflectance x E / pi. Projected light and the house light now include the pi, as mover pools already did; at the same lux both are a factor of pi darker than before.
 - Projected light is multiplied by the colour of the surface it lands on. A grey #808080 wall returns about 22% of what a white one does; before, every surface returned all of it.
 - The generic projector defaults to 4000 lumens, was 10000.

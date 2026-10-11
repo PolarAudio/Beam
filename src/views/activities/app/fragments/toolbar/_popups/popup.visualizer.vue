@@ -108,6 +108,7 @@
           v-model="$show.visualizerHandle.houseLightsUp"
           :min="0"
           :max="2000"
+          :precision="1"
           style="width: 100px"
         />
       </uk-flex>
@@ -124,6 +125,41 @@
           v-model="$show.visualizerHandle.houseLightsDown"
           :min="0"
           :max="2000"
+          :precision="1"
+          style="width: 100px"
+        />
+      </uk-flex>
+      <uk-flex center-h>
+        <div>
+          <h4>Exposure, house up (EV):</h4>
+          <p class="subtitle">
+            The camera's exposure with the house lights on, at ISO 100. One
+            higher halves the picture's brightness.
+          </p>
+        </div>
+        <uk-spacer />
+        <uk-num-input
+          v-model="$show.visualizerHandle.houseExposureUp"
+          :min="0"
+          :max="16"
+          :precision="2"
+          style="width: 100px"
+        />
+      </uk-flex>
+      <uk-flex center-h>
+        <div>
+          <h4>Exposure, house down (EV):</h4>
+          <p class="subtitle">
+            And with them off. 5.25 is the exposure the fixtures were
+            calibrated at.
+          </p>
+        </div>
+        <uk-spacer />
+        <uk-num-input
+          v-model="$show.visualizerHandle.houseExposureDown"
+          :min="0"
+          :max="16"
+          :precision="2"
           style="width: 100px"
         />
       </uk-flex>
@@ -486,6 +522,8 @@ export default {
       this.$show.visualizerHandle.globalFoggingTurbulences = this.initialValues.globalFoggingTurbulences;
       this.$show.visualizerHandle.houseLightsUp = this.initialValues.houseLuxUp;
       this.$show.visualizerHandle.houseLightsDown = this.initialValues.houseLuxDown;
+      this.$show.visualizerHandle.houseExposureUp = this.initialValues.houseEVUp;
+      this.$show.visualizerHandle.houseExposureDown = this.initialValues.houseEVDown;
       this.$show.visualizerHandle.snapSpacing = this.initialValues.snapSpacing;
       this.$show.visualizerHandle.showGrid = this.initialValues.showGrid;
       this.$show.visualizerHandle.gridOpacity = this.initialValues.gridOpacity;

@@ -278,7 +278,9 @@ const USE_BLOOM = true;
  *
  * Exposure is an EV at ISO 100, as a photographer sets it, and maps luminance
  * to the tone curve: see `exposureForEV`. Higher EV is darker; one EV halves
- * the picture. 5.25 is the calibration every fixture's look was tuned at.
+ * the picture. 5.25 is the calibration every fixture's look was tuned at, and
+ * the house-down default. Each house state keeps its own EV: a lit room and a
+ * dark show want different exposures, as they do on a real camera.
  *
  * Glare is the lens's own spread of light: a few percent of everything
  * bright, thrown wide, with no threshold -- a camera does not choose what
@@ -362,8 +364,11 @@ THREE.Vector3.prototype.round = function vector3RoundPolyfill(digits) {
  * @default
  */
 const DEFAULT_PREFERENCES = {
-  HOUSE_LUX_UP: 8,
+  HOUSE_LUX_UP: 300,
   HOUSE_LUX_DOWN: 2,
+  // Incident-meter exposure for 300 lux at ISO 100: log2(300 x 100 / 250).
+  HOUSE_EV_UP: 7,
+  HOUSE_EV_DOWN: CAMERA_EV,
 };
 
 // The haze defaults live in `preferences.js` only, and `SceneEnv` reads them.
@@ -468,6 +473,8 @@ class Visualizer {
       source.houseLuxDown,
       DEFAULT_PREFERENCES.HOUSE_LUX_DOWN,
     );
+    this._evUp = Visualizer.asBrightness(source.houseEVUp, DEFAULT_PREFERENCES.HOUSE_EV_UP);
+    this._evDown = Visualizer.asBrightness(source.houseEVDown, DEFAULT_PREFERENCES.HOUSE_EV_DOWN);
     // The lux-to-level conversion depends on the environment, which loads
     // asynchronously and can be changed; the level follows it.
     if (!this._followsRoom) {
@@ -769,6 +776,36 @@ class Visualizer {
     if (!this._houseLights) this.applyBrightness();
   }
 
+  /**
+   * Camera exposure with the house lights up, as EV at ISO 100.
+   *
+   * @type {Number}
+   */
+  set houseExposureUp(value) {
+    this._evUp = Visualizer.asBrightness(value, DEFAULT_PREFERENCES.HOUSE_EV_UP);
+    Preferences.set('houseEVUp', this._evUp);
+    if (this._houseLights) this.applyBrightness();
+  }
+
+  get houseExposureUp() {
+    return this._evUp;
+  }
+
+  /**
+   * Camera exposure with the house lights down, as EV at ISO 100.
+   *
+   * @type {Number}
+   */
+  set houseExposureDown(value) {
+    this._evDown = Visualizer.asBrightness(value, DEFAULT_PREFERENCES.HOUSE_EV_DOWN);
+    Preferences.set('houseEVDown', this._evDown);
+    if (!this._houseLights) this.applyBrightness();
+  }
+
+  get houseExposureDown() {
+    return this._evDown;
+  }
+
   get houseLightsDown() {
     return this._brightnessDown;
   }
@@ -861,6 +898,18 @@ class Visualizer {
     // control rather than being a second thing to remember to turn down.
     setHouseBrightness(this._globalBrightness);
     if (ambientHazeEffect) ambientHazeEffect.setHouseBrightness(this._globalBrightness);
+    this.applyExposure();
+  }
+
+  /**
+   * Puts the house state's EV onto the camera.
+   *
+   * @public
+   */
+  applyExposure() {
+    if (!this.renderer) return;
+    const ev = this._houseLights ? this._evUp : this._evDown;
+    this.renderer.toneMappingExposure = exposureForEV(Number.isFinite(ev) ? ev : CAMERA_EV);
   }
 
   /**
@@ -1356,7 +1405,7 @@ class Visualizer {
       });
     }
 
-    this.renderer.toneMappingExposure = exposureForEV(CAMERA_EV);
+    this.applyExposure();
     toneMappingEffect = new ToneMappingEffect({
       mode: ToneMappingMode[CAMERA_TONE_CURVE],
     });

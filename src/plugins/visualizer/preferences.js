@@ -66,9 +66,15 @@ const DEFAULTS = {
    * keeps two, because looking at a rig and looking at a show want different
    * rooms, and the one you are not in should not have to be dialled back.
    */
-  houseLuxUp: 8,
+  houseLuxUp: 300,
   /** House light with the house lights down, in lux on a white floor. */
   houseLuxDown: 2,
+  /**
+   * Camera exposure with the house lights up and down, as EV at ISO 100. A
+   * lit room and a dark show want different exposures; each is fixed.
+   */
+  houseEVUp: 7,
+  houseEVDown: 5.25,
   /** Which of the two is in force. */
   houseLights: true,
   /**

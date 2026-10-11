@@ -8,6 +8,7 @@
 - **Create input…** at the bottom of a display's or projector's Input list, or Ctrl+Shift+I, opens the Video inputs window; the gear beside Input opens it on that device's input. It lists the inputs with their state and how many devices use each, and previews the selected one with its size and measured frame rate. It moved out of Preferences: inputs belong to the project. Senders are looked for again every few seconds while it is open. **Add NDI input** with a **Sender** chosen on this machine, or **Add file…**.
 - A feed opens only while a device shows its input.
 - Image and video files: PNG, JPEG, WebP, MP4, MOV or WebM, copied into `Library/Media`. A video plays muted and loops. A file belongs to the project: it is saved with it, Export carries it, and an opened export plays its own copy. An NDI sender stays a setting of the machine.
+- A video file input has **Play**/**Pause**, a position slider and the time in the Video inputs window. Every device showing the file follows; pause and position are not saved.
 - A **Test card** is built into every project: grey wedge, colour bars, a one-pixel grid, a circle and an F in one corner. It cannot be removed, and Export does not carry it, since Beam ships it.
 - Displays and projectors have **Rotation**, **Mirror H** / **Mirror V**, **Crop** on each side in input pixels, **Scale** (Stretch, Fit, Fill, Native) and digital **Zoom**. Each is a control in the definition: Fixed, Adjustable or DMX. Fit shows a square video on a 16:9 screen with bars at the sides.
 - Each projector shows its own input; up to six projectors draw at once, as before.
@@ -19,6 +20,8 @@
 - The default floor is a dark grey of about 10% reflectance, #595959, was #b9babb (about 49%). Existing projects keep their floor.
 - The grid cancels the camera's exposure, so its lines look the same at any EV, and its lines are near white, #e6e9ed, was #7d858e.
 - House lights up and down are set in lux on a white floor, to one decimal, on the same scale as projectors and fixtures. Defaults are 300 lux up and 6 lux down.
+- Visualizer and Art-Net preferences are one window, **Edit → Preferences**, with a **Visualizer** and a **DMX** tab. A setting is one line with its explanation as a tooltip, and house up and house down share a row. **Reset all...** is at the bottom of the window. Ctrl+Shift+V opens the Visualizer tab, Ctrl+Shift+A the DMX tab.
+- **Debug → Camera** has **house up EV** and **house down EV** sliders, the same stored preferences as the window.
 - Each house state has its own camera exposure, **Exposure, house up (EV)** and **Exposure, house down (EV)**, defaults 7 and 6.5. A lit room at 300 lux and a dark show both read correctly. Each environment image is measured once, so a lux figure means the same light whichever image is chosen. Earlier percentages are not carried over.
 
 ### Projectors
@@ -29,13 +32,13 @@
 - The generic projector defaults to 4000 lumens, was 10000.
 - A projector's black level is its white over its contrast, across the frame; the soft edge dims only the picture above it, so blended overlaps show a brighter black.
 - A display's full white is its nits. It used to be a fixed level of about 45 nits whatever the definition said.
-- Displays light the room: an area light at the picture's average colour, which falls as 1 / (d² + R²) for a disc of the panel's area, with soft shadows from a depth tile. Up to 16 displays; one costs about 0.2 ms of GPU time.
+- Displays light the room: an area light at the picture's average colour, which falls as 1 / (d² + R²) for a disc of the panel's area, with soft shadows from a depth tile. Up to 16 displays; one costs about 0.2 ms of GPU time. On standard materials a display is a rectangle (linearly transformed cosines), so a glossy floor reflects its shape, at the picture's average colour, rather than a point.
 - A projector's light in the haze is sampled only where the frame holds picture. A cropped, fitted or zoomed-out picture no longer breaks into bands in the air.
 - Changing a device value in Fixture settings marks the project as changed. Crop, zoom, shift and the other controls were lost on closing without a prompt.
-- The Edit menu has Copy and Paste, and the preferences moved into it: Visualizer preferences, Art-Net preferences and Reset preferences. The Preferences menu is gone.
+- The Edit menu has Copy, Paste and Preferences. The Preferences menu is gone.
 - Changing a model's size, in Placement or with the gizmo, keeps its lowest point where it was, so a model on the floor no longer grows into it.
 - Framing blades from GDTF shaper channels: Blade(n)A and B, Blade(n)Rot and ShaperRot cut the pool and the beam alike. Up to eight blades per light; a blade with only A moves parallel. Seen in the Ayrton Diablo, Martin MAC Encore and Viper Performance, and Robe BMFL Blade profiles.
-- The toolbar no longer has Auto-rotate and Auto-focus, or the Visualizer title; the title shows only on the hidden panel. The performance panel no longer shows the camera position.
+- The toolbar no longer has Auto-rotate, Auto-focus, the Visualizer title or Hide. The performance panel no longer shows the camera position.
 - With Native scale a crop only blacks out the edges; the kept pixels stay in place. With Stretch, Fit and Fill the kept part is scaled to the picture.
 - A projector's position is on its lens axis. A projector whose lens is off-centre keeps its position: its body moves by the lens offset and its picture is now centred on the position.
 

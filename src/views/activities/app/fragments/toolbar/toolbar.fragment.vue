@@ -12,17 +12,19 @@
       v-if="sending"
       class="sending"
       :class="{ contested: otherSenders.length }"
-      title="Beam is sending DMX. Edit > Art-Net preferences to receive again."
-      @click="artnetPopupState = true"
+      title="Beam is sending DMX. Edit > Preferences > DMX to receive again."
+      @click="openPreferences('dmx')"
     >
       {{ sendingLabel }}
     </p>
 
-    <visualizer-popup v-model="visualizerPopupState" />
+    <preferences-popup
+      v-model="preferencesPopupState"
+      :tab="preferencesTab"
+    />
     <license-popup v-model="licensePopupState" />
     <credits-popup v-model="creditsPopupState" />
     <newshow-popup v-model="newProjectPopupState" />
-    <artnet-popup v-model="artnetPopupState" />
     <video-popup
       v-model="videoPopupState"
       :focus-id="videoFocusId"
@@ -35,13 +37,11 @@
 import EventBus from '@/plugins/eventbus';
 import Selection from '@/models/DMX/selection';
 import confirm from '@/plugins/confirm';
-import Preferences from '@/plugins/visualizer/preferences';
 import importGdtfFiles from '@/plugins/gdtf_import';
-import VisualizerPopup from './_popups/popup.visualizer.vue';
+import PreferencesPopup from './_popups/popup.preferences.vue';
 import LicensePopup from './_popups/popup.license.vue';
 import CreditsPopup from './_popups/popup.credits.vue';
 import NewshowPopup from './_popups/popup.newshow.vue';
-import ArtnetPopup from './_popups/popup.artnet.vue';
 import VideoPopup from './_popups/popup.video.vue';
 
 export default {
@@ -51,11 +51,10 @@ export default {
     MODE: 3,
   },
   components: {
-    VisualizerPopup,
+    PreferencesPopup,
     LicensePopup,
     CreditsPopup,
     NewshowPopup,
-    ArtnetPopup,
     VideoPopup,
   },
   data() {
@@ -69,10 +68,6 @@ export default {
        * Current show savestate
        */
       saveState: true,
-      /**
-       * Art-Net settings popup state
-       */
-      artnetPopupState: false,
       videoPopupState: false,
       /** The input the Video inputs window opens on, or null for its own choice. */
       videoFocusId: null,
@@ -85,10 +80,9 @@ export default {
        * New project popup state
        */
       newProjectPopupState: false,
-      /**
-       * Visualizer popup state
-       */
-      visualizerPopupState: false,
+      /** Whether the Preferences window is open, and the tab it opens on. */
+      preferencesPopupState: false,
+      preferencesTab: 'visualizer',
       /**
        * License popup state
        */
@@ -202,26 +196,11 @@ export default {
               },
             },
             {
-              name: 'Visualizer preferences',
+              name: 'Preferences',
               shortcut: 'Ctrl+Shift+V',
               icon: 'visualizer',
               callback: () => {
-                this.displayVisualizerPopup();
-              },
-            },
-            {
-              name: 'Art-Net preferences',
-              shortcut: 'Ctrl+Shift+A',
-              icon: 'zoom',
-              callback: () => {
-                this.artnetPopupState = true;
-              },
-            },
-            {
-              name: 'Reset preferences',
-              icon: 'undo',
-              callback: () => {
-                this.resetToDefaults();
+                this.openPreferences('visualizer');
               },
             },
           ],
@@ -355,14 +334,12 @@ export default {
         event.preventDefault();
         this.openVideoInputs(null);
       }
+      // The DMX tab's own shortcut, which the one Preferences entry cannot carry.
+      if (event.ctrlKey && event.shiftKey && !event.altKey && event.code === 'KeyA') {
+        event.preventDefault();
+        this.openPreferences('dmx');
+      }
     },
-    /**
-     * Resets every preference and debug value to its default, after asking,
-     * and reloads so each module starts from its own constants.
-     *
-     * @public
-     * @async
-     */
     async importGdtf() {
       if (!window.library || !window.library.pickGdtf) return;
       await importGdtfFiles(await window.library.pickGdtf(), this.$show);
@@ -397,20 +374,6 @@ export default {
       }
       if (!gdtf.length || !window.library || !window.library.pathForFile) return;
       await importGdtfFiles(gdtf.map((file) => window.library.pathForFile(file)), this.$show);
-    },
-    async resetToDefaults() {
-      const go = await confirm({
-        title: 'Reset to defaults',
-        message: 'Reset all preferences and debug values to their defaults?',
-        detail: this.$show.isSaved
-          ? 'Beam reloads.'
-          : 'Beam reloads. This project has unsaved changes: save it first or they may be lost.',
-        yes: 'Reset',
-        no: 'Cancel',
-      });
-      if (!go) return;
-      await Preferences.reset();
-      window.location.reload();
     },
     /**
      * Load showfile from native file loader
@@ -511,12 +474,14 @@ export default {
       }
     },
     /**
-     * Display visualizer popup
+     * Opens the Preferences window.
      *
      * @public
+     * @param {String} tab `visualizer` or `dmx`
      */
-    displayVisualizerPopup() {
-      this.visualizerPopupState = true;
+    openPreferences(tab) {
+      this.preferencesTab = tab;
+      this.preferencesPopupState = true;
     },
     /**
      * Display new project popup

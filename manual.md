@@ -191,7 +191,7 @@ The important bits:
 - **The view cube**, in a corner of the viewport — click a face to snap the camera to that elevation.
 - **The modifier panel** — appears when you select something, and holds that thing's settings.
 
-If the reference floor and grid annoy you later, they're all switchable under **Edit → Visualizer preferences**.
+If the reference floor and grid annoy you later, they're all switchable under **Edit → Preferences → Visualizer**.
 
 ## Moving the camera
 
@@ -330,7 +330,7 @@ Tick **Front** on the `Diamond` group. Leave `Movers` unticked for now — anyth
 
 Time to make it move.
 
-Open **Edit → Art-Net preferences** (**Ctrl+Shift+A**) and set **Receive** to **enabled**.
+Open **Edit → Preferences → DMX** (**Ctrl+Shift+A**) and set **Mode** to **Receive**.
 
 It'll say *Listening on UDP 6454*. If instead it says *Unavailable in the browser*, you're running the web version — you need the desktop app for this.
 
@@ -538,23 +538,31 @@ Each group owns its mappings independently — one group can go out as a front e
 
 ## The visualizer
 
-**Edit → Visualizer preferences** (**Ctrl+Shift+V**).
+**Edit → Preferences** (**Ctrl+Shift+V**) has two tabs, **Visualizer** and **DMX**. Each setting is one line; hover over it for what it does. **Reset all...** at the bottom puts every preference and debug value back to its default and reloads Beam; save the project first. Cancel puts the Visualizer tab back as it was when the window opened; DMX settings apply at once.
 
-**Fogging**
+On the **Visualizer** tab:
+
+**Room** — house up and house down side by side
+- **Light (lux)**, **Exposure (EV)** and **Environment** for each state, described below. **Add...** copies a .hdr or .exr into the library for the environment lists.
+
+**Haze**
 - **State** — on or off
-- **Density** — 0–100, how thick the haze is
+- **Intensity** — 0–100, how thick the haze is
+- **Scale (m)** — how wide one clump of haze is
 - **Turbulence** — 0–100, how much it moves over time. Far more range than it used to have, and the same setting now means the same speed whatever the haze is scaled to, so changing density no longer changes how fast the air drifts. At the top of the range the room is genuinely churning.
 
-**Lighting**
-- **House lights up (lux)** and **House lights down (lux)** — the room's own light, as illuminance on a white floor, 0 to 2000, to one decimal. Defaults are 300 and 6: light enough to move around in, dark enough to watch a picture. The toolbar's house lights button swaps between them. Fixtures and projectors are on the same lux scale, so a projector's picture against the room is the ratio you would see in the real space. For reference, a dark venue is 1 to 5 lux, a mapping projection on a facade 50 to 150, and a lit room 100 to 500.
-- **Exposure, house up (EV)** and **Exposure, house down (EV)** — the camera's exposure in each state, at ISO 100, as on a real camera. One EV higher halves the brightness of everything. A lit room and a dark show need different exposures, so each state has its own; neither changes on its own. Defaults are 7, metered for a 300-lux room, and 6.5, for a bright projection in a dark room. Set it for the brightest thing you want to see, as on a camera; the room stays near black either way. Switching the house lights changes how bright the fixtures look, as it would through a camera.
+**Light and exposure**
+- **Light (lux)**, house up and house down — the room's own light, as illuminance on a white floor, 0 to 2000, to one decimal. Defaults are 300 and 6: light enough to move around in, dark enough to watch a picture. The toolbar's house lights button swaps between them. Fixtures and projectors are on the same lux scale, so a projector's picture against the room is the ratio you would see in the real space. For reference, a dark venue is 1 to 5 lux, a mapping projection on a facade 50 to 150, and a lit room 100 to 500.
+- **Exposure (EV)**, house up and house down — the camera's exposure in each state, at ISO 100, as on a real camera. One EV higher halves the brightness of everything. A lit room and a dark show need different exposures, so each state has its own; neither changes on its own. Defaults are 7, metered for a 300-lux room, and 6.5, for a bright projection in a dark room. Set it for the brightest thing you want to see, as on a camera; the room stays near black either way. Switching the house lights changes how bright the fixtures look, as it would through a camera. Both are also sliders in **Debug → Camera**.
 - The room's environment image sets where the house light comes from and its colour. Beam measures each image once, so the same lux gives the same light on the floor whichever image is chosen.
 
 **Reference** — turn these off for a clean render
-- **Floor** — the checkered ground plane
-- **Grid** — the infinite reference grid
+- **Grid** — the infinite reference grid, with its size, brightness and line width
 - **Axes** — the origin indicator
 - **Background** — colour behind the scene
+
+**Interface**
+- **Channel range guide** — a channel's ranges beside its DMX value while the value changes
 - **Debug** — frame timings and the tuning panel, in the viewport's top-right corner. Its folders are **Camera**, **Room** (light and haze), **LED**, **Mover beam** and **Laser**. The panel grows downwards as folders open and scrolls once it reaches the bottom of the viewport. Tuning values and which folders are open are kept between sessions. Double-click a control's name to put it back to its default, or **Reset all** at the top for every control. Two haze controls under **Room → Haze**: **swirl**, how much the air folds over itself, and **heading sweep**, how fast the drift changes direction. Both ride the turbulence slider.
 
 **The view cube.** Click a face to snap to that elevation. Faster than orbiting when you want a straight-on view — and straight-on views are what you want before exporting a camera projection.
@@ -583,7 +591,7 @@ A beam is light scattered by the haze, so with haze off there is no beam, only t
 
 ## Art-Net input
 
-**Edit → Art-Net preferences** (**Ctrl+Shift+A**). **Mode** is Off, Receive or Send.
+**Edit → Preferences → DMX** (**Ctrl+Shift+A**). **Mode** is Off, Receive or Send.
 
 - **Receive** listens for Art-Net on **UDP 6454** and sACN on **UDP 5568**. No IP to set, no subscription to manage. Universe numbers are read from the full 15-bit Art-Net field, so any universe a source can address, Beam will accept — up to the 512 it can hold.
 - **Send** puts the fixtures' own values, the ones set by hand in their widgets, on the wire, so a real fixture can be tested with the same controls. **Send as** picks sACN multicast or Art-Net; for Art-Net, **Send to** takes a node's address, or empty to broadcast. Every launch starts in Receive.
@@ -598,7 +606,7 @@ A project receives pictures through **inputs**. An input is one NDI stream or on
 **Create input…**, at the bottom of a display's or projector's **Input** list, opens the Video inputs window, as does **Ctrl+Shift+I**. The **…** beside **Input** opens it on that device's input, to edit it. Opened from a device, the window can set it: an input created there goes straight onto a device that had none, and **Apply** puts the selected input on it. It lists the project's inputs, with a dot for each: green live, yellow waiting, orange not bound or not found, grey when no device shows it. The number beside an input is how many devices use it.
 
 - **Add NDI input** adds one, and **Sender** picks the NDI sender that fills it. Which sender is a setting of this machine, because a sender's name means nothing on another one. A new input takes the sender's name until you rename it.
-- **Add file…** copies a PNG, JPEG or WebP image, or an MP4, MOV or WebM video, into `Documents\Beatline\Beam\Library\Media` and adds it as an input. A video plays muted and loops. A file belongs to the project: it is saved with it, and **Export Project to...** carries the file, so the project opens with its picture on another machine.
+- **Add file…** copies a PNG, JPEG or WebP image, or an MP4, MOV or WebM video, into `Documents\Beatline\Beam\Library\Media` and adds it as an input. A video plays muted and loops; with a video input selected, the window has **Play**/**Pause**, a position slider and the time, and every device showing the file follows. A file belongs to the project: it is saved with it, and **Export Project to...** carries the file, so the project opens with its picture on another machine.
 - **Test card** is built in: every project has it, it is listed first, and it cannot be removed or changed. It has a grey wedge, colour bars, a fine grid, a circle and an F in the top-left corner, so a picture that is too bright, the wrong colour, soft, stretched, mirrored or turned shows it.
 
 A feed only opens while a device shows its input, so an unused input costs nothing.
@@ -765,14 +773,14 @@ Files are MP4, H.264 video and AAC audio, constant frame rate. They play on phon
 | **Ctrl+O** | Open project |
 | **Ctrl+Shift+S** | Export project |
 | **Shift+N** | New project |
-| **Ctrl+Shift+V** | Visualizer preferences |
-| **Ctrl+Shift+A** | Art-Net preferences |
+| **Ctrl+Shift+V** | Preferences, Visualizer tab |
+| **Ctrl+Shift+A** | Preferences, DMX tab |
 
 ## Menus
 
 **File** — New Project, Open Project, Import JSON Project, Import GDTF..., Save Project, Export Project to..., Refresh from Library, Export MadMapper Layout
 
-**Edit** — Undo, Redo, Copy, Paste, Visualizer preferences, Art-Net preferences, Reset preferences. Reset puts every preference and debug value back to its default and reloads Beam; save the project first.
+**Edit** — Undo, Redo, Copy, Paste, Preferences.
 
 **About** — Manual, License, Credits, Contact
 
@@ -792,14 +800,14 @@ Being alpha, the project file format can change between versions. Keep exported 
 
 **Nothing lights up.**
 Check, in order:
-1. Is Art-Net input **enabled** in Edit → Art-Net preferences?
+1. Is **Mode** set to **Receive** in Edit → Preferences → DMX?
 2. Are you running the **desktop app**? The browser can't receive UDP.
 3. Is your source pointed at this machine's IP, on **port 6454**?
 4. Do the **universe numbers match**? A source on universe 1 lights nothing patched to universe 0.
 5. Firewall. UDP 6454 inbound. This one catches people constantly on Windows.
 
 **Some fixtures light up, others don't.**
-Probably addressing. Open the console (**Debug** in Visualizer preferences) and look for dropped-universe warnings — anything above universe 511 is refused, and it'll say so once per universe.
+Probably addressing. Open the console (**Debug** in Edit → Preferences → Visualizer) and look for dropped-universe warnings — anything above universe 511 is refused, and it'll say so once per universe.
 
 **A fixture vanished from the MadMapper import.**
 It was edge-on to your export view. Beam warns about this before exporting, and gives such fixtures a token length so they survive — but if you exported past the warning, they may be somewhere odd on the canvas. Re-export from a view that suits them, or move them by hand in MadMapper.

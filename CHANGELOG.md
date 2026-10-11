@@ -35,7 +35,7 @@
 - The Edit menu has Copy and Paste, and the preferences moved into it: Visualizer preferences, Art-Net preferences and Reset preferences. The Preferences menu is gone.
 - Changing a model's size, in Placement or with the gizmo, keeps its lowest point where it was, so a model on the floor no longer grows into it.
 - Framing blades from GDTF shaper channels: Blade(n)A and B, Blade(n)Rot and ShaperRot cut the pool and the beam alike. Up to eight blades per light; a blade with only A moves parallel. Seen in the Ayrton Diablo, Martin MAC Encore and Viper Performance, and Robe BMFL Blade profiles.
-- The toolbar no longer has Auto-rotate and Auto-focus. The performance panel no longer shows the camera position.
+- The toolbar no longer has Auto-rotate and Auto-focus, or the Visualizer title; the title shows only on the hidden panel. The performance panel no longer shows the camera position.
 - With Native scale a crop only blacks out the edges; the kept pixels stay in place. With Stretch, Fit and Fill the kept part is scaled to the picture.
 - A projector's position is on its lens axis. A projector whose lens is off-centre keeps its position: its body moves by the lens offset and its picture is now centred on the position.
 

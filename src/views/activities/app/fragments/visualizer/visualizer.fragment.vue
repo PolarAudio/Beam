@@ -8,7 +8,10 @@
       class="header"
       gap="4"
     >
-      <h3>Visualizer</h3>
+      <!-- Only on the collapsed panel, where it says what the strip is. -->
+      <h3 v-show="hidden">
+        Visualizer
+      </h3>
       <uk-button
         v-show="!hidden"
         :key="`translate-${gizmoMode}-${modeTick}`"

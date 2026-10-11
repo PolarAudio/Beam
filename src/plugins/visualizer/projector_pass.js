@@ -257,6 +257,7 @@ const FRAGMENT = /* glsl */`
   uniform mat4 camWorld;
   uniform sampler2D depthAtlas;
   uniform sampler2D surfaceAlbedo;
+  uniform vec4 litRect[SLOTS];
   uniform bool hasAlbedo;
   uniform mat4 lensMatrix[SLOTS];
   uniform vec3 pictureRowX[SLOTS];
@@ -402,11 +403,14 @@ ${PICTURE_SLOTS}
     vec4 a = lensMatrix[i] * vec4(origin, 1.0);
     vec4 b = lensMatrix[i] * vec4(origin + dir * maxT, 1.0);
 
+    // The sides are those of the part of the frame that holds picture, so a
+    // cropped or fitted picture gets every sample, not a share of them.
+    vec4 lit = litRect[i] * 2.0 - 1.0;
     vec4 planes[6];
-    planes[0] = vec4(1.0, 0.0, 0.0, 1.0);
-    planes[1] = vec4(-1.0, 0.0, 0.0, 1.0);
-    planes[2] = vec4(0.0, 1.0, 0.0, 1.0);
-    planes[3] = vec4(0.0, -1.0, 0.0, 1.0);
+    planes[0] = vec4(1.0, 0.0, 0.0, -lit.x);
+    planes[1] = vec4(-1.0, 0.0, 0.0, lit.z);
+    planes[2] = vec4(0.0, 1.0, 0.0, -lit.y);
+    planes[3] = vec4(0.0, -1.0, 0.0, lit.w);
     planes[4] = vec4(0.0, 0.0, 1.0, 1.0);
     planes[5] = vec4(0.0, 0.0, -1.0, 1.0);
 
@@ -590,7 +594,9 @@ class ProjectorEffect extends Effect {
     const lensPos = [];
     const blendEdges = [];
     const pictureSize = [];
+    const litRect = [];
     for (let i = 0; i < MAX_PROJECTIONS; i += 1) {
+      litRect.push(new THREE.Vector4(0, 0, 1, 1));
       pictureSize.push(new THREE.Vector2(1, 1));
       lensMatrix.push(new THREE.Matrix4());
       pictureRowX.push(new THREE.Vector3(1, 0, 0));
@@ -631,6 +637,7 @@ class ProjectorEffect extends Effect {
         ['pictureSize', new THREE.Uniform(pictureSize)],
         ['depthAtlas', new THREE.Uniform(null)],
         ['surfaceAlbedo', new THREE.Uniform(null)],
+        ['litRect', new THREE.Uniform(litRect)],
         ['hasAlbedo', new THREE.Uniform(false)],
         ['lensMatrix', new THREE.Uniform(lensMatrix)],
         ['pictureRowX', new THREE.Uniform(pictureRowX)],
@@ -727,6 +734,7 @@ class ProjectorEffect extends Effect {
     const emission = uniforms.get('emission').value;
     const lensPos = uniforms.get('lensPos').value;
     const blendEdges = uniforms.get('blendEdges').value;
+    const litRect = uniforms.get('litRect').value;
     live.forEach((projection, i) => {
       const { blend } = projection;
       blendEdges[i].set(blend.left, blend.right, blend.bottom, blend.top);
@@ -736,6 +744,9 @@ class ProjectorEffect extends Effect {
       rowsX[i].set(map.rowX[0], map.rowX[1], map.rowX[2]);
       rowsY[i].set(map.rowY[0], map.rowY[1], map.rowY[2]);
       bounds[i].set(map.bounds[0], map.bounds[1], map.bounds[2], map.bounds[3]);
+      // With no picture the whole frame is lit white.
+      const lit = projection.picture && map.lit ? map.lit : [0, 0, 1, 1];
+      litRect[i].set(lit[0], lit[1], lit[2], lit[3]);
       // x carries the lumens, y the dimmer and shutter folded together. Kept
       // apart so a dimmed machine still reads as the same machine.
       emission[i].set(projection.lumensPerArea * LUX_SCALE, projection.gain, 0);

@@ -40,6 +40,35 @@ import { setOutlined } from './selection_outline';
 /** Every projector in the scene, so the statics can sweep them. */
 const instances = new Set();
 
+/**
+ * The part of the frame (0..1, y up) that holds picture: the texture rectangle
+ * `bounds` mapped back through the frame-to-texture map, clipped to the frame.
+ * Crop with Native, Fit and zoom below 100 leave the rest of the frame black.
+ *
+ * @param {Array} rowX frame-to-texture row for u
+ * @param {Array} rowY frame-to-texture row for v
+ * @param {Array} bounds texture rectangle `[x0, y0, x1, y1]`
+ * @returns {Array} `[x0, y0, x1, y1]` in the frame
+ */
+export function litRect(rowX, rowY, bounds) {
+  const [a, b, tx] = rowX;
+  const [c, d, ty] = rowY;
+  const det = a * d - b * c;
+  if (Math.abs(det) < 1e-9) return [0, 0, 1, 1];
+  const [x0, y0, x1, y1] = bounds;
+  const corners = [[x0, y0], [x1, y0], [x0, y1], [x1, y1]].map(([u, v]) => [
+    (d * (u - tx) - b * (v - ty)) / det,
+    (a * (v - ty) - c * (u - tx)) / det,
+  ]);
+  const xs = corners.map((corner) => corner[0]);
+  const ys = corners.map((corner) => corner[1]);
+  const clip = (value) => Math.min(Math.max(value, 0), 1);
+  return [
+    clip(Math.min(...xs)), clip(Math.min(...ys)),
+    clip(Math.max(...xs)), clip(Math.max(...ys)),
+  ];
+}
+
 /** Unit body, scaled per projector. */
 const BOX_GEOMETRY = new THREE.BoxGeometry(1, 1, 1);
 
@@ -623,10 +652,11 @@ class Projector {
     // the texture both count up. With u = fx and v = 1 - fy:
     //   x = ax fx - bx fy + (bx + cx)
     //   1 - y = -ay fx + by fy + (1 - by - cy)
+    const rowX = [m.ax, -m.bx, m.bx + m.cx];
+    const rowY = [-m.ay, m.by, 1 - m.by - m.cy];
+    const bounds = [m.bounds.x0, 1 - m.bounds.y1, m.bounds.x1, 1 - m.bounds.y0];
     return {
-      rowX: [m.ax, -m.bx, m.bx + m.cx],
-      rowY: [-m.ay, m.by, 1 - m.by - m.cy],
-      bounds: [m.bounds.x0, 1 - m.bounds.y1, m.bounds.x1, 1 - m.bounds.y0],
+      rowX, rowY, bounds, lit: litRect(rowX, rowY, bounds),
     };
   }
 

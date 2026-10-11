@@ -1580,6 +1580,8 @@ export default {
         const model = target._3DModel;
         if (model && model.refresh) model.refresh();
       });
+      // A device value is saved with the project, so changing one is an edit.
+      if (this.$show && this.$show.touch) this.$show.touch();
       this.deviceRevision += 1;
     },
     /**

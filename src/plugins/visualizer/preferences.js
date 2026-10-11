@@ -74,7 +74,7 @@ const DEFAULTS = {
    * lit room and a dark show want different exposures; each is fixed.
    */
   houseEVUp: 7,
-  houseEVDown: 5.25,
+  houseEVDown: 6.5,
   /** Which of the two is in force. */
   houseLights: true,
   /**

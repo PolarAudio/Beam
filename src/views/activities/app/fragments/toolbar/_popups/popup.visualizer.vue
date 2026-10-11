@@ -150,8 +150,8 @@
         <div>
           <h4>Exposure, house down (EV):</h4>
           <p class="subtitle">
-            And with them off. 5.25 is the exposure the fixtures were
-            calibrated at.
+            And with them off. Set it for the brightest thing you want to
+            see, as on a camera.
           </p>
         </div>
         <uk-spacer />

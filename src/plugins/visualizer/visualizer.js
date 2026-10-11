@@ -278,8 +278,8 @@ const USE_BLOOM = true;
  *
  * Exposure is an EV at ISO 100, as a photographer sets it, and maps luminance
  * to the tone curve: see `exposureForEV`. Higher EV is darker; one EV halves
- * the picture. 5.25 is the calibration every fixture's look was tuned at, and
- * the house-down default. Each house state keeps its own EV: a lit room and a
+ * the picture. 5.25 is the calibration every fixture's look was tuned at;
+ * the regression set uses it. Each house state keeps its own EV: a lit room and a
  * dark show want different exposures, as they do on a real camera.
  *
  * Glare is the lens's own spread of light: a few percent of everything
@@ -368,7 +368,8 @@ const DEFAULT_PREFERENCES = {
   HOUSE_LUX_DOWN: 2,
   // Incident-meter exposure for 300 lux at ISO 100: log2(300 x 100 / 250).
   HOUSE_EV_UP: 7,
-  HOUSE_EV_DOWN: CAMERA_EV,
+  // Set for a bright projection in a dark room; the room stays near black.
+  HOUSE_EV_DOWN: 6.5,
 };
 
 // The haze defaults live in `preferences.js` only, and `SceneEnv` reads them.

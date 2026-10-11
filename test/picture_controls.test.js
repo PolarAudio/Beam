@@ -81,6 +81,12 @@ console.log('\n-- digital zoom --');
   const m = pictureMapping(pictureOf(settings({ pictureZoom: 200 })), WIDE, SQUARE);
   check('200% shows the middle half', at(m, 0, 0), '0.25,0.25');
   check('to three quarters', at(m, 1, 1), '0.75,0.75');
+  const small = pictureMapping(pictureOf(settings({ pictureZoom: 50 })), WIDE, SQUARE);
+  check('50% puts the whole input in the middle half', at(small, 0.25, 0.25), '0,0');
+  check('with black around it', inside(small, 0.1, 0.1), false);
+  const floor = pictureMapping(pictureOf(settings({ pictureZoom: 5 })), WIDE, SQUARE);
+  check('zoom stops at 25%', at(floor, 0.375, 0.375), '0,0');
+  check('a device with no zoom set shows 100%', pictureOf(settings({})).zoom, 1);
 }
 
 console.log('\n-- crop --');

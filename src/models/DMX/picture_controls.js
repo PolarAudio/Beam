@@ -29,6 +29,19 @@ const ROTATION_LABELS = {
   0: '0°', 90: '90° clockwise', 180: '180°', 270: '90° anticlockwise',
 };
 
+/** Digital zoom's range, in per cent: below 100 shrinks the picture. */
+const ZOOM_MIN = 25;
+const ZOOM_MAX = 400;
+
+/**
+ * Digital zoom: a range that rests at 100 % rather than at either end, so a
+ * new device shows its picture at its own size.
+ */
+class ZoomType extends RangeType {
+  // eslint-disable-next-line class-methods-use-this
+  initial() { return 100; }
+}
+
 /** The most a crop may take from one side, in per cent. */
 const MAX_CROP = 45;
 
@@ -52,8 +65,8 @@ export const PICTURE_DEFS = [
   new ControlDef('scale', 'Scale', new EnumType({
     options: SCALE_MODES, initial: 'stretch', labels: SCALE_LABELS,
   })),
-  new ControlDef('pictureZoom', 'Digital Zoom', new RangeType({
-    bounds: () => ({ min: 100, max: 400 }), parks: 'min', unit: '%', precision: 0,
+  new ControlDef('pictureZoom', 'Digital Zoom', new ZoomType({
+    bounds: () => ({ min: ZOOM_MIN, max: ZOOM_MAX }), unit: '%', precision: 0,
   })),
 ];
 
@@ -84,7 +97,7 @@ export function pictureOf(settings) {
       left: pct('cropLeft'), right: pct('cropRight'), top: pct('cropTop'), bottom: pct('cropBottom'),
     },
     scale: SCALE_MODES.includes(scale) ? scale : 'stretch',
-    zoom: Math.min(Math.max(Number(read('pictureZoom', 100)) || 100, 100), 400) / 100,
+    zoom: Math.min(Math.max(Number(read('pictureZoom', 100)) || 100, ZOOM_MIN), ZOOM_MAX) / 100,
   };
 }
 

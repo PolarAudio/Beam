@@ -370,7 +370,7 @@
             style="width: 92px"
             label="Zoom %"
             :precision="0"
-            :min="100"
+            :min="25"
             :max="400"
             @update:model-value="writeDevice('pictureZoom', $event)"
           />

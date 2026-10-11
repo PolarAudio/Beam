@@ -3,25 +3,29 @@
     col
     class="app_activity"
   >
-    <toolbar />
+    <toolbar v-show="!view.fullWindow" />
     <uk-flex class="top_fragments">
       <uk-flex
+        v-show="!view.fullWindow"
         class="top_fragment_left"
         :style="{ width: `${leftWidth}px` }"
       >
         <patch-bay />
       </uk-flex>
       <div
+        v-show="!view.fullWindow"
         class="splitter splitter_vertical"
         @pointerdown="startDrag($event, 'left')"
       />
       <visualizer />
     </uk-flex>
     <div
+      v-show="!view.fullWindow"
       class="splitter splitter_horizontal"
       @pointerdown="startDrag($event, 'bottom')"
     />
     <div
+      v-show="!view.fullWindow"
       class="bottom_fragment"
       :style="{ height: `${bottomHeight}px` }"
     >
@@ -54,6 +58,7 @@
 
 <script>
 import EventBus from '@/plugins/eventbus';
+import ViewMode from '@/plugins/view_mode';
 
 import Toolbar from './fragments/toolbar/toolbar.fragment.vue';
 import PatchBay from './fragments/patch-bay/patch-bay.fragment.vue';
@@ -102,6 +107,8 @@ export default {
   },
   data() {
     return {
+      /** Full window hides everything but the 3D view. */
+      view: ViewMode.state,
       /**
        * Panel sizes in px, dragged by the splitters and remembered between
        * runs. Read once here so a fresh install still gets sane defaults.

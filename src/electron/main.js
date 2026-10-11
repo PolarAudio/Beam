@@ -333,6 +333,17 @@ function createWindow() {
   // still exist, and `closed` has already destroyed it.
   mainWindow.on('close', persistWindowState);
 
+  // Full screen can be left by the system as well as from the page, so the
+  // page is told whenever it changes. The event says which way: inside its
+  // handler `isFullScreen` still reports the state before the change.
+  const tellFullScreen = (on) => () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('window:full-screen', on);
+    }
+  };
+  mainWindow.on('enter-full-screen', tellFullScreen(true));
+  mainWindow.on('leave-full-screen', tellFullScreen(false));
+
   // electron-vite sets ELECTRON_RENDERER_URL while `dev` is running. In dev we
   // load the live Vite dev server (http origin, assets over http); when packaged
   // we load the built index and serve assets over the `static://` protocol.
@@ -685,6 +696,21 @@ function setupDocumentStore() {
   ipcMain.on('app:claimSplash', (event) => {
     event.returnValue = splashUnclaimed;
     splashUnclaimed = false;
+  });
+
+  // The window's full screen and stay on top, from the View menu. Each
+  // answers with the state the window is in afterwards.
+  ipcMain.handle('window:set-full-screen', (_event, on) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    mainWindow.setFullScreen(Boolean(on));
+    return Boolean(on);
+  });
+  ipcMain.handle('window:is-full-screen', () => Boolean(mainWindow
+    && !mainWindow.isDestroyed() && mainWindow.isFullScreen()));
+  ipcMain.handle('window:set-always-on-top', (_event, on) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    mainWindow.setAlwaysOnTop(Boolean(on));
+    return mainWindow.isAlwaysOnTop();
   });
 }
 

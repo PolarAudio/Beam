@@ -1,5 +1,14 @@
 <template>
-  <div class="visualizer">
+  <div
+    class="visualizer"
+    :class="{ full_screen: view.fullScreen }"
+  >
+    <!-- In full screen the toolbar is tucked away above the view and comes
+         down while the pointer is on this strip or on the toolbar itself. -->
+    <div
+      v-if="view.fullScreen"
+      class="reveal"
+    />
     <uk-flex
       class="header"
       gap="4"
@@ -124,6 +133,17 @@
         :label="studioActive ? 'To Editor' : 'To Studio'"
         @click="toggleStudio"
       />
+      <uk-button
+        square
+        icon-only
+        :label="view.fullWindow ? 'Back to panels (F10)' : 'Full window (F10)'"
+        icon="fit"
+        :model-value="view.fullWindow"
+        toggleable
+        :value="false"
+        color="var(--accent-blue)"
+        @click="toggleFullWindow"
+      />
     </uk-flex>
 
     <canvas
@@ -142,6 +162,7 @@ import EventBus from '@/plugins/eventbus';
 import Clipboard from '@/models/DMX/clipboard';
 import Selection from '@/models/DMX/selection';
 import Studio from '@/models/DMX/studio';
+import ViewMode from '@/plugins/view_mode';
 
 /**
  * How often the live camera's stored viewpoint is refreshed while orbiting.
@@ -159,6 +180,8 @@ export default {
   },
   data() {
     return {
+      /** Full window and full screen. */
+      view: ViewMode.state,
       /**
        * handle to visualizer instance
        */
@@ -354,6 +377,8 @@ export default {
     new ResizeObserver(
       this.$show.visualizerHandle.resize.bind(this.$show.visualizerHandle),
     ).observe(this.$refs.visualizer);
+    // After the visualizer, which is what loads the preferences.
+    ViewMode.start();
     EventBus.emit('visualizer_loaded', true);
     this.snapEnabled = this.$show.visualizerHandle.snapEnabled;
     this.houseLights = this.$show.visualizerHandle.houseLights;
@@ -382,6 +407,9 @@ export default {
     copySelection() {
       if (!this.hasSelection) return;
       EventBus.emit('copy_requested', Selection.items.map((entry) => ({ ...entry })));
+    },
+    toggleFullWindow() {
+      ViewMode.toggleFullWindow();
     },
     /**
      * Pastes whatever was last copied.
@@ -595,6 +623,30 @@ export default {
   align-items: center;
   border-bottom: 1px solid var(--primary-dark);
   background: var(--primary-light);
+}
+.visualizer.full_screen {
+  position: relative;
+}
+.full_screen .header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 20;
+  transform: translateY(-100%);
+  transition: transform 0.15s ease;
+}
+.reveal {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 6px;
+  z-index: 21;
+}
+.reveal:hover + .header,
+.full_screen .header:hover,
+.full_screen .header:focus-within {
+  transform: none;
 }
 .tool_divider {
   width: 1px;

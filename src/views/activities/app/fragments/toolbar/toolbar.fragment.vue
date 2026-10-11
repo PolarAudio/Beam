@@ -38,6 +38,7 @@ import EventBus from '@/plugins/eventbus';
 import Selection from '@/models/DMX/selection';
 import confirm from '@/plugins/confirm';
 import importGdtfFiles from '@/plugins/gdtf_import';
+import ViewMode from '@/plugins/view_mode';
 import PreferencesPopup from './_popups/popup.preferences.vue';
 import LicensePopup from './_popups/popup.license.vue';
 import CreditsPopup from './_popups/popup.credits.vue';
@@ -80,6 +81,8 @@ export default {
        * New project popup state
        */
       newProjectPopupState: false,
+      /** Full window, full screen and stay on top. */
+      view: ViewMode.state,
       /** Whether the Preferences window is open, and the tab it opens on. */
       preferencesPopupState: false,
       preferencesTab: 'visualizer',
@@ -206,6 +209,31 @@ export default {
           ],
         },
         {
+          name: 'View',
+          selected: false,
+          items: [
+            {
+              name: 'Full window',
+              shortcut: 'F10',
+              icon: 'fit',
+              callback: () => ViewMode.toggleFullWindow(),
+            },
+            {
+              name: 'Full screen',
+              shortcut: 'F11',
+              icon: 'popout',
+              callback: () => ViewMode.toggleFullScreen(),
+            },
+            {
+              // The tick is the icon, set from the state by the watcher below.
+              id: 'stayOnTop',
+              name: 'Stay on top',
+              icon: ViewMode.state.stayOnTop ? 'tick' : 'undef',
+              callback: () => ViewMode.toggleStayOnTop(),
+            },
+          ],
+        },
+        {
           name: 'About',
           selected: false,
           items: [
@@ -259,6 +287,13 @@ export default {
         .map(({ name, universes }) => `${name} on universe ${universes.join(', ')}`)
         .join('; ');
       return `Sending DMX. Also sending: ${others}`;
+    },
+  },
+  watch: {
+    'view.stayOnTop': function stayOnTopTick(on) {
+      this.menus.forEach((menu) => menu.items.forEach((item) => {
+        if (item.id === 'stayOnTop') item.icon = on ? 'tick' : 'undef';
+      }));
     },
   },
   mounted() {

@@ -775,12 +775,16 @@ Files are MP4, H.264 video and AAC audio, constant frame rate. They play on phon
 | **Shift+N** | New project |
 | **Ctrl+Shift+V** | Preferences, Visualizer tab |
 | **Ctrl+Shift+A** | Preferences, DMX tab |
+| **F10** | Full window |
+| **F11** | Full screen; **Escape** leaves it |
 
 ## Menus
 
 **File** — New Project, Open Project, Import JSON Project, Import GDTF..., Save Project, Export Project to..., Refresh from Library, Export MadMapper Layout
 
 **Edit** — Undo, Redo, Copy, Paste, Preferences.
+
+**View** — **Full window** (F10) hides everything but the 3D view and its toolbar; the button at the right end of that toolbar does the same. **Full screen** (F11) is full window across the whole monitor, with the toolbar tucked above the view: move the pointer to the top edge to bring it down. **Escape** leaves full screen before it deselects anything. **Stay on top** keeps Beam above other applications, for a small preview window over MadMapper or Resolume; it is remembered between launches, and the other two start off.
 
 **About** — Manual, License, Credits, Contact
 

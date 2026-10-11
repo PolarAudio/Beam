@@ -24,6 +24,10 @@
 - **Debug → Camera** has **house up EV** and **house down EV** sliders, the same stored preferences as the window.
 - Each house state has its own camera exposure, **Exposure, house up (EV)** and **Exposure, house down (EV)**, defaults 7 and 6.5. A lit room at 300 lux and a dark show both read correctly. Each environment image is measured once, so a lux figure means the same light whichever image is chosen. Earlier percentages are not carried over.
 
+### View
+
+- A **View** menu: **Full window** (F10) shows only the 3D view and its toolbar, also from a button at the right of that toolbar. **Full screen** (F11) is full window across the monitor, with the toolbar shown while the pointer is at the top edge; Escape leaves it before deselecting. **Stay on top** keeps the window above other applications and is remembered; the other two start off.
+
 ### Projectors
 
 - The camera's exposure is an EV at ISO 100: a luminance of 1.2 x 2^EV cd/m² reaches the top of the tone curve. EV 5.25 is the old exposure of 1.0. The exposure multiplier in Debug → Camera is gone; exposure is set per house state in Preferences.

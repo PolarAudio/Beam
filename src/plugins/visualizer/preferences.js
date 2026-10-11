@@ -77,6 +77,8 @@ const DEFAULTS = {
   houseEVDown: 6.5,
   /** Which of the two is in force. */
   houseLights: true,
+  /** Whether the window stays above other applications. */
+  stayOnTop: false,
   /**
    * Environment image lighting the room, one per house-lights state.
    *

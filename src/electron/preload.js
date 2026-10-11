@@ -396,6 +396,20 @@ contextBridge.exposeInMainWorld('videoRecorder', {
   reveal: (target) => ipcRenderer.invoke('video:reveal', target),
 });
 
+/** The window itself: full screen and stay on top, for the View menu. */
+contextBridge.exposeInMainWorld('appWindow', {
+  /** @returns {Promise<Boolean>} whether the window is now full screen */
+  setFullScreen: (on) => ipcRenderer.invoke('window:set-full-screen', on),
+  /** @returns {Promise<Boolean>} */
+  isFullScreen: () => ipcRenderer.invoke('window:is-full-screen'),
+  /** @returns {Promise<Boolean>} whether the window now stays on top */
+  setAlwaysOnTop: (on) => ipcRenderer.invoke('window:set-always-on-top', on),
+  /** Calls back with true or false whenever full screen changes, whoever changed it. */
+  onFullScreen: (callback) => {
+    ipcRenderer.on('window:full-screen', (_event, on) => callback(on));
+  },
+});
+
 contextBridge.exposeInMainWorld('documentStore', {
   /** @returns {Promise<Object|null>} the show, or null when unreadable */
   read: (target) => ipcRenderer.invoke('document:read', target),

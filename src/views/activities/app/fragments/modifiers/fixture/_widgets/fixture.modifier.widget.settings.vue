@@ -256,7 +256,7 @@
         <uk-flex
           v-if="!isLaser && !isStrobe"
           :gap="8"
-          class="row"
+          class="row level"
         >
           <uk-select-input
             v-show="byHand('source')"
@@ -267,14 +267,15 @@
             :options="sourceOptions"
             @input="pickSource"
           />
-          <uk-button
+          <button
             v-show="byHand('source')"
-            icon="gear"
-            icon-only
-            square
+            type="button"
+            class="more_button"
             title="Edit this input"
             @click="editInput"
-          />
+          >
+            …
+          </button>
         </uk-flex>
 
         <!-- What the panel, its processor or the projector does to the picture
@@ -282,7 +283,7 @@
         <uk-flex
           v-if="isScreen && showsAny(['rotation', 'mirrorH', 'mirrorV'])"
           :gap="8"
-          class="row"
+          class="row level"
         >
           <uk-select-input
             v-show="byHand('rotation')"
@@ -362,7 +363,7 @@
         <uk-flex
           v-if="isScreen && showsAny(['scale', 'pictureZoom'])"
           :gap="8"
-          class="row"
+          class="row level"
         >
           <uk-select-input
             v-show="byHand('scale')"
@@ -675,7 +676,7 @@
 <script>
 import { DMX_UNIVERSE_LENGTH } from '@/models/DMX/patch.model';
 import { ROTATIONS } from '@/models/DMX/video_input';
-import { SCALE_MODES } from '@/models/DMX/picture_controls';
+import { SCALE_MODES, PICTURE_KEYS } from '@/models/DMX/picture_controls';
 import { MAX_SHADOW_CASTERS } from '@/plugins/visualizer/light';
 import { imageSizeAt } from '@/models/DMX/generic/projector';
 import { GENERIC_KINDS } from '@/models/DMX/generic/kinds';
@@ -1017,6 +1018,10 @@ export default {
         duration: device.value('duration'),
         blinder: device.value('blinder'),
         gel: device.value('gel'),
+        // A display's or projector's picture: turn, mirrors, crop, scale and
+        // zoom. Absent here, every row would read empty -- a zoom showing its
+        // minimum, a mirror that a click could only ever turn on.
+        ...Object.fromEntries(PICTURE_KEYS.map((key) => [key, device.value(key)])),
       });
     },
     /**
@@ -1760,6 +1765,33 @@ export default {
 /* Top, not centred: a row mixes a labelled field with a bare hint or a DMX
    marker, and centring floats the short ones half way down beside the tall
    ones. Every widget in this app lines its rows up at the top. */
+/* A button or checkbox has no label above it, so it sits on the bottom edge
+   of the field beside it rather than level with that field's label. */
+.row.level {
+  align-items: flex-end;
+}
+
+/* The ellipsis that opens a list's window, drawn as the field beside it
+   is: same height, frame and ground, square. */
+.more_button {
+  flex: 0 0 auto;
+  width: 25px;
+  height: 25px;
+  padding: 0;
+  border: 1px solid var(--secondary-dark);
+  border-radius: 0;
+  background: var(--primary-dark);
+  color: var(--secondary-lighter);
+  font-family: Roboto-Regular, sans-serif;
+  font-size: 14px;
+  line-height: 1;
+  text-transform: none;
+  cursor: pointer;
+}
+.more_button:hover {
+  background: var(--secondary-dark);
+}
+
 .row {
   align-items: flex-start;
 }

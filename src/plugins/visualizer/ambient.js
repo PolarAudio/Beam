@@ -335,8 +335,8 @@ export function onRoomChange(listener) {
  * @brief The house level that puts an illuminance on a white floor.
  *
  * Lux on the floor is how a room's light is quoted. The environment and the
- * key light together are scaled so that a white matte floor returns
- * `lux * LUX_SCALE`, the scale projected light lands at.
+ * key light together are scaled so that a white matte floor has the luminance
+ * that illuminance gives it, lux / pi, on the buffer's scale.
  *
  * @param {Number} lux
  * @returns {Number} a multiplier for the environment and the key light
@@ -344,7 +344,7 @@ export function onRoomChange(listener) {
 export function houseLevelFor(lux) {
   const full = state.floor * currentCeiling() + KEY_LIGHT_INTENSITY * KEY_ON_FLOOR;
   const asked = Math.max(Number(lux) || 0, 0);
-  return full > 0 ? (asked * LUX_SCALE) / full : 0;
+  return full > 0 ? (asked * LUX_SCALE) / Math.PI / full : 0;
 }
 
 /**

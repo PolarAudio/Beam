@@ -20,6 +20,7 @@
 
 ### Projectors
 
+- Surfaces are lit in luminance: a matte surface under E lux has luminance reflectance x E / pi. Projected light and the house light now include the pi, as mover pools already did; at the same lux both are a factor of pi darker than before.
 - Projected light is multiplied by the colour of the surface it lands on. A grey #808080 wall returns about 22% of what a white one does; before, every surface returned all of it.
 - The generic projector defaults to 4000 lumens, was 10000.
 - A projector's light in the haze is sampled only where the frame holds picture. A cropped, fitted or zoomed-out picture no longer breaks into bands in the air.

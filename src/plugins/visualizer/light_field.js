@@ -40,6 +40,15 @@ const CANDELA_PER_UNIT = (REFERENCE_LUMENS / REFERENCE_SOLID_ANGLE) / REFERENCE_
 const LUX_SCALE = 0.022;
 
 /**
+ * What the render buffer holds: luminance in cd/m2 times this. A matte
+ * surface of reflectance rho under E lux has luminance rho E / pi, so it reads
+ * rho E LUX_SCALE / pi -- what three's Lambert term gives a light whose
+ * intensity is in these units. The camera's exposure undoes this factor; see
+ * `exposureForEV` in visualizer.js.
+ */
+const SCENE_PER_NIT = LUX_SCALE;
+
+/**
  * A light-field unit as a three.js light intensity: candela into scene
  * units, so that with an inverse-square falloff a surface receives its lux
  * times `LUX_SCALE`, the same scale a projected picture lands at.
@@ -767,5 +776,6 @@ export {
   CANDELA_PER_UNIT,
   REFERENCE_INTENSITY,
   LUX_SCALE,
+  SCENE_PER_NIT,
   SCENE_INTENSITY_PER_UNIT,
 };

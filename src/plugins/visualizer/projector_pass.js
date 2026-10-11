@@ -257,6 +257,9 @@ const FRAGMENT = /* glsl */`
   uniform mat4 camWorld;
   uniform sampler2D depthAtlas;
   uniform sampler2D surfaceAlbedo;
+
+  /** Lux on a matte surface to its luminance: rho E / pi. */
+  const float INV_PI = 0.3183098862;
   uniform vec4 litRect[SLOTS];
   uniform bool hasAlbedo;
   uniform mat4 lensMatrix[SLOTS];
@@ -537,7 +540,7 @@ ${PICTURE_SLOTS}
         * blendRamp(frame.y, edges.z)
         * blendRamp(1.0 - frame.y, edges.w);
 
-      total += colour * lux * emission[i].y * facing * inside * visible * blend;
+      total += colour * lux * INV_PI * emission[i].y * facing * inside * visible * blend;
     }
     // A surface returns the projected light in proportion to its colour.
     if (hasAlbedo) total *= texture2D(surfaceAlbedo, uv).rgb;

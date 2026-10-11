@@ -48,6 +48,9 @@ class ZoomType extends RangeType {
  */
 const MAX_CROP = 8192;
 
+/** The least of the input a crop leaves, in pixels each way. */
+const MIN_KEPT = 10;
+
 /** A crop: whole input pixels taken off one side. */
 const cropType = () => new RangeType({
   bounds: () => ({ min: 0, max: MAX_CROP }), unit: 'px', precision: 0,
@@ -137,17 +140,17 @@ export function pictureMapping(picture, device, input = {}) {
   const fullW = Number(input.width) > 0 ? Number(input.width) : pixW;
   const fullH = Number(input.height) > 0 ? Number(input.height) : pixH;
 
-  // The crop as fractions of the input. One that would leave less than a
-  // sliver is scaled back to leave one.
+  // The crop as fractions of the input. Any crop is allowed that keeps at
+  // least MIN_KEPT pixels each way; one that would keep less is scaled back
+  // to keep that many.
   const { crop } = picture;
-  let left = crop.left / fullW;
-  let right = crop.right / fullW;
-  let top = crop.top / fullH;
-  let bottom = crop.bottom / fullH;
-  const wide = left + right;
-  if (wide > 0.98) { left *= 0.98 / wide; right *= 0.98 / wide; }
-  const tall = top + bottom;
-  if (tall > 0.98) { top *= 0.98 / tall; bottom *= 0.98 / tall; }
+  const keep = (a, b, full) => {
+    const most = Math.max(full - MIN_KEPT, 0);
+    const scale = a + b > most ? most / (a + b) : 1;
+    return [(a * scale) / full, (b * scale) / full];
+  };
+  const [left, right] = keep(crop.left, crop.right, fullW);
+  const [top, bottom] = keep(crop.top, crop.bottom, fullH);
   const keptW = 1 - left - right;
   const keptH = 1 - top - bottom;
 

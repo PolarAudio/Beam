@@ -99,8 +99,14 @@ console.log('\n-- crop --');
   const hd = pictureMapping(pictureOf(settings({ cropLeft: 192 })), WIDE, { width: 1920, height: 1080 });
   check('the same pixels are a share of a wider input', r(hd.bounds.x0), 0.1);
   check('a crop is whole pixels', pictureOf(settings({ cropLeft: 10.6 })).crop.left, 11);
-  const over = pictureMapping(pictureOf(settings({ cropLeft: 540, cropRight: 540 })), WIDE, SQUARE);
-  check('a crop leaves a sliver of the input', r(over.bounds.x0), 0.49);
+  const HD = { width: 1920, height: 1200 };
+  const last = pictureMapping(pictureOf(settings({ cropLeft: 1900 })), WIDE, HD);
+  check('1900 off the left of 1920 keeps the last 20', r((1 - last.bounds.x0) * 1920), 20);
+  const tooMuch = pictureMapping(pictureOf(settings({ cropLeft: 1915 })), WIDE, HD);
+  check('a crop keeps at least 10 pixels', r((1 - tooMuch.bounds.x0) * 1920), 10);
+  const over = pictureMapping(pictureOf(settings({ cropTop: 600, cropBottom: 600 })), WIDE, HD);
+  check('both sides scaled back alike', r((over.bounds.y1 - over.bounds.y0) * 1200), 10);
+  check('and about the middle', r((over.bounds.y0 + over.bounds.y1) / 2), 0.5);
   const early = pictureMapping(pictureOf(settings({ cropLeft: 192 })), WIDE, {});
   check('before a frame, the device\'s own size', r(early.bounds.x0), 0.1);
 }

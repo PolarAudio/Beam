@@ -596,7 +596,7 @@ A project receives pictures through **inputs**. An input is one NDI stream or on
 
 - **Add NDI input** adds one, and **Sender** picks the NDI sender that fills it. Which sender is a setting of this machine, because a sender's name means nothing on another one. A new input takes the sender's name until you rename it.
 - **Add file…** copies a PNG, JPEG or WebP image, or an MP4, MOV or WebM video, into `Documents\Beatline\Beam\Library\Media` and adds it as an input. A video plays muted and loops. A file belongs to the project: it is saved with it, and **Export Project to...** carries the file, so the project opens with its picture on another machine.
-- **Test card** adds the card that ships with Beam. It has a grey wedge, colour bars, a fine grid, a circle and an F in the top-left corner, so a picture that is too bright, the wrong colour, soft, stretched, mirrored or turned shows it.
+- **Test card** is built in: every project has it, it is listed first, and it cannot be removed or changed. It has a grey wedge, colour bars, a fine grid, a circle and an F in the top-left corner, so a picture that is too bright, the wrong colour, soft, stretched, mirrored or turned shows it.
 
 A feed only opens while a device shows its input, so an unused input costs nothing.
 

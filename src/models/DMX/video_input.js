@@ -22,6 +22,9 @@ export const FILE_PREFIX = 'file:';
 /** What an input can be. */
 export const INPUT_KINDS = { NDI: 'ndi', FILE: 'file' };
 
+/** The test card that ships with Beam, in the shipped media folder. */
+export const TEST_CARD_FILE = 'Test card.png';
+
 /** Rotations a device can turn its picture by, clockwise. */
 export const ROTATIONS = [0, 90, 180, 270];
 
@@ -53,6 +56,11 @@ class VideoInput {
     this.file = this.kind === INPUT_KINDS.FILE ? String(data.file || '') : '';
     const name = String(data.name || '').trim();
     this.name = name || this.defaultName();
+    /**
+     * The test card every project has: never removed, renamed or pointed at
+     * another file, and not carried by an export, since Beam ships it.
+     */
+    this.builtIn = !!data.builtIn;
   }
 
   /** @type {Number} what a device's source names */
@@ -86,8 +94,35 @@ class VideoInput {
       id: this._id, uid: this.uid, name: this.name, kind: this.kind,
     };
     if (this.kind === INPUT_KINDS.FILE) data.file = this.file;
+    if (this.builtIn) data.builtIn = true;
     return data;
   }
+}
+
+/**
+ * Makes sure a project's inputs include the built-in test card.
+ *
+ * A test card input someone added before it was built in becomes the built-in
+ * one, so devices on it stay on it. The card is kept last: DMX source select
+ * counts inputs by position, and an input the user added keeps its number.
+ *
+ * @param {Array} inputs VideoInputs, changed in place
+ * @returns {Array} the same array
+ */
+export function withTestCard(inputs) {
+  let card = inputs.find((input) => input.builtIn)
+    || inputs.find((input) => input.kind === INPUT_KINDS.FILE && input.file === TEST_CARD_FILE);
+  if (card) {
+    inputs.splice(inputs.indexOf(card), 1);
+  } else {
+    card = new VideoInput({ kind: INPUT_KINDS.FILE, file: TEST_CARD_FILE });
+  }
+  card.builtIn = true;
+  card.kind = INPUT_KINDS.FILE;
+  card.file = TEST_CARD_FILE;
+  card.name = 'Test card';
+  inputs.push(card);
+  return inputs;
 }
 
 /**

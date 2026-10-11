@@ -14,7 +14,7 @@
  *   npm test
  */
 import VideoInput, {
-  orientedSample, migrateVideo, INPUT_KINDS, FILE_PREFIX,
+  orientedSample, migrateVideo, withTestCard, INPUT_KINDS, FILE_PREFIX, TEST_CARD_FILE,
 } from '@/models/DMX/video_input';
 
 let failures = 0;
@@ -153,6 +153,26 @@ console.log('\n-- a show already on inputs --');
     }],
   };
   check('is left as it is', migrateVideo(current, 'DEV1').showData, current);
+}
+
+console.log('\n-- the built-in test card --');
+{
+  const fresh = withTestCard([]);
+  check('a project with no inputs gets the card', fresh.length, 1);
+  check('built in', fresh[0].builtIn, true);
+  check('showing the shipped card', fresh[0].file, TEST_CARD_FILE);
+  check('saved as built in', fresh[0].showData.builtIn, true);
+
+  const mine = new VideoInput({ kind: INPUT_KINDS.NDI, name: 'Screen 1' });
+  const added = new VideoInput({ kind: INPUT_KINDS.FILE, file: TEST_CARD_FILE, name: 'My card' });
+  const adopted = withTestCard([added, mine]);
+  check('a test card added by hand becomes the built-in one', adopted.length, 2);
+  check('keeping its id, so devices on it stay', adopted.find((i) => i.builtIn).id, added.id);
+  check('and it goes last, so the user\'s inputs keep their numbers', adopted[1].builtIn, true);
+  check('the user\'s input comes first', adopted[0].name, 'Screen 1');
+  check('a second pass adds nothing', withTestCard(adopted).length, 2);
+  const reloaded = new VideoInput(adopted[1].showData);
+  check('built in survives a save and load', reloaded.builtIn, true);
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');

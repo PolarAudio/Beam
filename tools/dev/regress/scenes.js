@@ -101,8 +101,8 @@
   async function projector() {
     const p = await bt.generic('T Proj', {}, 'projector', { x: 0, y: -4, z: 2 }, { x: 0, y: 0, z: 180 });
     await wall('screen', { x: 8, y: 0.2, z: 5 }, { x: 0, y: 6, z: 0 });
-    // The shipped test card, as an input a user would add.
-    const input = bt.show.addVideoInput({ kind: 'file', file: 'Test card.png', name: 'Test card' });
+    // The built-in test card every project has.
+    const input = bt.show.videoInputs.find((candidate) => candidate.builtIn);
     // Dimmed so the card's white reads about 231 at 0% haze: every wedge step
     // and colour bar stays below clipping, where a change can show.
     bt.device(p, { dimmer: 15, shutter: true, source: input.id });

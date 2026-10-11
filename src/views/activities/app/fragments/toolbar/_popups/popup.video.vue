@@ -22,14 +22,8 @@
           <div class="inputs_head">
             Inputs in this project
           </div>
-          <p
-            v-if="!inputs.length"
-            class="subtitle inputs_empty"
-          >
-            No inputs yet. Add an NDI input, a file, or the test card.
-          </p>
           <button
-            v-for="input in inputs"
+            v-for="input in listed"
             :key="input.uid"
             type="button"
             class="input_row"
@@ -63,11 +57,6 @@
               :disabled="!filesAvailable"
               @click="addFile"
             />
-            <uk-button
-              label="Test card"
-              :disabled="!filesAvailable"
-              @click="addTestCard"
-            />
           </uk-flex>
         </div>
 
@@ -87,16 +76,27 @@
             </h4>
             <uk-spacer />
             <uk-button
+              v-if="!selected.builtIn"
               label="Remove"
               @click="remove"
             />
           </uk-flex>
+          <p
+            v-if="selected.builtIn"
+            class="subtitle"
+          >
+            Built in and always here: a grey wedge, colour bars, a fine grid, a
+            circle and an F in one corner, to check brightness, colour,
+            sharpness, shape and orientation.
+          </p>
           <uk-txt-input
+            v-if="!selected.builtIn"
             :model-value="selected.name"
             label="Name"
             @update:model-value="rename"
           />
-          <template v-if="selected.kind === 'ndi'">
+          <template v-if="selected.builtIn" />
+          <template v-else-if="selected.kind === 'ndi'">
             <uk-select-input
               :model-value="senderIndex"
               :options="senderOptions"
@@ -181,9 +181,6 @@ import { INPUT_KINDS } from '@/models/DMX/video_input';
  */
 const PREVIEW_FPS = 10;
 
-/** The shipped test card's file name. */
-const TEST_CARD = 'Test card.png';
-
 const STATUS_TEXT = {
   live: 'Live',
   waiting: 'Waiting for the first frame…',
@@ -214,6 +211,13 @@ export default {
     },
     selected() {
       return this.inputs.find((input) => input.id === this.selectedId) || null;
+    },
+    /** The built-in test card first, then the project's own inputs. */
+    listed() {
+      return [
+        ...this.inputs.filter((input) => input.builtIn),
+        ...this.inputs.filter((input) => !input.builtIn),
+      ];
     },
     ndiAvailable() {
       return VideoFeed.available();
@@ -257,7 +261,7 @@ export default {
   },
   methods: {
     async opened() {
-      if (!this.selected && this.inputs.length) this.selectedId = this.inputs[0].id;
+      if (!this.selected && this.listed.length) this.selectedId = this.listed[0].id;
       this.unlisten = VideoRouter.listen(() => { this.tick += 1; });
       this.timer = setInterval(() => {
         this.tick += 1;
@@ -325,15 +329,11 @@ export default {
       const input = this.$show.addVideoInput({ kind: INPUT_KINDS.FILE, file: result.entry.key });
       this.selectedId = input.id;
     },
-    addTestCard() {
-      const input = this.$show.addVideoInput({ kind: INPUT_KINDS.FILE, file: TEST_CARD, name: 'Test card' });
-      this.selectedId = input.id;
-    },
     remove() {
-      if (!this.selected) return;
-      const at = this.inputs.indexOf(this.selected);
+      if (!this.selected || this.selected.builtIn) return;
+      const at = this.listed.indexOf(this.selected);
       this.$show.removeVideoInput(this.selected.id);
-      const next = this.inputs[Math.min(at, this.inputs.length - 1)];
+      const next = this.listed[Math.min(at, this.listed.length - 1)];
       this.selectedId = next ? next.id : null;
     },
     rename(value) {
@@ -535,8 +535,6 @@ export default {
   letter-spacing: 0.08em;
   color: var(--secondary-light-alt);
 }
-
-.inputs_empty { padding: 8px 12px; }
 
 .input_row {
   display: grid;

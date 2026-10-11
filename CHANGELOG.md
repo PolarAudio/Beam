@@ -5,10 +5,10 @@
 ### Video inputs
 
 - A project receives video through inputs: one NDI stream or one image or video file each. A display or projector picks an input and shows all of it; several can share one. Connectors and slicing are gone; send one NDI stream per output from the media server.
-- **Preferences → Video** lists the inputs with their state and how many devices use each. **Add NDI input** with a **Sender** chosen on this machine, **Add file…**, or **Test card**.
+- **Preferences → Video** lists the inputs with their state and how many devices use each. **Add NDI input** with a **Sender** chosen on this machine, or **Add file…**.
 - A feed opens only while a device shows its input.
 - Image and video files: PNG, JPEG, WebP, MP4, MOV or WebM, copied into `Library/Media`. A video plays muted and loops. A file belongs to the project: it is saved with it, Export carries it, and an opened export plays its own copy. An NDI sender stays a setting of the machine.
-- A **Test card** ships with Beam: grey wedge, colour bars, a one-pixel grid, a circle and an F in one corner.
+- A **Test card** is built into every project: grey wedge, colour bars, a one-pixel grid, a circle and an F in one corner. It cannot be removed, and Export does not carry it, since Beam ships it.
 - Displays have **Rotation** and **Mirror H** / **Mirror V**.
 - Projectors all show the first projector's input until the projector pass takes a picture per input.
 - A project saved with connectors opens with one input. A device on a whole-frame connector keeps its turn and mirrors; one on a smaller connector shows the whole picture and is listed once on opening.

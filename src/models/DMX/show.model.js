@@ -10,7 +10,7 @@ import {
 
 import PatchSingleton from './patch.model';
 import migrateShowData, { SHOWFILE_VERSION } from './showfile.migrate';
-import VideoInput, { migrateVideo, INPUT_KINDS } from './video_input';
+import VideoInput, { migrateVideo, withTestCard, INPUT_KINDS } from './video_input';
 import FixturePool from './fixture.pool.model';
 import Group from './group.model';
 import Structure from './structure.model';
@@ -227,7 +227,7 @@ class Show extends EventEmitter {
      * projector names one by id. Not scene items: an input has no position
      * and nothing draws it. See `video_input.js`.
      */
-    this.videoInputs = [];
+    this.videoInputs = withTestCard([]);
     // Installed once: the lookups read the live array each time, so inputs
     // added or removed later are found without re-installing.
     this.publishVideoInputs();
@@ -446,8 +446,10 @@ class Show extends EventEmitter {
    * @returns {Object} the VideoInput
    */
   addVideoInput(data = {}) {
-    const input = new VideoInput(data);
-    this.videoInputs.push(input);
+    const input = new VideoInput({ ...data, builtIn: false });
+    // Before the test card, which stays last; see `withTestCard`.
+    const card = this.videoInputs.findIndex((candidate) => candidate.builtIn);
+    this.videoInputs.splice(card < 0 ? this.videoInputs.length : card, 0, input);
     this.touch();
     VideoRouter.refresh();
     return input;
@@ -461,7 +463,7 @@ class Show extends EventEmitter {
    */
   removeVideoInput(id) {
     const at = this.videoInputs.findIndex((input) => input.id === id);
-    if (at < 0) return;
+    if (at < 0 || this.videoInputs[at].builtIn) return;
     this.videoInputs.splice(at, 1);
     this.touch();
     VideoRouter.refresh();
@@ -533,7 +535,7 @@ class Show extends EventEmitter {
     SceneObjects.clear();
     // Nothing to dispose: a connector holds no scene node and no GPU
     // resource, only numbers.
-    this.videoInputs = [];
+    this.videoInputs = withTestCard([]);
     this.definitions = new DefinitionStore();
     this.isSaved = true;
   }
@@ -690,7 +692,8 @@ class Show extends EventEmitter {
       .filter((object) => !object.isInline && object.model)
       .map((object) => object.model));
     const media = (this.videoInputs || [])
-      .filter((input) => input.kind === INPUT_KINDS.FILE && input.file)
+      // The built-in test card ships with Beam, so an export need not carry it.
+      .filter((input) => input.kind === INPUT_KINDS.FILE && input.file && !input.builtIn)
       .map((input) => input.file);
     return { profiles: [...profiles], objects: [...objects], media };
   }
@@ -860,7 +863,8 @@ class Show extends EventEmitter {
     this.loading.message = 'Restoring structures';
     this.prepareStructures(showData);
 
-    this.videoInputs = (showData.videoInputs || []).map((data) => new VideoInput(data));
+    const inputs = (showData.videoInputs || []).map((data) => new VideoInput(data));
+    this.videoInputs = withTestCard(inputs);
     // This machine's sender carries over to the input it now fills.
     if (video.binding) VideoRouter.bind(video.binding.uid, video.binding.sender);
 

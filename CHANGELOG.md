@@ -20,6 +20,7 @@
 
 ### Projectors
 
+- The camera's exposure is an EV at ISO 100: a luminance of 1.2 x 2^EV cd/m² reaches the top of the tone curve. EV 5.25 is the old exposure of 1.0. **Debug → Camera → exposure EV** replaces the exposure multiplier.
 - Surfaces are lit in luminance: a matte surface under E lux has luminance reflectance x E / pi. Projected light and the house light now include the pi, as mover pools already did; at the same lux both are a factor of pi darker than before.
 - Projected light is multiplied by the colour of the surface it lands on. A grey #808080 wall returns about 22% of what a white one does; before, every surface returned all of it.
 - The generic projector defaults to 4000 lumens, was 10000.

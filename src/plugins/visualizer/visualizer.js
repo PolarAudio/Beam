@@ -13,7 +13,7 @@ import ViewCube from './view_cube';
 import Light from './light';
 import InfiniteGridHelper from './grid';
 import LEDField from './led_field';
-import LightField from './light_field';
+import LightField, { SCENE_PER_NIT } from './light_field';
 import LEDPanel from './led_panel';
 import DMXStore from './dmx_store';
 import SceneObjects from './scene_objects';
@@ -276,11 +276,9 @@ const USE_BLOOM = true;
  * The camera. Fixed, never adaptive: what is set looks the same every time
  * it is looked at.
  *
- * Exposure scales the scene before the tone curve. Scene units are lux on
- * the projector's scale (`LUX_SCALE` in light_field.js), on which a mover's
- * pool a few metres from its lens sits at 5 to 60 while the air in a beam
- * sits below 1. At 1.0 the ACES curve is flat above about 4, so every pool
- * was a white disc with no shape in it.
+ * Exposure is an EV at ISO 100, as a photographer sets it, and maps luminance
+ * to the tone curve: see `exposureForEV`. Higher EV is darker; one EV halves
+ * the picture. 5.25 is the calibration every fixture's look was tuned at.
  *
  * Glare is the lens's own spread of light: a few percent of everything
  * bright, thrown wide, with no threshold -- a camera does not choose what
@@ -288,7 +286,21 @@ const USE_BLOOM = true;
  * spread of light is now the beams' halo, which is light in the air, not
  * in the lens.
  */
-const CAMERA_EXPOSURE = 1.0;
+const CAMERA_EV = 5.25;
+
+/**
+ * The tone curve's input scale for an EV at ISO 100.
+ *
+ * Saturation-based exposure: a luminance of 1.2 x 2^EV cd/m2 reaches 1.0, as
+ * photometric renderers (Frostbite, Filament) define it. The render buffer
+ * holds cd/m2 times `SCENE_PER_NIT`, which this undoes.
+ *
+ * @param {Number} ev
+ * @returns {Number}
+ */
+export function exposureForEV(ev) {
+  return 1 / (1.2 * (2 ** ev) * SCENE_PER_NIT);
+}
 const CAMERA_TONE_CURVE = 'ACES_FILMIC';
 const GLARE_STRENGTH = 0.04;
 const GLARE_RADIUS = 0.85;
@@ -1344,7 +1356,7 @@ class Visualizer {
       });
     }
 
-    this.renderer.toneMappingExposure = CAMERA_EXPOSURE;
+    this.renderer.toneMappingExposure = exposureForEV(CAMERA_EV);
     toneMappingEffect = new ToneMappingEffect({
       mode: ToneMappingMode[CAMERA_TONE_CURVE],
     });
@@ -1450,10 +1462,10 @@ class Visualizer {
    * The camera's exposure and tone curve, for comparing settings; not stored.
    *
    * @public
-   * @param {Object} camera `{ exposure, curve }`, curve a `ToneMappingMode` name
+   * @param {Object} camera `{ ev, curve }`, curve a `ToneMappingMode` name
    */
-  setCamera({ exposure, curve } = {}) {
-    if (Number.isFinite(exposure) && exposure > 0) this.renderer.toneMappingExposure = exposure;
+  setCamera({ ev, curve } = {}) {
+    if (Number.isFinite(ev)) this.renderer.toneMappingExposure = exposureForEV(ev);
     if (curve && toneMappingEffect && ToneMappingMode[curve] !== undefined) {
       toneMappingEffect.mode = ToneMappingMode[curve];
     }
@@ -1463,7 +1475,8 @@ class Visualizer {
   get cameraSettings() {
     const mode = toneMappingEffect ? toneMappingEffect.mode : null;
     const curve = Object.keys(ToneMappingMode).find((k) => ToneMappingMode[k] === mode) || null;
-    return { exposure: this.renderer.toneMappingExposure, curve };
+    const ev = Math.log2(1 / (1.2 * SCENE_PER_NIT * this.renderer.toneMappingExposure));
+    return { ev, curve };
   }
 
   /**

@@ -68,7 +68,7 @@ const DEFAULTS = {
    */
   houseLuxUp: 300,
   /** House light with the house lights down, in lux on a white floor. */
-  houseLuxDown: 2,
+  houseLuxDown: 6,
   /**
    * Camera exposure with the house lights up and down, as EV at ISO 100. A
    * lit room and a dark show want different exposures; each is fixed.

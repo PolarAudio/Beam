@@ -365,7 +365,7 @@ THREE.Vector3.prototype.round = function vector3RoundPolyfill(digits) {
  */
 const DEFAULT_PREFERENCES = {
   HOUSE_LUX_UP: 300,
-  HOUSE_LUX_DOWN: 2,
+  HOUSE_LUX_DOWN: 6,
   // Incident-meter exposure for 300 lux at ISO 100: log2(300 x 100 / 250).
   HOUSE_EV_UP: 7,
   // Set for a bright projection in a dark room; the room stays near black.

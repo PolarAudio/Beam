@@ -144,28 +144,6 @@
       />
       <uk-button
         v-show="!hidden"
-        v-model="autoRotate"
-        square
-        label="auto-rotate"
-        :value="false"
-        toggleable
-        icon="goborotation"
-        color="var(--accent-violet)"
-        @click="toggleAutoRotation"
-      />
-      <uk-button
-        v-show="!hidden"
-        v-model="autoFocus"
-        square
-        label="auto-focus"
-        :value="false"
-        toggleable
-        icon="focus"
-        color="var(--accent-blue)"
-        @click="toggleAutoFocus"
-      />
-      <uk-button
-        v-show="!hidden"
         icon="hide"
         style="margin-right: 8px"
         label="Hide"
@@ -225,10 +203,6 @@ export default {
        * Visibility state
        */
       hidden: false,
-      /**
-       * Autofocus state
-       */
-      autoFocus: false,
       snapEnabled: true,
       houseLights: true,
       /**
@@ -248,10 +222,6 @@ export default {
       modeTick: 0,
       /** Interval keeping the live camera level with the view. */
       cameraSyncHandle: null,
-      /**
-       * Auto rotation state
-       */
-      autoRotate: false,
     };
   },
 
@@ -419,10 +389,8 @@ export default {
       this.$show.visualizerHandle.resize.bind(this.$show.visualizerHandle),
     ).observe(this.$refs.visualizer);
     EventBus.emit('visualizer_loaded', true);
-    this.autoFocus = this.$show.visualizerHandle.autoFocus;
     this.snapEnabled = this.$show.visualizerHandle.snapEnabled;
     this.houseLights = this.$show.visualizerHandle.houseLights;
-    this.autoRotate = this.$show.visualizerHandle.autoRotate;
     this.gizmoMode = this.$show.visualizerHandle.gizmoMode;
     // T, R and S still switch tools, so the buttons follow the keys as well as
     // drive them.
@@ -547,22 +515,6 @@ export default {
       });
     },
     /**
-     * Toggle camera auto-rotation
-     *
-     * @param {Boolean} value
-     * @public
-     */
-    toggleAutoRotation(value) {
-      this.$show.visualizerHandle.autoRotate = value;
-      if (!value) this.$show.visualizerHandle.recenter();
-    },
-    /**
-     * Toggle highlighted item autofocus
-     *
-     * @param {Boolean} value
-     * @public
-     */
-    /**
      * Turns gizmo snapping on or off. The spacing lives in the visualizer
      * preferences; this is the part worth reaching for mid-layout.
      *
@@ -572,9 +524,6 @@ export default {
     toggleSnap(value) {
       this.snapEnabled = value;
       this.$show.visualizerHandle.snapEnabled = value;
-    },
-    toggleAutoFocus(value) {
-      this.$show.visualizerHandle.autoFocus = value;
     },
     /**
      * Swaps between the two global light settings.

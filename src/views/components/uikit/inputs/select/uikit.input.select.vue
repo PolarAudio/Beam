@@ -136,6 +136,10 @@ export default {
   },
   beforeUnmount() {
     this.watchViewport(false);
+    // An opened list lives in document.body, outside this component's root,
+    // so unmounting the component does not remove it.
+    const el = this.$refs?.options?.$el;
+    if (el && el.parentNode === document.body) el.remove();
   },
   methods: {
     /**

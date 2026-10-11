@@ -724,6 +724,11 @@ class Display {
     record.cosInner = 0;
     record.iris = -1;
     record.lensRadius = Math.sqrt(area / Math.PI);
+    // Width along the display's x, height along its z, wound for the field:
+    // half-width cross half-height points away from the lit side.
+    record.rectX.set(width / 2, 0, 0).transformDirection(this._dummy.matrixWorld).multiplyScalar(width / 2);
+    record.rectY.set(0, 0, 1).transformDirection(this._dummy.matrixWorld).multiplyScalar(height / 2);
+    if (lookTarget.crossVectors(record.rectX, record.rectY).dot(screenNormal) > 0) record.rectX.negate();
     if (this._depthSlot >= 0 && this._depthRect) {
       const cam = this._depthCam;
       record.hasTile = true;

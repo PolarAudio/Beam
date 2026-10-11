@@ -1,5 +1,8 @@
 import * as THREE from 'three';
+import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 import Shapers, { SHAPER_GLSL } from './shapers';
+
+RectAreaLightUniformsLib.init();
 
 /**
  * What one unit of light-field intensity is worth, in candela.
@@ -118,6 +121,9 @@ const SCENE_INTENSITY_PER_UNIT = CANDELA_PER_UNIT * LUX_SCALE;
  *      the radius of a disc of the panel's area
  *  11: the light's row of the shaper table, -1 for no blades
  *
+ * An area light uses texels 7 and 8, which it has no gobo or prism for, for
+ * its rectangle: the half-width and half-height vectors, world.
+ *
  * `direction` is stored three's way round -- `normalize(position - target)`,
  * pointing back up the beam rather than along it -- so that the angle test
  * here is the same arithmetic as `getSpotLightInfo`, and a surface lit through
@@ -185,6 +191,9 @@ const record = {
   iris: 1,
   /** The light's row of the shaper table, -1 for no blades. */
   shaperRow: -1,
+  /** An area light's half-width and half-height, world; read when iris is -1. */
+  rectX: new THREE.Vector3(),
+  rectY: new THREE.Vector3(),
 };
 
 /**
@@ -212,6 +221,10 @@ const uniforms = {
   lightFieldGobo: { value: null },
   // Every light's framing blades; see shapers.js.
   lightFieldShapers: { value: Shapers.texture },
+  // The rectangle-light tables three's own RectAreaLight reads; half float is
+  // filterable on every WebGL2 device.
+  lightFieldLtc1: { value: THREE.UniformsLib.LTC_HALF_1 },
+  lightFieldLtc2: { value: THREE.UniformsLib.LTC_HALF_2 },
 };
 
 /** Builds the texture, or rebuilds it after the store has grown. */
@@ -272,15 +285,19 @@ const FIELD_LIGHT_CHUNK = /* glsl */`
     float farShare = 0.0;
     vec3 farColor = packedColor.rgb;
 
-    // An area light -- a display -- is a matte emitter: cosine-weighted, with
-    // its light falling as 1 / (d^2 + R^2) for a disc of radius R of the same
-    // area, so a surface at its face receives pi times its luminance and one
-    // far off sees a point. Its colour is its luminance times its area.
+    // An area light -- a display -- is a matte rectangle; its colour is its
+    // luminance times its area. A standard material integrates it over the
+    // rectangle below, so a glossy surface reflects its shape. Any other
+    // material takes it as a disc of the same area, radius R, falling as
+    // cos / (d^2 + R^2), so a surface at its face receives pi times its
+    // luminance and one far off sees a point.
     vec4 packedLens = texelFetch( lightField, ivec2( 10, i ), 0 );
     bool areaLight = packedLens.x < -0.5;
     if ( areaLight ) {
-      attenuation = angleCos / ( lightDistance * lightDistance + packedLens.y * packedLens.y )
-        * exp( -lightFieldExtinction * lightDistance );
+      attenuation = exp( -lightFieldExtinction * lightDistance );
+#ifndef STANDARD
+      attenuation *= angleCos / ( lightDistance * lightDistance + packedLens.y * packedLens.y );
+#endif
     }
 
     // The pool's shape, and whether this point is the first thing the
@@ -365,6 +382,31 @@ const FIELD_LIGHT_CHUNK = /* glsl */`
       if ( attenuation <= 0.0 ) continue;
     }
 
+#ifdef STANDARD
+    // The rectangle by linearly transformed cosines, as three's RectAreaLight:
+    // diffuse and specular integrated over its corners, wound so its normal
+    // faces the lit side. attenuation holds only extinction and shadow here.
+    if ( areaLight ) {
+      vec3 rectX = ( viewMatrix * vec4( texelFetch( lightField, ivec2( 7, i ), 0 ).xyz, 0.0 ) ).xyz;
+      vec3 rectY = ( viewMatrix * vec4( texelFetch( lightField, ivec2( 8, i ), 0 ).xyz, 0.0 ) ).xyz;
+      vec3 rectCoords[ 4 ];
+      rectCoords[ 0 ] = lightPosition + rectX - rectY;
+      rectCoords[ 1 ] = lightPosition - rectX - rectY;
+      rectCoords[ 2 ] = lightPosition - rectX + rectY;
+      rectCoords[ 3 ] = lightPosition + rectX + rectY;
+      vec3 luminance = packedColor.rgb * attenuation / max( 4.0 * length( rectX ) * length( rectY ), 1e-6 );
+      vec2 ltcUv = LTC_Uv( geometryNormal, geometryViewDir, material.roughness );
+      vec4 ltc1 = texture2D( lightFieldLtc1, ltcUv );
+      vec4 ltc2 = texture2D( lightFieldLtc2, ltcUv );
+      mat3 ltcInverse = mat3( vec3( ltc1.x, 0.0, ltc1.y ), vec3( 0.0, 1.0, 0.0 ), vec3( ltc1.z, 0.0, ltc1.w ) );
+      vec3 fresnel = material.specularColor * ltc2.x + ( vec3( 1.0 ) - material.specularColor ) * ltc2.y;
+      reflectedLight.directSpecular += luminance * fresnel
+        * LTC_Evaluate( geometryNormal, geometryViewDir, geometryPosition, ltcInverse, rectCoords );
+      reflectedLight.directDiffuse += luminance * material.diffuseColor
+        * LTC_Evaluate( geometryNormal, geometryViewDir, geometryPosition, mat3( 1.0 ), rectCoords );
+      continue;
+    }
+#endif
     fieldLight.color = mix( packedColor.rgb, farColor, farShare ) * attenuation;
     fieldLight.visible = true;
     RE_Direct( fieldLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight );
@@ -386,6 +428,8 @@ uniform float lightFieldDepthTile;
 uniform float lightFieldSoftShadow;
 uniform sampler2D lightFieldGobo;
 uniform sampler2D lightFieldShapers;
+uniform sampler2D lightFieldLtc1;
+uniform sampler2D lightFieldLtc2;
 ${SHAPER_GLSL}
 
 // Soft shadows. The lens is a disc, not a point: a surface point sees the part
@@ -728,15 +772,16 @@ const LightField = {
         data[at + 26] = record.tileOrigin.z;
         data[at + 27] = record.inner;
 
-        data[at + 28] = record.gobo.x;
-        data[at + 29] = record.gobo.y;
-        data[at + 30] = record.gobo.z;
-        data[at + 31] = record.gobo.w;
+        const area = record.iris < 0;
+        data[at + 28] = area ? record.rectX.x : record.gobo.x;
+        data[at + 29] = area ? record.rectX.y : record.gobo.y;
+        data[at + 30] = area ? record.rectX.z : record.gobo.z;
+        data[at + 31] = area ? 0 : record.gobo.w;
 
-        data[at + 32] = record.prism.x;
-        data[at + 33] = record.prism.y;
-        data[at + 34] = record.prism.z;
-        data[at + 35] = record.prism.w;
+        data[at + 32] = area ? record.rectY.x : record.prism.x;
+        data[at + 33] = area ? record.rectY.y : record.prism.y;
+        data[at + 34] = area ? record.rectY.z : record.prism.z;
+        data[at + 35] = area ? 0 : record.prism.w;
 
         const far = record.split > 0 ? record.colorB : record.color;
         data[at + 36] = far.r * record.intensity;

@@ -122,13 +122,33 @@ Each NDI receiver delivers up to 30 frames a second (`DEFAULT_MAX_FPS`),
 visible device uses keeps idle streams free. To measure: CPU and gpuMs
 with 1, 4 and 8 streams from MadMapper.
 
-## Delay model (optional, later)
+## Delay model (parked, 2026-10-11)
 
-Real sync problems come after the media server. If Beam should show them,
-each stage gets a stated delay in frames: a device's own processing
-(projector 1-3 frames, more with warping), and later a splitter stage
-shared by the devices behind it. Beam holds the picture back by the sum.
-Fixed numbers, predictable, never measured from the transport.
+Not built. Left out of the plan on 2026-10-11: no value in simulating it
+yet. Kept here in case it is asked for.
+
+Real sync problems come after the media server: unlocked GPU outputs,
+splitters, projector and processor latency. If Beam should show them:
+
+- **A Delay (ms) control** in display and projector definitions, fixed or
+  adjustable like the picture controls, from the spec sheet or a
+  measurement. Milliseconds rather than frames, since spec sheets give
+  either and frames depend on the refresh rate; the panel can show the
+  frame count at 60 Hz beside it.
+- **A short history per input.** The decode step keeps a ring of recent
+  frames, each stamped with its arrival time, instead of one. A device with
+  50 ms of delay shows the newest frame at least 50 ms old. Decoding costs
+  nothing more: each frame goes into the next slot.
+- **Memory only where used.** A 1080p frame is about 8 MB; a ring is only as
+  deep as the longest delay on that input (100 ms at 60 fps is about 7
+  frames, ~56 MB). An input with no delayed device keeps one frame.
+- **Splitters later:** a delay shared by every device behind it, added to
+  each device's own. Needs a way to say which devices sit behind which
+  splitter.
+
+It shows devices out of step with each other, not lag against the media
+server's timeline or audio: Beam has no clock to compare with. Fixed
+numbers, predictable, never measured from the transport.
 
 ## Migration of saved shows
 
@@ -154,7 +174,7 @@ selected one. The canvas, connector drawing, Split and Snap go.
 3. Device picture features: orientation, crop and scale as controls in the
    display and projector definitions.
 4. Window.
-5. Delay model, if wanted.
+5. Delay model: parked, see above.
 
 ## Open questions
 

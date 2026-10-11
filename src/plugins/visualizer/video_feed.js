@@ -237,6 +237,9 @@ class VideoFeed {
  * is, and a frame count that moves when the picture does. A video plays muted
  * and loops, from the moment it is opened, and its frame count moves with
  * each decoded frame. An image moves it once, when it has loaded.
+ *
+ * A video can be paused and moved to a time. The feed is shared by name, so
+ * every device showing the file follows.
  */
 class FileFeed {
   /**
@@ -281,6 +284,50 @@ class FileFeed {
   get kind() { return this._entry.kind; }
 
   retain() { this._holders += 1; }
+
+  /** Whether a video is playing; an image never is. */
+  get playing() {
+    const video = this.video();
+    return Boolean(video) && !video.paused;
+  }
+
+  /** A video's length in seconds, 0 for an image or before it is known. */
+  get duration() {
+    const video = this.video();
+    return video && Number.isFinite(video.duration) ? video.duration : 0;
+  }
+
+  /** Where a video is, in seconds. */
+  get currentTime() {
+    const video = this.video();
+    return video ? video.currentTime : 0;
+  }
+
+  play() {
+    const video = this.video();
+    if (video) video.play().catch(() => {});
+  }
+
+  pause() {
+    const video = this.video();
+    if (video) video.pause();
+  }
+
+  /**
+   * Moves a video to a time; a paused one shows that frame.
+   *
+   * @param {Number} seconds
+   */
+  seek(seconds) {
+    const video = this.video();
+    if (!video) return;
+    video.currentTime = Math.min(Math.max(Number(seconds) || 0, 0), this.duration);
+  }
+
+  /** @private */
+  video() {
+    return this._element && this._element.tagName === 'VIDEO' ? this._element : null;
+  }
 
   /**
    * Starts loading the file.

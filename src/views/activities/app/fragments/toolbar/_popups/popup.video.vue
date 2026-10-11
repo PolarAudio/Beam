@@ -124,6 +124,27 @@
               label="File"
               @input="pickFile"
             />
+            <div
+              v-if="playback"
+              class="transport"
+            >
+              <uk-button
+                :label="playback.playing ? 'Pause' : 'Play'"
+                @click="togglePlay"
+              />
+              <input
+                class="transport_position"
+                type="range"
+                min="0"
+                :max="playback.duration"
+                step="0.01"
+                :value="playback.time"
+                @input="seekTo($event.target.value)"
+              >
+              <span class="transport_time">
+                {{ clock(playback.time) }} / {{ clock(playback.duration) }}
+              </span>
+            </div>
           </template>
 
           <div
@@ -237,6 +258,13 @@ export default {
     },
     selected() {
       return this.inputs.find((input) => input.id === this.selectedId) || null;
+    },
+    /** The previewed video file's transport, reread on every tick; null for anything else. */
+    playback() {
+      if (this.tick < 0) return null;
+      const feed = this.previewFeed;
+      if (!feed || feed.kind !== 'video' || !feed.duration) return null;
+      return { playing: feed.playing, time: feed.currentTime, duration: feed.duration };
     },
     /** The devices the window was opened from, as fixtures. */
     forDevices() {
@@ -492,6 +520,30 @@ export default {
      * Frames the preview's feed delivers a second, measured over about a
      * second: what the sender or the file is really doing, not what it says.
      */
+    togglePlay() {
+      const feed = this.previewFeed;
+      if (!feed) return;
+      if (feed.playing) feed.pause();
+      else feed.play();
+      this.tick += 1;
+    },
+    seekTo(seconds) {
+      if (this.previewFeed) this.previewFeed.seek(seconds);
+      this.tick += 1;
+    },
+    /**
+     * Seconds as m:ss.t.
+     *
+     * @param {Number} seconds
+     * @returns {String}
+     */
+    clock(seconds) {
+      const tenths = Math.floor((Number(seconds) || 0) * 10);
+      const minutes = Math.floor(tenths / 600);
+      const rest = ((tenths % 600) / 10).toFixed(1).padStart(4, '0');
+      return `${minutes}:${rest}`;
+    },
+
     measureRate() {
       const feed = this.previewFeed;
       if (!feed) return;
@@ -544,6 +596,7 @@ export default {
     describeFeed(feed) {
       const size = `${feed.width} × ${feed.height}`;
       if (feed.kind === 'image') return `Still image · ${size}`;
+      if (feed.kind === 'video' && !feed.playing) return `Paused · ${size}`;
       const fps = this.rate >= 0.5 ? ` · ${Math.round(this.rate)} fps` : '';
       return `● Live · ${size}${fps}`;
     },
@@ -717,6 +770,14 @@ export default {
 }
 
 .stage_empty { color: var(--secondary-light-alt); padding: 12px; text-align: center; }
+
+.transport { display: flex; align-items: center; gap: 10px; }
+.transport_position { flex: 1 1 auto; min-width: 0; accent-color: var(--accent-teal); }
+.transport_time {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--secondary-light-alt);
+}
 
 .used { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .used_label {

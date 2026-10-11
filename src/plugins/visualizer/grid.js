@@ -70,8 +70,11 @@ const DEFAULT_OPACITY = 0.4;
  */
 const DEFAULT_LINE_WIDTH_PX = 0.3;
 
-/** A cool grey that reads against both the light and the dark venue. */
+/** A cool grey that reads against a dark room. */
 const DEFAULT_COLOR = '#7d858e';
+
+/** Dark lines for a lit room, where the floor is near white. */
+const LIT_COLOR = '#2b3036';
 
 class InfiniteGridHelper extends THREE.Mesh {
   /**
@@ -111,6 +114,7 @@ class InfiniteGridHelper extends THREE.Mesh {
         uDistance: { value: distance },
         uOpacity: { value: DEFAULT_OPACITY },
         uLineWidth: { value: DEFAULT_LINE_WIDTH_PX },
+        uExposure: { value: 1 },
       },
       vertexShader: /* glsl */`
         varying vec3 worldPosition;
@@ -132,6 +136,7 @@ ${anchor}
         uniform float uDistance;
         uniform float uOpacity;
         uniform float uLineWidth;
+        uniform float uExposure;
 ${anchor}
 
         /** Antialiased coverage of the lines of a grid of this cell size. */
@@ -193,13 +198,29 @@ ${anchor}
 
           a *= uOpacity;
           if (a <= 0.002) discard;
-          gl_FragColor = vec4(uColor, a);
+          // Divided by the camera's exposure, which the tone curve applies to
+          // the whole frame afterwards, so the lines keep their colour at any EV.
+          gl_FragColor = vec4(uColor / uExposure, a);
         }
       `,
     });
 
     super(geometry, material);
     this.frustumCulled = false;
+    this._darkColor = (color || new THREE.Color(DEFAULT_COLOR)).clone();
+    this.onBeforeRender = (renderer) => {
+      this.material.uniforms.uExposure.value = Math.max(renderer.toneMappingExposure || 1, 1e-4);
+    };
+  }
+
+  /**
+   * Whether the room is lit: dark lines over a lit floor, light ones in the dark.
+   *
+   * @public
+   * @param {Boolean} on
+   */
+  setLit(on) {
+    this.material.uniforms.uColor.value.copy(on ? new THREE.Color(LIT_COLOR) : this._darkColor);
   }
 
   /**

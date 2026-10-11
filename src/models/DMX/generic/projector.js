@@ -104,7 +104,7 @@ export const DEFAULT_PROJECTOR_PARAMS = {
    * honestly -- a machine given ten times the lumens looks ten times brighter,
    * because nothing here is normalised away.
    */
-  lumens: 10000,
+  lumens: 4000,
   /**
    * Full-on/full-off contrast.
    *

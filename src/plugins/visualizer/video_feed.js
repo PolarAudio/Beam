@@ -23,6 +23,9 @@ export { FILE_PREFIX };
 /** Open feeds by handle, so an arriving frame can find the one it belongs to. */
 const feeds = new Map();
 
+/** Opens under way, by source name, so a second caller shares the first's. */
+const opening = new Map();
+
 /**
  * Whether video input is available at all.
  *
@@ -362,7 +365,8 @@ class FileFeed {
     this._holders -= 1;
     if (this._holders > 0) return;
     this._closed = true;
-    feeds.delete(this._name);
+    // Only its own entry: a feed opened again under this name may hold it.
+    if (feeds.get(this._name) === this) feeds.delete(this._name);
     VideoDecode.release(this);
     if (this._element && this._element.tagName === 'VIDEO') {
       this._element.pause();
@@ -454,12 +458,28 @@ async function open(name) {
     existing.retain();
     return existing;
   }
-  if (typeof name === 'string' && name.startsWith(FILE_PREFIX)) return openFile(name);
-  if (!available()) return null;
-  const handle = await window.ndi.open(name);
-  const feed = new VideoFeed(handle, name);
-  feeds.set(handle, feed);
-  return feed;
+  // Two callers asking for a name at once -- the scene and the Video window,
+  // when an input's file changes -- must share one open. Each going ahead on
+  // its own made two feeds for one name, and only one of them was decoded.
+  if (opening.has(name)) {
+    const feed = await opening.get(name);
+    if (feed) feed.retain();
+    return feed;
+  }
+  const started = (async () => {
+    if (typeof name === 'string' && name.startsWith(FILE_PREFIX)) return openFile(name);
+    if (!available()) return null;
+    const handle = await window.ndi.open(name);
+    const feed = new VideoFeed(handle, name);
+    feeds.set(handle, feed);
+    return feed;
+  })();
+  opening.set(name, started);
+  try {
+    return await started;
+  } finally {
+    opening.delete(name);
+  }
 }
 
 /** Every feed currently open. */

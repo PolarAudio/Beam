@@ -116,7 +116,7 @@ console.log('\n-- what the Add-to-Show list sees --');
   store.add('Acme/Beamer', projector);
   const [folder] = store.list();
   check('one folder', store.list().length, 1);
-  check('called This show', folder.name, 'This show');
+  check('called This project', folder.name, 'This project');
   check('flagged as the app\'s own', folder.generated && folder.local, true);
   check('two entries', folder.fixtures.length, 2);
   const entry = folder.fixtures.find((f) => f.file === 'Beamer');

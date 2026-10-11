@@ -52,7 +52,7 @@ export default async function importGdtfFiles(
         message: `${incoming.manufacturer} ${incoming.name} is already in your library.`,
         detail: `In the library: ${names}\nNew file: ${incoming.file}\n\n`
           + 'Keep both adds the new file beside it. Replace deletes the file in the library, '
-          + 'and saved shows that use it lose those fixtures.',
+          + 'and saved projects that use it lose those fixtures.',
         yes: 'Keep both',
         also: 'Replace',
         no: 'Skip',

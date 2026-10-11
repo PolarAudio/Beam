@@ -116,11 +116,11 @@ Beam is a receiver and a previewer. On its own it will show you a beautifully pl
 
 Genuinely alpha. Not "we're being modest" alpha.
 
-Concretely: features move and get renamed. The showfile format is JSON and can change between versions without a migration. There are rough edges in the UI you will find within ten minutes. Some things are half-built and visible anyway.
+Concretely: features move and get renamed. The project file format can change between versions without a migration. There are rough edges in the UI you will find within ten minutes. Some things are half-built and visible anyway.
 
 What it *does* do, it does properly. Art-Net in, 512 universes, accurate patching including pixels that straddle universe boundaries, and the MadMapper export are all real and working. It's the surrounding polish that's missing.
 
-Save often. Keep your showfiles. Report the odd stuff.
+Save often. Keep your project files. Report the odd stuff.
 
 ## What's coming
 
@@ -186,7 +186,7 @@ Start it up and you'll get a splash screen, then the main window.
 The important bits:
 
 - **The menu bar**, top left — File, Edit, Preferences, About.
-- **The patch bay**, down the left — every fixture in your show. Empty right now.
+- **The patch bay**, down the left — every fixture in your scene. Empty right now.
 - **The viewport** — the big 3D view, with a checkered floor, a grid and an axis indicator at the origin.
 - **The view cube**, in a corner of the viewport — click a face to snap the camera to that elevation.
 - **The modifier panel** — appears when you select something, and holds that thing's settings.
@@ -395,7 +395,7 @@ Everything Beam does, as completely as it can be documented today. This section 
 
 ## The patch bay
 
-The list down the left side, holding every fixture in the show. Two buttons at the top: **group** and **new**.
+The list down the left side, holding every fixture in the scene. Two buttons at the top: **group** and **new**.
 
 **new** opens the patch dialog, which has three tabs:
 
@@ -410,9 +410,9 @@ Two more buttons live under the fixtures list:
 
 ## Building a generic LED fixture
 
-Open with **create generic**. Pick a **Type**: LED bar, projector, display, laser or strobe. Give it a **Name**. The definition lives in the show until you press **Save to library** in the fixture's Model widget, which asks for a manufacturer and a model. Until then it goes when its last instance is deleted.
+Open with **create generic**. Pick a **Type**: LED bar, projector, display, laser or strobe. Give it a **Name**. The definition lives in the project until you press **Save to library** in the fixture's Model widget, which asks for a manufacturer and a model. Until then it goes when its last instance is deleted.
 
-Items that reference a library entry show a link badge on their icon. Definitions carried in the show have no badge.
+Items that reference a library entry show a link badge on their icon. Definitions carried in the project have no badge.
 
 The LED bar describes a rigid body carrying a grid of emitters, and covers bars, strips, panels, tiles and battens.
 
@@ -590,19 +590,19 @@ A beam is light scattered by the haze, so with haze off there is no beam, only t
 
 ## Video input
 
-A show receives pictures through **inputs**. An input is one NDI stream or one image or video file. Each display or projector picks an input in its settings and shows all of it; several devices can share one. Laying content out across outputs is the media server's job, so send one NDI stream per output from MadMapper or Resolume.
+A project receives pictures through **inputs**. An input is one NDI stream or one image or video file. Each display or projector picks an input in its settings and shows all of it; several devices can share one. Laying content out across outputs is the media server's job, so send one NDI stream per output from MadMapper or Resolume.
 
-**Preferences → Video** lists the show's inputs, with a dot for each: green live, yellow waiting, orange not bound or not found, grey when no device shows it. The number beside an input is how many devices use it.
+**Preferences → Video** lists the project's inputs, with a dot for each: green live, yellow waiting, orange not bound or not found, grey when no device shows it. The number beside an input is how many devices use it.
 
 - **Add NDI input** adds one, and **Sender** picks the NDI sender that fills it. Which sender is a setting of this machine, because a sender's name means nothing on another one. A new input takes the sender's name until you rename it.
-- **Add file…** copies a PNG, JPEG or WebP image, or an MP4, MOV or WebM video, into `Documents\Beatline\Beam\Library\Media` and adds it as an input. A video plays muted and loops. A file belongs to the show: it is saved with it, and **Export Project to...** carries the file, so the show opens with its picture on another machine.
+- **Add file…** copies a PNG, JPEG or WebP image, or an MP4, MOV or WebM video, into `Documents\Beatline\Beam\Library\Media` and adds it as an input. A video plays muted and loops. A file belongs to the project: it is saved with it, and **Export Project to...** carries the file, so the project opens with its picture on another machine.
 - **Test card** adds the card that ships with Beam. It has a grey wedge, colour bars, a fine grid, a circle and an F in the top-left corner, so a picture that is too bright, the wrong colour, soft, stretched, mirrored or turned shows it.
 
 A feed only opens while a device shows its input, so an unused input costs nothing.
 
 A display's settings also have **Rotation** and **Mirror H** / **Mirror V**, for a panel mounted in portrait or seen from behind. The picture is turned first, then mirrored. Projectors show their input as it arrives; until a later update every projector shows the first projector's input.
 
-A show saved with connectors opens with one input in their place. A device on a connector that covered the whole frame keeps its turn and mirrors. A device on a smaller connector now shows the whole picture, and Beam lists those devices once when the show opens.
+A project saved with connectors opens with one input in their place. A device on a connector that covered the whole frame keeps its turn and mirrors. A device on a smaller connector now shows the whole picture, and Beam lists those devices once when the project opens.
 
 ## Lasers
 
@@ -747,34 +747,34 @@ Files are MP4, H.264 video and AAC audio, constant frame rate. They play on phon
 | **Escape** | Deselect everything |
 | **Ctrl+Z** | Undo |
 | **Ctrl+Y** | Redo |
-| **Ctrl+S** | Save showfile |
-| **Ctrl+O** | Load showfile |
-| **Ctrl+Shift+S** | Export showfile |
-| **Shift+N** | New showfile |
+| **Ctrl+S** | Save project |
+| **Ctrl+O** | Open project |
+| **Ctrl+Shift+S** | Export project |
+| **Shift+N** | New project |
 | **Ctrl+Shift+V** | Visualizer preferences |
 | **Ctrl+Shift+A** | Art-Net preferences |
 
 ## Menus
 
-**File** — New Project, Open Project, Import Showfile, Save Project, Export Project to..., Export MadMapper Layout
+**File** — New Project, Open Project, Import JSON Project, Save Project, Export Project to..., Export MadMapper Layout
 
 **Edit** — Undo, Redo
 
-**Preferences** — Visualizer, Art-Net, Video, Reset to defaults. Reset puts every preference and debug value back to its default and reloads Beam; save the show first.
+**Preferences** — Visualizer, Art-Net, Video, Reset to defaults. Reset puts every preference and debug value back to its default and reloads Beam; save the project first.
 
 **About** — Manual, License, Credits, Contact
 
 ## Files and where they live
 
-**A project is a `.beam` file** you name and place; the save dialog starts in `Documents\Beatline\Beam`. **Save Project** writes the show. It names the fixture profiles and models it uses and leaves them in your library, so editing a profile reaches every project that places it. **Export Project to...** writes a copy with everything the show references collected into the file: profiles, your overrides, and the models it places, shipped ones included. That is the one to hand to someone else or keep as a record of a show as it was performed. Opened on any Beam, an exported project draws from what it carries first and the local library second, and saving it keeps everything it carried.
+**A project is a `.beam` file** you name and place; the save dialog starts in `Documents\Beatline\Beam`. **Save Project** writes the project. It names the fixture profiles and models it uses and leaves them in your library, so editing a profile reaches every project that places it. **Export Project to...** writes a copy with everything the project references collected into the file: profiles, your overrides, and the models it places, shipped ones included. That is the one to hand to someone else or keep as a record of a show as it was performed. Opened on any Beam, an exported project draws from what it carries first and the local library second, and saving it keeps everything it carried.
 
 **Image and video files** for video input are in `Documents\Beatline\Beam\Library\Media`.
 
-**Fixture profiles** come from the built-in library. A generic fixture lives in the show until you save it to the library; saved ones are stored in `Documents\Beatline\Beam\Library\Profiles`.
+**Fixture profiles** come from the built-in library. A generic fixture lives in the project until you save it to the library; saved ones are stored in `Documents\Beatline\Beam\Library\Profiles`.
 
 **Exports** — the MadMapper layout and its `.mmfl` definitions go wherever you point them.
 
-Being alpha, the showfile format can change between versions. Keep exported copies of anything you'd be annoyed to lose.
+Being alpha, the project file format can change between versions. Keep exported copies of anything you'd be annoyed to lose.
 
 ## When something goes wrong
 

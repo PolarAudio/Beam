@@ -530,7 +530,7 @@ export default {
   emits: ['placed'],
   data() {
     return {
-      headerData: { title: 'Add to show' },
+      headerData: { title: 'Add to scene' },
       createPopupState: false,
       createObjectPopupState: false,
       importObjectPopupState: false,
@@ -1367,13 +1367,13 @@ export default {
       if (!item || !item.gdtf) return;
       const used = this.selectedInUse;
       let inShow = '';
-      if (used === 1) inShow = '1 fixture in this show uses it. ';
-      else if (used > 1) inShow = `${used} fixtures in this show use it. `;
+      if (used === 1) inShow = '1 fixture in this project uses it. ';
+      else if (used > 1) inShow = `${used} fixtures in this project use it. `;
       const yes = await confirm({
         title: 'Remove from library',
         message: `Remove ${item.name} from your library?`,
         detail: `File: ${item.fixture.split('/').pop()}.gdtf\n${inShow}`
-          + 'It is no longer offered to add; this show and saved shows that use it keep '
+          + 'It is no longer offered to add; this project and saved projects that use it keep '
           + 'working. Importing the file again brings it back.',
         yes: 'Remove',
         no: 'Keep',

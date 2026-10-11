@@ -35,7 +35,7 @@
 
       <!-- Always present, empty until needed: see .create_warning. -->
       <p class="create_warning one_line">
-        {{ nameTaken ? `This show already has a "${name}". Pick another name.` : '' }}
+        {{ nameTaken ? `This project already has a "${name}". Pick another name.` : '' }}
       </p>
 
       <template v-if="isBar">

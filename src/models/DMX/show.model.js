@@ -22,7 +22,7 @@ import {
   expandLedBarProfile, withoutLedBarChannels,
 } from './generic/led_bar';
 import { kindById } from './generic/fixture_kind';
-import DefinitionStore, { SHOW_SCOPE, showKey } from './definition_store';
+import DefinitionStore, { SHOW_SCOPE, SHOW_SCOPE_LABEL, showKey } from './definition_store';
 import VideoRouter from '../../plugins/visualizer/video_router';
 import Preferences from '../../plugins/visualizer/preferences';
 import SceneObjects from '../../plugins/visualizer/scene_objects';
@@ -2357,6 +2357,7 @@ class Show extends EventEmitter {
    * @returns {String}
    */
   manufacturerName(slug) {
+    if (slug === SHOW_SCOPE) return SHOW_SCOPE_LABEL;
     return (this.manufacturers[slug] || {}).name || slug || '';
   }
 

@@ -25,7 +25,7 @@
             icon="export"
             label="save to library"
             :disabled="saving"
-            title="Move this definition into the library, to place in other shows"
+            title="Move this definition into the library, to place in other projects"
             @click="openSave"
           />
         </uk-flex>

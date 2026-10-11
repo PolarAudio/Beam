@@ -116,7 +116,7 @@ export default {
               },
             },
             {
-              name: 'Import Showfile',
+              name: 'Import JSON Project',
               icon: 'folder',
               callback: () => {
                 this.loadFile();
@@ -291,7 +291,7 @@ export default {
         EventBus.emit('app_error', new Error(`Could not write ${target}.`));
       } else if (missing && missing.length) {
         EventBus.emit('app_error', new Error(
-          `Exported ${target}, but ${missing.length} item(s) the show uses could not be found `
+          `Exported ${target}, but ${missing.length} item(s) the project uses could not be found `
           + `and are not in it: ${missing.join(', ')}`,
         ));
       }
@@ -368,7 +368,7 @@ export default {
         message: 'Reset all preferences and debug values to their defaults?',
         detail: this.$show.isSaved
           ? 'Beam reloads.'
-          : 'Beam reloads. This show has unsaved changes: save it first or they may be lost.',
+          : 'Beam reloads. This project has unsaved changes: save it first or they may be lost.',
         yes: 'Reset',
         no: 'Cancel',
       });
@@ -456,7 +456,7 @@ export default {
       const go = await confirm({
         title: 'Refresh from Library',
         message: 'Replace the fixture profiles and objects this project carries with the ones in your library?',
-        detail: 'The show reloads with the library copies. Save to keep them in the file; '
+        detail: 'The project reloads with the library copies. Save to keep them in the file; '
           + 'close without saving to keep the old ones.',
         yes: 'Refresh',
         no: 'Cancel',

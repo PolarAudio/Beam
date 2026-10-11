@@ -11,7 +11,7 @@
       col
     >
       <p class="subtitle intro">
-        The pictures this show receives. A display or projector picks one and
+        The pictures this project receives. A display or projector picks one and
         shows all of it; several can share one. Laying content out across
         outputs is the media server's job.
       </p>
@@ -20,7 +20,7 @@
         <!-- The show's inputs. -->
         <div class="inputs">
           <div class="inputs_head">
-            Inputs in this show
+            Inputs in this project
           </div>
           <p
             v-if="!inputs.length"
@@ -106,7 +106,7 @@
             />
             <p class="subtitle">
               Which sender fills this input is a setting of this machine. The
-              show keeps only the input.
+              project keeps only the input.
             </p>
           </template>
           <template v-else>

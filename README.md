@@ -50,7 +50,7 @@ Beam is a fork of **[ASLS Studio](https://github.com/ASLS-org/studio)** by Timé
 Patch fixtures from a built-in library (XML fixture definitions parsed via `xml2js`), assign DMX addresses and operating modes. Troubleshoot DMX issues.
 
 #### Fixture Grouping
-Fixtures from different universes can be combined into logical groups. Groups are the unit of cue programming: scenes and effects are defined at the group level and can span the show's entire rig.
+Fixtures from different universes can be combined into logical groups. Groups are the unit of cue programming: scenes and effects are defined at the group level and can span the entire rig.
 
 #### Reusable custom structures
 Group your reusable creations and store it as a structure for later re-use or when you require several of them.

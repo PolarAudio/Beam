@@ -4,18 +4,22 @@
 
 ### Video inputs
 
-- A show receives video through inputs: one NDI stream or one image or video file each. A display or projector picks an input and shows all of it; several can share one. Connectors and slicing are gone; send one NDI stream per output from the media server.
+- A project receives video through inputs: one NDI stream or one image or video file each. A display or projector picks an input and shows all of it; several can share one. Connectors and slicing are gone; send one NDI stream per output from the media server.
 - **Preferences → Video** lists the inputs with their state and how many devices use each. **Add NDI input** with a **Sender** chosen on this machine, **Add file…**, or **Test card**.
 - A feed opens only while a device shows its input.
-- Image and video files: PNG, JPEG, WebP, MP4, MOV or WebM, copied into `Library/Media`. A video plays muted and loops. A file belongs to the show: it is saved with it, Export carries it, and an opened export plays its own copy. An NDI sender stays a setting of the machine.
+- Image and video files: PNG, JPEG, WebP, MP4, MOV or WebM, copied into `Library/Media`. A video plays muted and loops. A file belongs to the project: it is saved with it, Export carries it, and an opened export plays its own copy. An NDI sender stays a setting of the machine.
 - A **Test card** ships with Beam: grey wedge, colour bars, a one-pixel grid, a circle and an F in one corner.
 - Displays have **Rotation** and **Mirror H** / **Mirror V**.
 - Projectors all show the first projector's input until the projector pass takes a picture per input.
-- A show saved with connectors opens with one input. A device on a whole-frame connector keeps its turn and mirrors; one on a smaller connector shows the whole picture and is listed once on opening.
+- A project saved with connectors opens with one input. A device on a whole-frame connector keeps its turn and mirrors; one on a smaller connector shows the whole picture and is listed once on opening.
 
 ### Preferences
 
 - House lights down defaults to 25%, was 30%.
+
+### Names
+
+- A `.beam` file is a **project** and what it holds is the **scene**: the show is what MadMapper or Resolume plays. **Add to show** is **Add to scene**, **Import Showfile** is **Import JSON Project**, and messages and the manual say project.
 
 ### Development
 

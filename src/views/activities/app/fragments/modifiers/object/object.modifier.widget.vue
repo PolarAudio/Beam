@@ -257,7 +257,7 @@ export default {
           const yes = await confirm({
             title: 'Overwrite library entry?',
             message: `"${name}" is already in the object library. Overwrite it with this shape?`,
-            detail: `Every placement of "${name}" will change -- in this show, and in any other show that uses it.`,
+            detail: `Every placement of "${name}" will change -- in this project, and in any other project that uses it.`,
             yes: 'yes',
             no: 'no',
           });

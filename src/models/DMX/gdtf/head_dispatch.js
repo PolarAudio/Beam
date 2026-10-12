@@ -365,7 +365,9 @@ export default class HeadDispatch {
     const { values } = action;
     // OFL names wheels by channel; a translated function keeps that name.
     const channelName = state.fn.ofl ? state.fn.ofl.channel : c.channel.name;
-    if (kind === 'WheelSlot' || kind === 'WheelShake') this.wheelOf.set(c, values.wheel || channelName);
+    if (kind === 'WheelSlot' || kind === 'WheelShake' || kind === 'WheelRotation') {
+      this.wheelOf.set(c, values.wheel || channelName);
+    }
 
     switch (kind) {
       case 'ColorIntensity':

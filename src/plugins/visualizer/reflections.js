@@ -20,6 +20,12 @@ import LightField from './light_field';
  *   The trace runs against this buffer's depth, not the frame's: lens faces
  *   write no depth in the frame, so they are drawn here, and a ray meets the
  *   lens rather than the head behind it with the glow painted over it.
+ * - A depth pyramid built from the surface buffer: each level holds the
+ *   nearest distance under each of its cells. A ray in front of the nearest
+ *   surface in a cell cannot meet anything there and skips the whole cell;
+ *   otherwise it drops a level, down to single pixels. No pixel the ray could
+ *   be behind is ever stepped over, so a bar three pixels wide is met on
+ *   every pixel that reflects it.
  * - The frame so far, copied into a texture with mip levels, so a rough
  *   surface reads a blurred reflection: the rougher, and the further the
  *   reflected surface, the coarser the level.
@@ -27,7 +33,13 @@ import LightField from './light_field';
  *   worked out exactly as three's material worked it out, and taken back out
  *   where the trace finds a surface.
  *
- * Only what is on screen can be reflected. A ray that leaves the frame, runs
+ * The floor is the exception. A glossy surface lying in the floor plane and
+ * facing up reads a mirror image instead: the scene drawn again from the
+ * camera's reflection below the floor, so it holds everything above the floor
+ * as seen from below -- the undersides and the lights facing the floor, which
+ * the frame never shows.
+ *
+ * Elsewhere only what is on screen can be reflected. A ray that leaves the frame, runs
  * back towards the camera or meets nothing keeps the environment's
  * reflection; it fades to it near those limits rather than cutting.
  *
@@ -35,9 +47,11 @@ import LightField from './light_field';
  * rectangle the light field adds for them is switched off while this is on.
  */
 
-/** Steps along the ray across the screen, and halvings to refine a hit. */
-const TRACE_STEPS = 80;
-const REFINE_STEPS = 6;
+/** Levels in the depth pyramid: cells up to 512 pixels across. */
+const PYRAMID_LEVELS = 10;
+
+/** Most cells one ray visits, at whatever level. */
+const TRACE_STEPS = 160;
 
 /** Furthest a reflection is traced, in metres. */
 const MAX_DISTANCE = 40;
@@ -50,6 +64,32 @@ const FRAME_CLAMP = 32;
 
 /** Coarsest blur level a reflection reads: a spread of 64 pixels. */
 const MAX_LEVEL = 6;
+
+/**
+ * What counts as a floor: a glossy object at most this thick, in metres, and
+ * at least this large across, in square metres. Its top face is the plane
+ * mirrored.
+ */
+const FLOOR_THICKNESS = 0.25;
+const FLOOR_AREA = 1;
+
+/** Frames between looks for the floor plane. */
+const FLOOR_RECHECK = 30;
+
+/** How far off the floor plane a surface may sit and still take the mirror. */
+const FLOOR_TOLERANCE = 0.01;
+
+/** How far a floor surface's normal may lean from straight up: about 6 degrees. */
+const FLOOR_NORMAL_Z = 0.995;
+
+/** The mirror image's size against the frame's. */
+const MIRROR_SCALE = 0.5;
+
+/**
+ * What the mirror image keeps: everything 2 mm above the floor plane and up,
+ * so the floor itself and anything below it are not in it.
+ */
+const MIRROR_CLIP = [new THREE.Plane(new THREE.Vector3(0, 0, 1), 0)];
 
 /** The surface buffer's clear: no normal, nothing reflected. */
 const CLEAR = new THREE.Color(0, 0, 0);
@@ -265,12 +305,90 @@ copyQuad.frustumCulled = false;
 copyScene.add(copyQuad);
 const copyCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
+const PYRAMID_VERTEX = /* glsl */`
+void main() {
+  gl_Position = vec4( position.xy, 0.0, 1.0 );
+}
+`;
+
+/** Level 0: the distance from the camera plane to the surface at each pixel. */
+const PYRAMID_BASE = new THREE.ShaderMaterial({
+  glslVersion: THREE.GLSL3,
+  uniforms: {
+    depth: { value: null },
+    projInverse: { value: new THREE.Matrix4() },
+  },
+  vertexShader: PYRAMID_VERTEX,
+  fragmentShader: /* glsl */`
+precision highp float;
+uniform highp sampler2D depth;
+uniform mat4 projInverse;
+layout( location = 0 ) out highp vec4 nearest;
+void main() {
+  float d = texelFetch( depth, ivec2( gl_FragCoord.xy ), 0 ).r;
+  // Nothing drawn: further than any ray reaches.
+  if ( d >= 1.0 ) { nearest = vec4( 1e9 ); return; }
+  // View z depends on depth alone, lens shift or not, so x and y are left at 0.
+  vec4 p = projInverse * vec4( 0.0, 0.0, d * 2.0 - 1.0, 1.0 );
+  nearest = vec4( -p.z / p.w );
+}
+`,
+  depthTest: false,
+  depthWrite: false,
+});
+
+/** Each further level: the nearest of the four cells under it. */
+const PYRAMID_LEVEL = new THREE.ShaderMaterial({
+  glslVersion: THREE.GLSL3,
+  uniforms: {
+    source: { value: null },
+    sourceOffset: { value: new THREE.Vector2() },
+    sourceLast: { value: new THREE.Vector2() },
+    offset: { value: new THREE.Vector2() },
+  },
+  vertexShader: PYRAMID_VERTEX,
+  fragmentShader: /* glsl */`
+precision highp float;
+uniform highp sampler2D source;
+uniform vec2 sourceOffset;
+uniform vec2 sourceLast;
+uniform vec2 offset;
+layout( location = 0 ) out highp vec4 nearest;
+void main() {
+  ivec2 base = ivec2( gl_FragCoord.xy - offset ) * 2;
+  ivec2 last = ivec2( sourceLast );
+  ivec2 at = ivec2( sourceOffset );
+  // Clamped at the far edge: a level of odd size has no second cell there.
+  float a = texelFetch( source, at + min( base, last ), 0 ).r;
+  float b = texelFetch( source, at + min( base + ivec2( 1, 0 ), last ), 0 ).r;
+  float c = texelFetch( source, at + min( base + ivec2( 0, 1 ), last ), 0 ).r;
+  float e = texelFetch( source, at + min( base + ivec2( 1, 1 ), last ), 0 ).r;
+  nearest = vec4( min( min( a, b ), min( c, e ) ) );
+}
+`,
+  depthTest: false,
+  depthWrite: false,
+});
+
 const FRAGMENT = /* glsl */`
 uniform sampler2D surfaceNormals;
 uniform sampler2D surfaceReflectances;
 uniform sampler2D surfaceDepth;
+uniform highp sampler2D pyramidEven;
+uniform highp sampler2D pyramidOdd;
+uniform vec2 pyramidOffsets[ ${PYRAMID_LEVELS} ];
+uniform int pyramidTop;
 uniform sampler2D frameMips;
 uniform float frameLevels;
+uniform bool mirrorOn;
+uniform float floorHeight;
+uniform sampler2D mirrorMips;
+uniform highp sampler2D mirrorDepth;
+uniform mat4 mirrorView;
+uniform mat4 mirrorViewProj;
+uniform mat4 mirrorProjInverse;
+uniform vec2 mirrorSize;
+uniform float mirrorLevels;
 uniform mat4 proj;
 uniform mat4 projInverse;
 uniform mat4 camWorld;
@@ -294,8 +412,20 @@ float surfaceDepthAt( vec2 uv ) {
   return texture( surfaceDepth, uv ).r;
 }
 
-float viewZAt( vec2 uv ) {
-  return viewPositionAt( uv, surfaceDepthAt( uv ) ).z;
+// The nearest surface distance in a cell of the depth pyramid. Even levels
+// and odd levels are in two textures, as each level is built from the one
+// before.
+float nearestIn( int level, ivec2 cell ) {
+  ivec2 at = cell + ivec2( pyramidOffsets[ level ] );
+  return ( level & 1 ) == 0 ? texelFetch( pyramidEven, at, 0 ).r : texelFetch( pyramidOdd, at, 0 ).r;
+}
+
+// Where the ray, a pixel position pStart + pDelta * t, leaves a cell.
+float cellExit( vec2 pStart, vec2 pDelta, vec2 cell, float size ) {
+  vec2 bound = ( cell + step( 0.0, pDelta ) ) * size;
+  float tx = abs( pDelta.x ) < 1e-6 ? 1e9 : ( bound.x - pStart.x ) / pDelta.x;
+  float ty = abs( pDelta.y ) < 1e-6 ? 1e9 : ( bound.y - pStart.y ) / pDelta.y;
+  return min( tx, ty );
 }
 
 // three's split-sum fit for how much of a reflection a surface returns.
@@ -319,12 +449,6 @@ vec3 environmentReflection( vec3 viewDir, vec3 normal, float roughness ) {
 #endif
 }
 
-// A per-pixel offset, so the steps do not band. Fixed, not moved each frame:
-// with nothing to average frames together, a moving one would shimmer.
-float stepJitter( vec2 pixel ) {
-  return fract( 52.9829189 * fract( dot( pixel, vec2( 0.06711056, 0.00583715 ) ) ) );
-}
-
 void mainImage( const in vec4 inputColor, const in vec2 uv, const in float depth, out vec4 outputColor ) {
   outputColor = inputColor;
   vec4 reflectance = texture( surfaceReflectances, uv );
@@ -340,6 +464,50 @@ void mainImage( const in vec4 inputColor, const in vec2 uv, const in float depth
   if ( abs( surfaceZ - origin.z ) > 0.02 + abs( origin.z ) * 0.01 ) return;
   vec3 viewDir = camOrtho ? vec3( 0.0, 0.0, 1.0 ) : normalize( -origin );
   vec3 ray = reflect( -viewDir, normal );
+
+  float dotNV = clamp( dot( normal, viewDir ), 0.0, 1.0 );
+  vec2 fab = dfgApprox( dotNV, roughness );
+  vec3 returned = reflectance.rgb * fab.x + fab.y;
+  vec3 environment = environmentReflection( viewDir, normal, roughness );
+  float roughFade = 1.0 - smoothstep( ${(ROUGHNESS_LIMIT * 0.7).toFixed(3)}, ${ROUGHNESS_LIMIT.toFixed(3)}, roughness );
+
+  // On the floor plane: the mirror image at this point.
+  vec3 worldPosition = ( camWorld * vec4( origin, 1.0 ) ).xyz;
+  vec3 worldNormal = normalize( ( camWorld * vec4( normal, 0.0 ) ).xyz );
+  // Depth loses precision with distance, so the band widens with it, and the
+  // point read is where the view ray meets the plane, not the depth's guess.
+  float band = ${FLOOR_TOLERANCE.toFixed(3)} + length( origin ) * 0.002;
+  if ( mirrorOn && worldNormal.z > ${FLOOR_NORMAL_Z.toFixed(3)}
+    && abs( worldPosition.z - floorHeight ) < band ) {
+    vec3 eye = camOrtho
+      ? ( camWorld * vec4( origin.xy, 0.0, 1.0 ) ).xyz
+      : camWorld[ 3 ].xyz;
+    vec3 sight = worldPosition - eye;
+    if ( abs( sight.z ) > 1e-6 ) worldPosition = eye + sight * ( ( floorHeight - eye.z ) / sight.z );
+    vec4 clip = mirrorViewProj * vec4( worldPosition, 1.0 );
+    vec2 mirrorUv = clip.xy / clip.w * 0.5 + 0.5;
+    if ( clip.w > 0.0 && all( greaterThanEqual( mirrorUv, vec2( 0.0 ) ) )
+      && all( lessThanEqual( mirrorUv, vec2( 1.0 ) ) ) ) {
+      // How far the reflected surface is from the floor along the ray, for
+      // the blur; nothing drawn counts as the furthest a reflection is traced.
+      vec3 floorPoint = ( mirrorView * vec4( worldPosition, 1.0 ) ).xyz;
+      float seenDepth = texture( mirrorDepth, mirrorUv ).r;
+      float travelled = ${MAX_DISTANCE.toFixed(1)};
+      float seenZ = floorPoint.z - travelled;
+      if ( seenDepth < 1.0 ) {
+        vec4 p = mirrorProjInverse * vec4( mirrorUv * 2.0 - 1.0, seenDepth * 2.0 - 1.0, 1.0 );
+        vec3 seen = p.xyz / p.w;
+        travelled = camOrtho ? floorPoint.z - seen.z : length( seen ) - length( floorPoint );
+        seenZ = seen.z;
+      }
+      float pixelSize = ( camOrtho ? 2.0 : 2.0 * abs( seenZ ) ) / ( proj[ 1 ][ 1 ] * mirrorSize.y );
+      float spread = roughness * roughness * max( travelled, 0.0 );
+      float level = clamp( log2( max( spread / pixelSize, 1.0 ) ), 0.0, min( mirrorLevels, ${MAX_LEVEL.toFixed(1)} ) );
+      vec3 mirrored = textureLod( mirrorMips, mirrorUv, level ).rgb;
+      outputColor.rgb = max( inputColor.rgb + roughFade * returned * ( mirrored - environment ), 0.0 );
+      return;
+    }
+  }
 
   // Stopped short of the near plane: a point behind it has no place on screen.
   float span = ${MAX_DISTANCE.toFixed(1)};
@@ -361,9 +529,7 @@ void mainImage( const in vec4 inputColor, const in vec2 uv, const in float depth
   float zStart = start.z * kStart;
   float zEnd = end.z * kEnd;
 
-  // Cut off where it leaves the frame, so every step lands on screen and the
-  // steps are as short as the ray allows: a long step jumps a thin surface on
-  // some pixels and lands on it on their neighbours.
+  // Cut off where it leaves the frame.
   vec2 travel = uvEnd - uvStart;
   float reach = 1.0;
   if ( travel.x > 1e-6 ) reach = min( reach, ( 1.0 - uvStart.x ) / travel.x );
@@ -372,71 +538,56 @@ void mainImage( const in vec4 inputColor, const in vec2 uv, const in float depth
   if ( travel.y < -1e-6 ) reach = min( reach, -uvStart.y / travel.y );
   reach = max( reach, 0.0 );
 
-  float jitter = stepJitter( gl_FragCoord.xy );
-  float before = 0.0;
-  float beforeZ = start.z;
-  float beforeBehind = -1.0;
+  // Through the depth pyramid, in pixels. Over a cell, the ray's distance
+  // runs between its values where it enters and leaves, as distance along a
+  // line is monotonic on screen.
+  vec2 pStart = uvStart * frameSize;
+  vec2 pDelta = travel * frameSize;
+  // A hundredth of a pixel, to step over a cell's edge into the next one.
+  float nudge = 0.01 / max( max( abs( pDelta.x ), abs( pDelta.y ) ), 1e-6 );
+  float t = cellExit( pStart, pDelta, floor( pStart ), 1.0 ) + nudge;
+  int cellLevel = 0;
   float hit = -1.0;
-  for ( int i = 1; i <= ${TRACE_STEPS}; i++ ) {
-    float t = ( float( i ) - 1.0 + jitter ) / float( ${TRACE_STEPS} );
-    // Shortest near the surface, where contact reflections need them, and
-    // no longer than about 1/50 of the way at the far end.
-    t = t * sqrt( t ) * reach;
-    vec2 at = mix( uvStart, uvEnd, t );
-    float rayZ = mix( zStart, zEnd, t ) / mix( kStart, kEnd, t );
-    float sceneDepth = surfaceDepthAt( at );
-    if ( sceneDepth >= 1.0 ) { before = t; beforeZ = rayZ; beforeBehind = -1.0; continue; }
-    float sceneZ = viewPositionAt( at, sceneDepth ).z;
-    float behind = sceneZ - rayZ;
-    // How far behind a surface the ray can be and still be meeting it: a
-    // little for any surface, a centimetre for a lens face, and as much as
-    // this step went in depth.
-    float sheet = texture( surfaceReflectances, at ).a;
-    float body = sheet > 0.2 && sheet < 0.3 ? 0.01 : 0.03 + abs( rayZ ) * 0.01;
-    float thickness = max( body, abs( rayZ - beforeZ ) * 1.5 );
-    // A candidate when the ray is just behind a surface, or went from in front
-    // of the surfaces to behind one in this step however deep it landed: a
-    // step into a solid casing is still a step that met it. Which it was is
-    // settled at the crossing below.
-    if ( behind > 0.0 && ( behind < thickness || beforeBehind <= 0.0 ) ) {
-      // The first surface the step crossed, which on a long step may be a thin
-      // one in front of what it landed on -- a display's bezel before its
-      // picture -- found in short steps, then halved down to.
-      float lo = before;
-      float hi = t;
-      for ( int j = 1; j <= 8; j++ ) {
-        float sub = mix( before, t, float( j ) / 8.0 );
-        vec2 m = mix( uvStart, uvEnd, sub );
-        float mz = mix( zStart, zEnd, sub ) / mix( kStart, kEnd, sub );
-        if ( viewZAt( m ) - mz > 0.0 ) { hi = sub; break; }
-        lo = sub;
-      }
-      for ( int j = 0; j < ${REFINE_STEPS}; j++ ) {
-        float mid = 0.5 * ( lo + hi );
-        vec2 m = mix( uvStart, uvEnd, mid );
-        float mz = mix( zStart, zEnd, mid ) / mix( kStart, kEnd, mid );
-        if ( viewZAt( m ) - mz > 0.0 ) hi = mid; else lo = mid;
-      }
-      // At the crossing the ray is on the surface it met. Still far behind
-      // it, the crossing was an edge: the ray went behind something and on.
-      vec2 crossing = mix( uvStart, uvEnd, hi );
-      float crossingZ = mix( zStart, zEnd, hi ) / mix( kStart, kEnd, hi );
-      if ( viewZAt( crossing ) - crossingZ < body ) {
-        hit = hi;
-        break;
-      }
+  vec2 hitPixel = vec2( 0.0 );
+  float hitDistance = 0.0;
+  float hitDepth = 1.0;
+  for ( int i = 0; i < ${TRACE_STEPS}; i++ ) {
+    if ( t >= reach ) break;
+    float size = exp2( float( cellLevel ) );
+    vec2 cell = floor( ( pStart + pDelta * t ) / size );
+    float tOut = min( cellExit( pStart, pDelta, cell, size ), reach );
+    float d0 = -mix( zStart, zEnd, t ) / mix( kStart, kEnd, t );
+    float d1 = -mix( zStart, zEnd, tOut ) / mix( kStart, kEnd, tOut );
+    float nearest = nearestIn( cellLevel, ivec2( cell ) );
+    // In front of everything in the cell: nothing to meet, so on to the next
+    // cell, a level coarser.
+    if ( max( d0, d1 ) < nearest ) {
+      t = tOut + nudge;
+      cellLevel = min( cellLevel + 1, pyramidTop );
+      continue;
     }
-    before = t;
-    beforeZ = rayZ;
-    beforeBehind = behind;
+    if ( cellLevel > 0 ) { cellLevel--; continue; }
+    // One pixel, and the ray reaches its surface. It meets it if it is no
+    // further behind than the surface is thick: a centimetre for a lens face, a few for anything else. Further
+    // behind, it passed behind it.
+    float sheet = texelFetch( surfaceReflectances, ivec2( cell ), 0 ).a;
+    float body = sheet > 0.2 && sheet < 0.3 ? 0.01 : 0.03 + nearest * 0.01;
+    if ( min( d0, d1 ) <= nearest + body ) {
+      hit = t;
+      hitPixel = cell;
+      hitDistance = nearest;
+      hitDepth = surfaceDepthAt( ( cell + 0.5 ) / frameSize );
+      break;
+    }
+    t = tOut + nudge;
   }
   if ( hit < 0.0 ) return;
 
-  vec2 hitUv = mix( uvStart, uvEnd, hit );
-  float hitZ = mix( zStart, zEnd, hit ) / mix( kStart, kEnd, hit );
-  // Measured, not span x hit: hit is a fraction of the way across the screen,
-  // which perspective makes no fraction of the way in space.
-  float travelled = distance( origin, viewPositionAt( hitUv, surfaceDepthAt( hitUv ) ) );
+  // The centre of the pixel met, so the frame is read on the surface and not
+  // on its edge.
+  vec2 hitUv = ( hitPixel + 0.5 ) / frameSize;
+  float hitZ = -hitDistance;
+  float travelled = distance( origin, viewPositionAt( hitUv, hitDepth ) );
 
   // Confidence: fades out near the screen's edges, as the ray turns back
   // towards the camera, and towards the roughness limit.
@@ -446,16 +597,15 @@ void mainImage( const in vec4 inputColor, const in vec2 uv, const in float depth
   // is finer than the frame can trace, and comes and goes from pixel to pixel.
   weight *= smoothstep( 0.02, 0.06, travelled );
   weight *= 1.0 - smoothstep( 0.25, 0.75, ray.z );
-  weight *= 1.0 - smoothstep( ${(ROUGHNESS_LIMIT * 0.7).toFixed(3)}, ${ROUGHNESS_LIMIT.toFixed(3)}, roughness );
+  weight *= roughFade;
   // The frame holds each surface as the camera sees it. A surface met edge-on
   // or from behind shows the ray something else -- a lens face, bright
   // head-on and dark from the side, is the worst of it -- so such a hit
   // fades out.
-  vec4 hitSurface = texture( surfaceNormals, hitUv );
-  float hitSurfaceZ = viewPositionAt( hitUv, surfaceDepthAt( hitUv ) ).z;
-  bool hitKnown = dot( hitSurface.xyz, hitSurface.xyz ) > 0.25
-    && abs( hitSurfaceZ - hitZ ) < 0.05 + abs( hitZ ) * 0.02;
-  if ( hitKnown ) weight *= smoothstep( 0.0, 0.3, dot( normalize( hitSurface.xyz ), -ray ) );
+  vec4 hitSurface = texelFetch( surfaceNormals, ivec2( hitPixel ), 0 );
+  if ( dot( hitSurface.xyz, hitSurface.xyz ) > 0.25 ) {
+    weight *= smoothstep( 0.0, 0.3, dot( normalize( hitSurface.xyz ), -ray ) );
+  }
   if ( weight <= 0.0 ) return;
 
   // A rough surface's reflection spreads with distance: a cone about as wide
@@ -465,16 +615,20 @@ void mainImage( const in vec4 inputColor, const in vec2 uv, const in float depth
   float level = clamp( log2( max( spread / pixelSize, 1.0 ) ), 0.0, min( frameLevels, ${MAX_LEVEL.toFixed(1)} ) );
   vec3 traced = textureLod( frameMips, hitUv, level ).rgb;
 
-  float dotNV = clamp( dot( normal, viewDir ), 0.0, 1.0 );
-  vec2 fab = dfgApprox( dotNV, roughness );
-  vec3 returned = reflectance.rgb * fab.x + fab.y;
-  vec3 environment = environmentReflection( viewDir, normal, roughness );
-
   outputColor.rgb = max( inputColor.rgb + weight * returned * ( traced - environment ), 0.0 );
 }
 `;
 
 const scratchSize = new THREE.Vector2();
+const mirrorPosition = new THREE.Vector3();
+const mirrorQuaternion = new THREE.Quaternion();
+const mirrorScale = new THREE.Vector3();
+const mirrorForward = new THREE.Vector3();
+const mirrorUp = new THREE.Vector3();
+const mirrorTarget = new THREE.Vector3();
+const floorBox = new THREE.Box3();
+const floorSize = new THREE.Vector3();
+const floorMatrix = new THREE.Matrix4();
 const previousClear = new THREE.Color();
 const rotationEuler = new THREE.Euler();
 const rotationMatrix = new THREE.Matrix4();
@@ -497,8 +651,23 @@ export default class ReflectionsEffect extends Effect {
         ['surfaceNormals', new THREE.Uniform(null)],
         ['surfaceReflectances', new THREE.Uniform(null)],
         ['surfaceDepth', new THREE.Uniform(null)],
+        ['pyramidEven', new THREE.Uniform(null)],
+        ['pyramidOdd', new THREE.Uniform(null)],
+        ['pyramidOffsets', new THREE.Uniform(
+          Array.from({ length: PYRAMID_LEVELS }, () => new THREE.Vector2()),
+        )],
+        ['pyramidTop', new THREE.Uniform(0)],
         ['frameMips', new THREE.Uniform(null)],
         ['frameLevels', new THREE.Uniform(0)],
+        ['mirrorOn', new THREE.Uniform(false)],
+        ['floorHeight', new THREE.Uniform(0)],
+        ['mirrorMips', new THREE.Uniform(null)],
+        ['mirrorDepth', new THREE.Uniform(null)],
+        ['mirrorView', new THREE.Uniform(new THREE.Matrix4())],
+        ['mirrorViewProj', new THREE.Uniform(new THREE.Matrix4())],
+        ['mirrorProjInverse', new THREE.Uniform(new THREE.Matrix4())],
+        ['mirrorSize', new THREE.Uniform(new THREE.Vector2(1, 1))],
+        ['mirrorLevels', new THREE.Uniform(0)],
         ['proj', new THREE.Uniform(new THREE.Matrix4())],
         ['projInverse', new THREE.Uniform(new THREE.Matrix4())],
         ['camWorld', new THREE.Uniform(new THREE.Matrix4())],
@@ -514,6 +683,14 @@ export default class ReflectionsEffect extends Effect {
     this.camera = camera;
     this.surfaces = null;
     this.frameCopy = null;
+    this.pyramid = null;
+    this.mirror = null;
+    this.mirrorMips = null;
+    this.mirrorCamera = null;
+    /** The floor plane's height, or null with no floor; and frames to the next look. */
+    this.floor = null;
+    this.floorCountdown = 0;
+    this.pyramidLevels = [];
     /** The environment the shader was built for, by its height. */
     this.envHeight = -1;
     this.on = true;
@@ -549,9 +726,29 @@ export default class ReflectionsEffect extends Effect {
         generateMipmaps: true,
         depthBuffer: false,
       });
+      const mirrorWidth = Math.max(1, Math.round(width * MIRROR_SCALE));
+      const mirrorHeight = Math.max(1, Math.round(height * MIRROR_SCALE));
+      this.mirror = new THREE.WebGLRenderTarget(mirrorWidth, mirrorHeight, {
+        type: THREE.HalfFloatType,
+        depthBuffer: true,
+      });
+      this.mirror.depthTexture = new THREE.DepthTexture(mirrorWidth, mirrorHeight);
+      this.mirrorMips = new THREE.WebGLRenderTarget(mirrorWidth, mirrorHeight, {
+        type: THREE.HalfFloatType,
+        minFilter: THREE.LinearMipmapLinearFilter,
+        magFilter: THREE.LinearFilter,
+        generateMipmaps: true,
+        depthBuffer: false,
+      });
+      this.layoutPyramid(width, height);
     } else if (this.surfaces.width !== width || this.surfaces.height !== height) {
       this.surfaces.setSize(width, height);
       this.frameCopy.setSize(width, height);
+      const mirrorWidth = Math.max(1, Math.round(width * MIRROR_SCALE));
+      const mirrorHeight = Math.max(1, Math.round(height * MIRROR_SCALE));
+      this.mirror.setSize(mirrorWidth, mirrorHeight);
+      this.mirrorMips.setSize(mirrorWidth, mirrorHeight);
+      this.layoutPyramid(width, height);
     }
     const { uniforms } = this;
     const [normals, reflectances] = this.surfaces.textures;
@@ -561,6 +758,211 @@ export default class ReflectionsEffect extends Effect {
     uniforms.get('frameMips').value = this.frameCopy.texture;
     uniforms.get('frameLevels').value = Math.floor(Math.log2(Math.max(width, height)));
     uniforms.get('frameSize').value.set(width, height);
+    uniforms.get('mirrorMips').value = this.mirrorMips.texture;
+    uniforms.get('mirrorDepth').value = this.mirror.depthTexture;
+    uniforms.get('mirrorSize').value.set(this.mirror.width, this.mirror.height);
+    uniforms.get('mirrorLevels').value = Math.floor(Math.log2(Math.max(this.mirror.width, this.mirror.height)));
+  }
+
+  /**
+   * Finds the floor plane: the top face of the glossy flat objects covering
+   * the most area, by height to the millimetre. Null when there are none.
+   *
+   * @private
+   * @returns {Number|null}
+   */
+  findFloor() {
+    const areas = new Map();
+    const add = (geometry, matrix) => {
+      floorBox.copy(geometry.boundingBox).applyMatrix4(matrix);
+      floorBox.getSize(floorSize);
+      if (floorSize.z > FLOOR_THICKNESS || floorSize.x * floorSize.y < FLOOR_AREA) return;
+      const height = Math.round(floorBox.max.z * 1000);
+      areas.set(height, (areas.get(height) || 0) + floorSize.x * floorSize.y);
+    };
+    this.scene.traverseVisible((object) => {
+      if (!object.isMesh) return;
+      const material = Array.isArray(object.material) ? object.material[0] : object.material;
+      if (!material || !material.isMeshStandardMaterial) return;
+      if (material.roughness >= ROUGHNESS_LIMIT && !material.roughnessMap) return;
+      const { geometry } = object;
+      if (!geometry.boundingBox) geometry.computeBoundingBox();
+      if (object.isInstancedMesh) {
+        for (let k = 0; k < object.count; k++) {
+          object.getMatrixAt(k, floorMatrix);
+          add(geometry, floorMatrix.premultiply(object.matrixWorld));
+        }
+      } else {
+        add(geometry, object.matrixWorld);
+      }
+    });
+    let best = null;
+    let bestArea = 0;
+    areas.forEach((area, height) => {
+      if (area > bestArea) {
+        best = height / 1000;
+        bestArea = area;
+      }
+    });
+    return best;
+  }
+
+  /**
+   * Draws the mirror image: the scene from the camera's reflection in the
+   * floor plane, everything below the plane clipped away, then clamped into
+   * mip levels as the frame is.
+   *
+   * @private
+   */
+  drawMirror(renderer) {
+    const { scene, camera, uniforms } = this;
+    if (!this.mirrorCamera || this.mirrorCamera.type !== camera.type) {
+      this.mirrorCamera = camera.clone();
+    }
+    const mirror = this.mirrorCamera;
+    // The camera's own projection, lens shift and all. The mirror camera is a
+    // rotation, so its image runs left to right against the reflection's, and
+    // a horizontal lens shift must point the other way to cover the view.
+    mirror.projectionMatrix.copy(camera.projectionMatrix);
+    mirror.projectionMatrix.elements[camera.isOrthographicCamera ? 12 : 8] *= -1;
+    mirror.projectionMatrixInverse.copy(mirror.projectionMatrix).invert();
+    camera.matrixWorld.decompose(mirrorPosition, mirrorQuaternion, mirrorScale);
+    mirrorForward.set(0, 0, -1).applyQuaternion(mirrorQuaternion);
+    mirrorUp.set(0, 1, 0).applyQuaternion(mirrorQuaternion);
+    mirrorPosition.z = 2 * this.floor - mirrorPosition.z;
+    mirrorForward.z *= -1;
+    mirrorUp.z *= -1;
+    mirror.position.copy(mirrorPosition);
+    mirror.up.copy(mirrorUp);
+    mirror.lookAt(mirrorTarget.copy(mirrorPosition).add(mirrorForward));
+    mirror.updateMatrixWorld();
+
+    uniforms.get('mirrorView').value.copy(mirror.matrixWorldInverse);
+    uniforms.get('mirrorViewProj').value.multiplyMatrices(mirror.projectionMatrix, mirror.matrixWorldInverse);
+    uniforms.get('mirrorProjInverse').value.copy(mirror.projectionMatrixInverse);
+
+    // Editor lines, points and labels are not in the room.
+    const hidden = [];
+    scene.traverse((object) => {
+      if (object.visible && (object.isLine || object.isPoints || object.isSprite)) {
+        object.visible = false;
+        hidden.push(object);
+      }
+    });
+    const wasTarget = renderer.getRenderTarget();
+    const wasClipping = renderer.clippingPlanes;
+    const wasShadowUpdate = renderer.shadowMap.autoUpdate;
+    try {
+      MIRROR_CLIP[0].constant = -(this.floor + 0.002);
+      renderer.clippingPlanes = MIRROR_CLIP;
+      renderer.shadowMap.autoUpdate = false;
+      renderer.setRenderTarget(this.mirror);
+      renderer.clear(true, true, false);
+      renderer.render(scene, mirror);
+    } finally {
+      renderer.clippingPlanes = wasClipping;
+      renderer.shadowMap.autoUpdate = wasShadowUpdate;
+      hidden.forEach((object) => { object.visible = true; });
+    }
+    COPY.uniforms.source.value = this.mirror.texture;
+    renderer.setRenderTarget(this.mirrorMips);
+    renderer.render(copyScene, copyCamera);
+    renderer.setRenderTarget(wasTarget);
+  }
+
+  /**
+   * Places the depth pyramid's levels. Even levels go in one texture and odd
+   * in another, so a level is never drawn into the texture it is read from:
+   * the first of each at the corner, the rest stacked in a column beside it.
+   *
+   * @private
+   */
+  layoutPyramid(width, height) {
+    const top = Math.min(PYRAMID_LEVELS - 1, Math.ceil(Math.log2(Math.max(width, height, 2))));
+    const levels = [];
+    const atlases = [0, 1].map(() => ({
+      width: 0, height: 0, column: 0, stacked: 0,
+    }));
+    let w = width;
+    let h = height;
+    for (let level = 0; level <= top; level++) {
+      const atlas = atlases[level % 2];
+      let x = 0;
+      let y = 0;
+      if (level < 2) {
+        atlas.column = w;
+        atlas.width = w;
+        atlas.height = h;
+      } else {
+        x = atlas.column;
+        y = atlas.stacked;
+        atlas.stacked = y + h;
+        atlas.width = Math.max(atlas.width, x + w);
+        atlas.height = Math.max(atlas.height, y + h);
+      }
+      levels.push({
+        x, y, width: w, height: h,
+      });
+      w = Math.ceil(w / 2);
+      h = Math.ceil(h / 2);
+    }
+    this.pyramidLevels = levels;
+    if (!this.pyramid) {
+      const options = {
+        type: THREE.FloatType,
+        format: THREE.RedFormat,
+        minFilter: THREE.NearestFilter,
+        magFilter: THREE.NearestFilter,
+        generateMipmaps: false,
+        depthBuffer: false,
+      };
+      this.pyramid = [0, 1].map(() => new THREE.WebGLRenderTarget(1, 1, options));
+    }
+    this.pyramid.forEach((target, k) => target.setSize(atlases[k].width, atlases[k].height));
+    const { uniforms } = this;
+    uniforms.get('pyramidEven').value = this.pyramid[0].texture;
+    uniforms.get('pyramidOdd').value = this.pyramid[1].texture;
+    uniforms.get('pyramidTop').value = top;
+    const offsets = uniforms.get('pyramidOffsets').value;
+    levels.forEach((entry, level) => offsets[level].set(entry.x, entry.y));
+  }
+
+  /**
+   * Builds the depth pyramid from the surface buffer's depth.
+   *
+   * @private
+   */
+  buildPyramid(renderer) {
+    const levels = this.pyramidLevels;
+    const wasTarget = renderer.getRenderTarget();
+    const wasAutoClear = renderer.autoClear;
+    renderer.autoClear = false;
+    try {
+      PYRAMID_BASE.uniforms.depth.value = this.surfaces.depthTexture;
+      PYRAMID_BASE.uniforms.projInverse.value.copy(this.camera.projectionMatrixInverse);
+      levels.forEach((entry, level) => {
+        const target = this.pyramid[level % 2];
+        target.viewport.set(entry.x, entry.y, entry.width, entry.height);
+        target.scissorTest = false;
+        if (level === 0) {
+          copyQuad.material = PYRAMID_BASE;
+        } else {
+          const source = levels[level - 1];
+          const u = PYRAMID_LEVEL.uniforms;
+          u.source.value = this.pyramid[(level - 1) % 2].texture;
+          u.sourceOffset.value.set(source.x, source.y);
+          u.sourceLast.value.set(source.width - 1, source.height - 1);
+          u.offset.value.set(entry.x, entry.y);
+          copyQuad.material = PYRAMID_LEVEL;
+        }
+        renderer.setRenderTarget(target);
+        renderer.render(copyScene, copyCamera);
+      });
+    } finally {
+      copyQuad.material = COPY;
+      renderer.autoClear = wasAutoClear;
+      renderer.setRenderTarget(wasTarget);
+    }
   }
 
   /**
@@ -684,7 +1086,18 @@ export default class ReflectionsEffect extends Effect {
     uniforms.get('cameraNearPlane').value = camera.near;
     this.followEnvironment();
 
+    if (this.floorCountdown <= 0) {
+      this.floor = this.findFloor();
+      this.floorCountdown = FLOOR_RECHECK;
+    }
+    this.floorCountdown--;
+    uniforms.get('mirrorOn').value = this.floor !== null;
+    if (this.floor !== null) {
+      uniforms.get('floorHeight').value = this.floor;
+      this.drawMirror(renderer);
+    }
     this.drawSurfaces(renderer);
+    this.buildPyramid(renderer);
 
     // The frame as it stands, with mip levels for the blur.
     COPY.uniforms.source.value = inputBuffer.texture;

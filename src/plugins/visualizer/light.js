@@ -89,13 +89,14 @@ const LENS_DARK = 0.05;
  * The most a lens face is drawn at, in scene units. A lit face is the
  * light's peak candela over the lens's area, on the lux scale: tens of
  * thousands of times anything else in the frame, which is why a lens glares
- * in any camera. Held here so the half-float frame and the glare's blur
- * levels never overflow; the tone curve takes anything past a few units to
- * white anyway.
+ * in any camera. Held at half the half-float frame's largest value, 65504, so
+ * a face with glare added on it never overflows. High enough that faces keep
+ * their ratio: a 25 W LED bar comes to about 700 and a 300 W spot's lens
+ * reaches the cap, where a cap of 1000 drew both the same.
  *
  * @constant {Number}
  */
-const LENS_FACE_MAX = 1000;
+const LENS_FACE_MAX = 30000;
 /** Scratch for the lens colour write. */
 const lensColor = new THREE.Color();
 /**
@@ -2018,7 +2019,32 @@ class Light {
    */
   writeBlades() {
     if (!(this._id >= 0) || !this._blades) return;
-    Shapers.write(this._id, bladePlanes(this._blades, this._shaperRotation));
+    const planes = bladePlanes(this._blades, this._shaperRotation);
+    Shapers.write(this._id, planes.filter((plane, n) => Light.bladeIn(this._blades[n])));
+  }
+
+  /**
+   * Whether a blade is in the light. A blade fully out lies on the field's
+   * edge, and the lens blur and the lens's own width carry light past that
+   * edge, so it would cut the pool's side straight and pinch the beam at the
+   * lens; out, it cuts nothing.
+   *
+   * @private
+   * @param {Object} blade `{ a, b, rot, hasB }`
+   * @returns {Boolean}
+   */
+  static bladeIn(blade) {
+    return blade.a > 0 || (blade.hasB && blade.b > 0) || !!blade.rot;
+  }
+
+  /**
+   * Whether any blade is in the light.
+   *
+   * @private
+   * @returns {Boolean}
+   */
+  bladesIn() {
+    return this._blades.some(Light.bladeIn);
   }
 
   /**
@@ -3626,7 +3652,7 @@ class Light {
       this._goboDefocus,
     );
     record.iris = this._iris;
-    record.shaperRow = this._blades && this._blades.length ? this._id : -1;
+    record.shaperRow = this._blades && this.bladesIn() ? this._id : -1;
 
     // The beam's depth tile, so the pool stops where the beam does. The slot
     // is last frame's, written by `renderDepth` after the field is read,

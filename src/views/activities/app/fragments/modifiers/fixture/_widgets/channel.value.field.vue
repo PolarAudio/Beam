@@ -134,7 +134,6 @@
  * trackpad's own momentum. A mouse wheel's notch is one value, speeding up
  * while the wheel keeps turning, as in every other number field.
  */
-import Preferences from '@/plugins/visualizer/preferences';
 import {
   RANGE_KINDS, stackRanges, valueToOffset, offsetToValue,
 } from '@/models/DMX/channel_ranges';
@@ -303,7 +302,7 @@ export default {
      * drag, or a value being typed.
      */
     hold() {
-      if (!this.ranges || !this.ranges.length || !Preferences.get('channelRangeGuide')) return;
+      if (!this.ranges || !this.ranges.length) return;
       clearTimeout(this.lingerTimer);
       if (this.shown) return;
       if (openField && openField !== this) openField.closeGuide();

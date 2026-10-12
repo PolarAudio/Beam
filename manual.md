@@ -563,7 +563,6 @@ On the **Visualizer** tab:
 - **Background** — colour behind the scene
 
 **Interface**
-- **Channel range guide** — a channel's ranges beside its DMX value while the value changes
 - **Debug** — frame timings and the tuning panel, in the viewport's top-right corner. Its folders are **Camera**, **Room** (light and haze), **LED**, **Mover beam** and **Laser**. The panel grows downwards as folders open and scrolls once it reaches the bottom of the viewport. Tuning values and which folders are open are kept between sessions. Double-click a control's name to put it back to its default, or **Reset all** at the top for every control. Two haze controls under **Room → Haze**: **swirl**, how much the air folds over itself, and **heading sweep**, how fast the drift changes direction. Both ride the turbulence slider.
 
 **The view cube.** Click a face to snap to that elevation. Faster than orbiting when you want a straight-on view — and straight-on views are what you want before exporting a camera projection.

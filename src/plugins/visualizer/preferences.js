@@ -119,11 +119,6 @@ const DEFAULTS = {
   /** Whether the frame timings and the shader tuning panel are on screen. */
   debug: false,
   /**
-   * Whether a channel's ranges are shown beside its DMX value while the value
-   * is being changed, where they can also be picked from.
-   */
-  channelRangeGuide: true,
-  /**
    * What sender mode speaks: `'sacn'` (multicast) or `'artnet'`. The mode
    * itself is never stored -- every launch receives -- but the protocol and
    * target are facts about this machine's rig.

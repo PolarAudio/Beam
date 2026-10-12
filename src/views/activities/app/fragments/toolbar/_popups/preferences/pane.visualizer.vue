@@ -216,16 +216,6 @@
     </div>
     <div
       class="row"
-      :title="tips.rangeGuide"
-    >
-      <span class="label">Channel range guide</span>
-      <uk-checkbox
-        v-model="channelRangeGuide"
-        class="span"
-      />
-    </div>
-    <div
-      class="row"
       :title="tips.debug"
     >
       <span class="label">Debug</span>
@@ -238,8 +228,6 @@
 </template>
 
 <script>
-import Preferences from '@/plugins/visualizer/preferences';
-
 /**
  * @component The visualiser's preferences: room, haze, reference and
  * interface. Mounted each time the Preferences window opens, which is when
@@ -269,32 +257,15 @@ export default {
         gridLineWidth: 'In pixels. Below 1 the lines go fainter rather than narrower: a line thinner than a pixel cannot be drawn, only dimmed.',
         axes: 'Show the origin axis indicator.',
         background: 'Colour behind the scene.',
-        rangeGuide: 'Show a channel\'s ranges beside its DMX value while the value changes.',
         debug: 'Show the frame timings and the tuning panel.',
       },
       /** Environment images in the library, as `{ key, name, url }`. */
       environments: [],
-      /** Mirrors the preference, which is not reactive on its own. */
-      channelRangeGuideState: Preferences.get('channelRangeGuide'),
       /** The settings as they stood when the window opened. */
       initialValues: null,
     };
   },
   computed: {
-    /**
-     * Whether DMX value fields show their channel's ranges while moving.
-     *
-     * @type {Boolean}
-     */
-    channelRangeGuide: {
-      get() {
-        return this.channelRangeGuideState;
-      },
-      set(value) {
-        this.channelRangeGuideState = !!value;
-        Preferences.set('channelRangeGuide', !!value);
-      },
-    },
     /**
      * Every choice the two environment lists offer.
      *

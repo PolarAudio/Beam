@@ -1872,6 +1872,7 @@ export default {
         contents,
         defaultName: `${this.madMapperProduct.replace(/[<>:"/\\|?*]/g, ' ').trim()}.mmfl`,
         startIn: 'madmapperFixtures',
+        folderKey: 'madmapper-fixture',
         title: 'Export fixture to MadMapper',
         filters: [{ name: 'MadMapper fixture', extensions: ['mmfl'] }],
       });

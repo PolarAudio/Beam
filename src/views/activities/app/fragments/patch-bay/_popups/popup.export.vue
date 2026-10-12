@@ -345,6 +345,7 @@ export default {
         // layout can carry several and claiming one of them would be a lie.
         defaultName: `${show}.svg`,
         startIn: 'madmapperFixtures',
+        folderKey: `madmapper-layout|${this.$show.documentPath || ''}`,
         title: 'Export layout for MadMapper',
         filters: [{ name: 'SVG fixture layout', extensions: ['svg'] }],
         companion: library ? { contents: library, extension: 'mmfl' } : null,

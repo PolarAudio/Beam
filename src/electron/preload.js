@@ -140,7 +140,7 @@ contextBridge.exposeInMainWorld('laser', {
  */
 contextBridge.exposeInMainWorld('fileExport', {
   /**
-   * @param {Object} payload contents, defaultName, startIn, filters, title,
+   * @param {Object} payload contents or pdfFromHtml, defaultName, startIn, filters, title,
    *   an optional companion `{ contents, extension }` written beside it, and
    *   an optional `remember` key that reuses this session's chosen path
    * @returns {Promise<String|null>} path written, or null when cancelled
@@ -457,7 +457,7 @@ contextBridge.exposeInMainWorld('documentStore', {
   /** @returns {Promise<String|null>} chosen path, or null when cancelled */
   open: () => ipcRenderer.invoke('document:open'),
   /** @returns {Promise<String|null>} chosen path, or null when cancelled */
-  saveAs: (name, title) => ipcRenderer.invoke('document:saveAs', name, title),
+  saveAs: (name, title, folderKey) => ipcRenderer.invoke('document:saveAs', name, title, folderKey),
   /** @returns {Promise<String>} the project's name, taken from its file name */
   projectName: (target) => ipcRenderer.invoke('document:projectName', target),
   /** @returns {Promise<String>} where the save dialog starts */

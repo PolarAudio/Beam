@@ -33,10 +33,6 @@ import buildBody from '../../plugins/visualizer/gdtf_body';
 import { headInputs } from './gdtf/fixture_parts';
 import { MAX_SHADOW_CASTERS } from '../../plugins/visualizer/light';
 
-const SHOWFILE_EXTENSIONS = {
-  JSON: 'json',
-};
-
 const fixtureDataCache = {};
 
 /**
@@ -231,6 +227,11 @@ class Show extends EventEmitter {
     // Installed once: the lookups read the live array each time, so inputs
     // added or removed later are found without re-installing.
     this.publishVideoInputs();
+    /**
+     * The project's details, set in Project Details and printed on the patch
+     * sheet: `{ author, version, notes }`, each free text.
+     */
+    this.details = Show.noDetails();
     /** Library models available to place, by key. Read once per load. */
     this.objectLibrary = {};
     /** Saved structure definitions, keyed by name, for placing again. */
@@ -298,6 +299,52 @@ class Show extends EventEmitter {
     this._isSaved = isSaved;
   }
 
+  /**
+   * Sets the project's details, marking the show changed when any differ.
+   *
+   * @public
+   * @param {Object} details `{ author, version, notes }`; missing fields are
+   *   left as they are
+   */
+  setDetails(details) {
+    const next = { ...this.details };
+    Object.keys(next).forEach((key) => {
+      if (details[key] !== undefined) next[key] = String(details[key] || '');
+    });
+    if (Object.keys(next).every((key) => next[key] === this.details[key])) return;
+    this.details = next;
+    this.touch();
+  }
+
+  /**
+   * Details with every field empty.
+   *
+   * @static
+   * @returns {Object}
+   */
+  static noDetails() {
+    return { author: '', version: '', notes: '' };
+  }
+
+  /**
+   * Details as a show file holds them. Older files kept only notes, at the top
+   * level as `notes` or `patchSheetNotes`.
+   *
+   * @static
+   * @param {Object} showData
+   * @returns {Object}
+   */
+  static detailsFrom(showData) {
+    const stored = showData.details || {
+      notes: showData.notes !== undefined ? showData.notes : showData.patchSheetNotes,
+    };
+    const details = Show.noDetails();
+    Object.keys(details).forEach((key) => {
+      if (typeof stored[key] === 'string') details[key] = stored[key];
+    });
+    return details;
+  }
+
   // eslint-disable-next-line class-methods-use-this
   get tick() {
     return Live.tick;
@@ -348,6 +395,7 @@ class Show extends EventEmitter {
       // being saved.
       cameras: Studio.showData,
       studio: Studio.showSettings,
+      details: Object.values(this.details).some(Boolean) ? { ...this.details } : undefined,
     };
   }
 
@@ -549,6 +597,15 @@ class Show extends EventEmitter {
    *
    * @type {String}
    */
+  /**
+   * The folder the open project lives in, or null for one never saved.
+   *
+   * @type {String|null}
+   */
+  get documentFolder() {
+    return this.documentPath ? this.documentPath.replace(/[\\/][^\\/]*$/, '') : null;
+  }
+
   get documentTitle() {
     return this.projectName || 'untitled';
   }
@@ -643,7 +700,7 @@ class Show extends EventEmitter {
    */
   async saveDocumentAs() {
     if (typeof window === 'undefined' || !window.documentStore) return false;
-    const target = await window.documentStore.saveAs(this.documentPath || this.projectName);
+    const target = await window.documentStore.saveAs(this.documentPath || this.projectName, undefined, 'project');
     // Cancelling a save dialog is an ordinary answer, not a failure.
     if (!target) return false;
     return this.writeDocument(target);
@@ -665,7 +722,11 @@ class Show extends EventEmitter {
    */
   async exportDocument() {
     if (typeof window === 'undefined' || !window.documentStore) return false;
-    const target = await window.documentStore.saveAs(this.projectName, 'Export project');
+    const target = await window.documentStore.saveAs(
+      this.projectName,
+      'Export project',
+      `project-export|${this.documentPath || ''}`,
+    );
     // Cancelling is an ordinary answer, not a failure.
     if (!target) return false;
     const json = JSON.stringify(this.showData, null, 2);
@@ -738,43 +799,6 @@ class Show extends EventEmitter {
     const res = await fetch(url);
     const data = await res.json();
     await this.loadFromData(data);
-  }
-
-  /**
-   * Loads showfile from provided frile
-   *
-   * @param {File} file handle to raw showfile instance
-   * @returns {Promise}
-   * @async
-   * @public
-   */
-  async loadFromFile(file) {
-    try {
-      const fileData = await Show.readFileAsync(file);
-      await this.loadShowFile(file.name, fileData);
-    } catch (err) {
-      console.log(err);
-    }
-  }
-
-  /**
-   * Parses and loads showfile from provided data
-   *
-   * @todo re-implement QLC loader better
-   *
-   * @param {String} filename Name of the file
-   * @param {Object} data RAW show data to be parsed
-   * @async
-   * @public
-   */
-  async loadShowFile(filename, data) {
-    const extension = Show._getShowFileType(filename);
-    const showData = await Show._parseShowData(data, extension);
-    await this.loadFromData(showData);
-    // Importing a loose showfile is not opening a project. Leaving the previous
-    // document in place would point Save at somebody else's project and write
-    // this show straight over it.
-    await this.setDocument(null);
   }
 
   /**
@@ -879,6 +903,7 @@ class Show extends EventEmitter {
     // and would fly straight over the top of it.
     const storedView = Studio.loadCameras(showData.cameras);
     Studio.loadSettings(showData.studio);
+    this.details = Show.detailsFrom(showData);
 
     this.loading.message = 'Patching fixtures';
     this.loading.percentage = 80;
@@ -2412,55 +2437,6 @@ class Show extends EventEmitter {
       generated: true,
       fixtures: byManufacturer[name],
     }));
-  }
-
-  /**
-   * Gets showfile type from showfile extension
-   *
-   * @todo Implement QLC and other showfile formats better
-   *
-   * @param {String} showFileName show file name
-   * @static
-   */
-  static _getShowFileType(showFileName) {
-    const splitted = showFileName.split('.');
-    return splitted[splitted.length - 1];
-  }
-
-  /**
-   * Parses show data
-   *
-   * @param {File} showFile handle to raw showfile instance
-   * @param {String} extension extendion of the provided showfile
-   * @static
-   */
-  static _parseShowData(showFile, extension) {
-    switch (extension) {
-      case SHOWFILE_EXTENSIONS.JSON:
-        return JSON.parse(showFile);
-      default:
-        throw new Error('Could not load provided file');
-    }
-  }
-
-  /**
-   * Reads a file asynchronously
-   *
-   * @todo put this in utils
-   *
-   * @param {File} file handle to file instance
-   * @static
-   * @async
-   */
-  static async readFileAsync(file) {
-    return new Promise((resolve, reject) => {
-      const fr = new FileReader();
-      fr.onload = () => {
-        resolve(fr.result);
-      };
-      fr.onerror = reject;
-      fr.readAsText(file);
-    });
   }
 }
 

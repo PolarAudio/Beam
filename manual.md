@@ -673,6 +673,15 @@ The picture comes from the stream; the fixture only corrects it. Each of these i
 - **A stream that stops goes dark.** A device that keeps sending a trickle after its content has stopped counts as stopped: under a quarter of its declared point rate, the beam goes out.
 - **Beams stop at the first surface they meet.** Each laser keeps a depth view of the scene from its own aperture, and only things that cast shadows count — the room, objects, LED bar bodies, moving head bodies. If you need to see a beam run through everything, the debug panel's **Laser** folder has a **stop at surfaces** switch. It isn't saved, so the next start is back to normal. **Log depth tiles** in the same folder writes each laser's depth view to the console, nearest surfaces first, which is the thing to look at when a beam ends somewhere it shouldn't.
 
+## The patch sheet
+
+**File → Export Patch Sheet (PDF)...** writes a PDF for whoever sets up the fixtures. **File → Project Details...** holds the project's author, version and notes, saved with the project. Author and version are printed under the title; the notes (venue, contact, power, anything the crew needs) go in a box at the top of the first page. A patch table that would start in the lower half of a page starts on the next one.
+
+- **The table** has one row per fixture, grouped by universe: number, name, type, mode, channel count, Art-Net universe, sACN universe, start and end channel, position, and whether it is hung, standing or sideways. Art-Net counts universes from 0 and sACN from 1, so both are given. Fixtures that are not patched are listed at the end.
+- **Fixture types** lists each type once, with its channel count and how many there are.
+- **The plan** is the scene seen from above, the audience at the bottom (-y). Each fixture is a circle numbered to match the table. Objects are grey outlines.
+- **Mover arrows.** A red arrow shows where the beam moves when tilt is raised above its centre with pan at its centre. The arrow does not show which way the display or controls on the base face, because a profile does not say. To place a mover on site, set pan to centre and tilt a little above centre, then turn the base until the beam follows the arrow.
+
 ## The MadMapper export in detail
 
 **File → Export MadMapper Layout.**
@@ -780,7 +789,7 @@ Files are MP4, H.264 video and AAC audio, constant frame rate. They play on phon
 
 ## Menus
 
-**File** — New Project, Open Project, Import JSON Project, Import GDTF..., Save Project, Export Project to..., Refresh from Library, Export MadMapper Layout
+**File** — New Project, Open Project, Save Project, Save Project As..., Import GDTF..., Export Project to..., Project Details..., Export Patch Sheet (PDF)..., Refresh from Library
 
 **Edit** — Undo, Redo, Copy, Paste, Preferences.
 

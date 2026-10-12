@@ -25,6 +25,7 @@
     <license-popup v-model="licensePopupState" />
     <credits-popup v-model="creditsPopupState" />
     <newshow-popup v-model="newProjectPopupState" />
+    <project-popup v-model="projectPopupState" />
     <video-popup
       v-model="videoPopupState"
       :focus-id="videoFocusId"
@@ -40,10 +41,12 @@ import confirm from '@/plugins/confirm';
 import importGdtfFiles from '@/plugins/gdtf_import';
 import ViewMode from '@/plugins/view_mode';
 import Screenshot from '@/plugins/visualizer/screenshot';
+import { exportPatchSheet } from '@/models/DMX/patch_sheet';
 import PreferencesPopup from './_popups/popup.preferences.vue';
 import LicensePopup from './_popups/popup.license.vue';
 import CreditsPopup from './_popups/popup.credits.vue';
 import NewshowPopup from './_popups/popup.newshow.vue';
+import ProjectPopup from './_popups/popup.project.vue';
 import VideoPopup from './_popups/popup.video.vue';
 
 export default {
@@ -57,6 +60,7 @@ export default {
     LicensePopup,
     CreditsPopup,
     NewshowPopup,
+    ProjectPopup,
     VideoPopup,
   },
   data() {
@@ -82,6 +86,8 @@ export default {
        * New project popup state
        */
       newProjectPopupState: false,
+      /** Project Details: the project's notes. */
+      projectPopupState: false,
       /** Full window, full screen and stay on top. */
       view: ViewMode.state,
       /** Whether the Preferences window is open, and the tab it opens on. */
@@ -138,13 +144,6 @@ export default {
               },
             },
             {
-              name: 'Import JSON Project',
-              icon: 'folder',
-              callback: () => {
-                this.loadFile();
-              },
-            },
-            {
               name: 'Import GDTF...',
               icon: 'folder',
               callback: () => {
@@ -157,6 +156,20 @@ export default {
               icon: 'export',
               callback: () => {
                 this.exportShow();
+              },
+            },
+            {
+              name: 'Project Details...',
+              icon: 'wrench',
+              callback: () => {
+                this.projectPopupState = true;
+              },
+            },
+            {
+              name: 'Export Patch Sheet (PDF)...',
+              icon: 'export',
+              callback: () => {
+                this.exportPatchSheet();
               },
             },
             {
@@ -426,33 +439,6 @@ export default {
       await importGdtfFiles(gdtf.map((file) => window.library.pathForFile(file)), this.$show);
     },
     /**
-     * Load showfile from native file loader
-     *
-     * @public
-     * @async
-     */
-    async loadFile() {
-      const el = document.createElement('input');
-      el.type = 'file';
-      el.accept = '.json,';
-      el.style.display = 'none';
-      el.addEventListener('change', async () => {
-        if (el.files) {
-          try {
-            this.$router.push('/');
-            await this.$show.loadFromFile(el.files[0]);
-            // Yeah it sucks... But cleaning up everything from the view was a nightmare so for now:
-            window.location.reload();
-          } catch (err) {
-            EventBus.emit('app_error', err);
-          }
-        }
-        document.body.removeChild(el);
-      });
-      document.body.appendChild(el);
-      el.click();
-    },
-    /**
      * Saves the show to the application's show file.
      *
      * @public
@@ -514,6 +500,19 @@ export default {
      */
     async exportShow() {
       await this.$show.exportDocument();
+    },
+    /**
+     * Writes the patch sheet as a PDF, with the project's notes on it.
+     *
+     * @public
+     * @async
+     */
+    async exportPatchSheet() {
+      try {
+        await exportPatchSheet(this.$show);
+      } catch (err) {
+        EventBus.emit('app_error', new Error(`Could not export the patch sheet: ${err.message}`));
+      }
     },
     /**
      * Replaces the profiles and objects an exported project carries with the

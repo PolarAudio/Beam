@@ -678,7 +678,7 @@ function setupDocumentStore() {
   ipcMain.handle('document:export', (_event, target, json, wanted) => projectexport.exportTo(target, json, wanted));
   ipcMain.handle('document:refresh', (_event, wanted) => projectexport.refresh(wanted));
   ipcMain.handle('document:open', () => documentstore.openDialog());
-  ipcMain.handle('document:saveAs', (_event, name, title) => documentstore.saveDialog(name, title));
+  ipcMain.handle('document:saveAs', (_event, name, title, folderKey) => documentstore.saveDialog(name, title, folderKey));
   ipcMain.handle('document:projectName', (_event, target) => documentstore.projectNameFor(target));
   ipcMain.handle('document:root', () => documentstore.projectRoot());
   // Claimed rather than read: the renderer opens it once, and a reload must not

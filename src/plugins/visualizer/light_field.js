@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 import Shapers, { SHAPER_GLSL } from './shapers';
+import DisplayLight from './display_light';
 
 RectAreaLightUniformsLib.init();
 
@@ -122,7 +123,9 @@ const SCENE_INTENSITY_PER_UNIT = CANDELA_PER_UNIT * LUX_SCALE;
  *  11: the light's row of the shaper table, -1 for no blades
  *
  * An area light uses texels 7 and 8, which it has no gobo or prism for, for
- * its rectangle: the half-width and half-height vectors, world.
+ * its rectangle: the half-width and half-height vectors, world. 7.w is its
+ * picture's tile in the display atlas, 1-based and negative when the
+ * rectangle's x runs against the panel's, 0 none; 8.w its intensity.
  *
  * `direction` is stored three's way round -- `normalize(position - target)`,
  * pointing back up the beam rather than along it -- so that the angle test
@@ -191,6 +194,8 @@ const record = {
   iris: 1,
   /** The light's row of the shaper table, -1 for no blades. */
   shaperRow: -1,
+  /** An area light's atlas tile, signed and 1-based as texel 7.w; 0 none. */
+  pictureSlot: 0,
   /** An area light's half-width and half-height, world; read when iris is -1. */
   rectX: new THREE.Vector3(),
   rectY: new THREE.Vector3(),
@@ -228,6 +233,8 @@ const uniforms = {
   // display is not reflected twice.
   lightFieldAreaSpecular: { value: 1 },
   lightFieldLtc2: { value: THREE.UniformsLib.LTC_HALF_2 },
+  // Every lit display's panel, mipmapped; see display_light.js.
+  lightFieldPictures: DisplayLight.atlasUniform,
 };
 
 /** Builds the texture, or rebuilds it after the store has grown. */
@@ -296,8 +303,19 @@ const FIELD_LIGHT_CHUNK = /* glsl */`
     // luminance and one far off sees a point.
     vec4 packedLens = texelFetch( lightField, ivec2( 10, i ), 0 );
     bool areaLight = packedLens.x < -0.5;
+    vec3 areaColor = packedColor.rgb;
+    vec3 rectX = vec3( 0.0 );
+    vec3 rectY = vec3( 0.0 );
     if ( areaLight ) {
       attenuation = exp( -lightFieldExtinction * lightDistance );
+      vec4 packedRectX = texelFetch( lightField, ivec2( 7, i ), 0 );
+      vec4 packedRectY = texelFetch( lightField, ivec2( 8, i ), 0 );
+      rectX = ( viewMatrix * vec4( packedRectX.xyz, 0.0 ) ).xyz;
+      rectY = ( viewMatrix * vec4( packedRectY.xyz, 0.0 ) ).xyz;
+      if ( abs( packedRectX.w ) > 0.5 ) {
+        areaColor = fieldPicture( geometryPosition - lightPosition, rectX, rectY, packedRectX.w ) * packedRectY.w;
+      }
+      farColor = areaColor;
 #ifndef STANDARD
       attenuation *= angleCos / ( lightDistance * lightDistance + packedLens.y * packedLens.y );
 #endif
@@ -390,14 +408,12 @@ const FIELD_LIGHT_CHUNK = /* glsl */`
     // diffuse and specular integrated over its corners, wound so its normal
     // faces the lit side. attenuation holds only extinction and shadow here.
     if ( areaLight ) {
-      vec3 rectX = ( viewMatrix * vec4( texelFetch( lightField, ivec2( 7, i ), 0 ).xyz, 0.0 ) ).xyz;
-      vec3 rectY = ( viewMatrix * vec4( texelFetch( lightField, ivec2( 8, i ), 0 ).xyz, 0.0 ) ).xyz;
       vec3 rectCoords[ 4 ];
       rectCoords[ 0 ] = lightPosition + rectX - rectY;
       rectCoords[ 1 ] = lightPosition - rectX - rectY;
       rectCoords[ 2 ] = lightPosition - rectX + rectY;
       rectCoords[ 3 ] = lightPosition + rectX + rectY;
-      vec3 luminance = packedColor.rgb * attenuation / max( 4.0 * length( rectX ) * length( rectY ), 1e-6 );
+      vec3 luminance = areaColor * attenuation / max( 4.0 * length( rectX ) * length( rectY ), 1e-6 );
       vec2 ltcUv = LTC_Uv( geometryNormal, geometryViewDir, material.roughness );
       vec4 ltc1 = texture2D( lightFieldLtc1, ltcUv );
       vec4 ltc2 = texture2D( lightFieldLtc2, ltcUv );
@@ -410,7 +426,7 @@ const FIELD_LIGHT_CHUNK = /* glsl */`
       continue;
     }
 #endif
-    fieldLight.color = mix( packedColor.rgb, farColor, farShare ) * attenuation;
+    fieldLight.color = mix( areaColor, farColor, farShare ) * attenuation;
     fieldLight.visible = true;
     RE_Direct( fieldLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight );
   }
@@ -434,7 +450,36 @@ uniform sampler2D lightFieldShapers;
 uniform sampler2D lightFieldLtc1;
 uniform sampler2D lightFieldLtc2;
 uniform float lightFieldAreaSpecular;
+uniform sampler2D lightFieldPictures;
 ${SHAPER_GLSL}
+
+// The display atlas, as display_light.js: GRID tiles across of TILE texels.
+#define FIELD_PICTURE_GRID 4.0
+#define FIELD_PICTURE_TILE 128.0
+
+// A display's light at a point, per unit intensity. A point takes light from
+// the whole panel weighted by cos^2 / d^2, which gathers the part of it within
+// about the point's distance from the panel's plane. So: the panel point
+// nearest the point, read from a mip whose texel is twice that distance.
+// d is from the panel's centre; rx and ry its half-width and half-height
+// vectors; slot as texel 7.w. An explicit level, as the loop diverges.
+vec3 fieldPicture( vec3 d, vec3 rx, vec3 ry, float slot ) {
+  float lx2 = max( dot( rx, rx ), 1e-8 );
+  float ly2 = max( dot( ry, ry ), 1e-8 );
+  vec2 p = vec2( dot( d, rx ) / lx2, dot( d, ry ) / ly2 );
+  if ( slot < 0.0 ) p.x = -p.x;
+  vec2 panel = clamp( p * 0.5 + 0.5, 0.0, 1.0 );
+  float h = abs( dot( d, normalize( cross( rx, ry ) ) ) );
+  float texelWorld = 2.0 * sqrt( max( lx2, ly2 ) ) / FIELD_PICTURE_TILE;
+  float lod = clamp( log2( max( 2.0 * h, 1e-4 ) / texelWorld ), 0.0, log2( FIELD_PICTURE_TILE ) );
+  // Kept half a texel of the coarser level inside the tile, so the filter
+  // never reaches a neighbour.
+  float edge = 0.5 * exp2( ceil( lod ) ) / FIELD_PICTURE_TILE;
+  vec2 q = clamp( panel, vec2( edge ), vec2( 1.0 - edge ) );
+  float index = abs( slot ) - 1.0;
+  vec2 cell = vec2( mod( index, FIELD_PICTURE_GRID ), floor( index / FIELD_PICTURE_GRID ) );
+  return textureLod( lightFieldPictures, ( cell + q ) / FIELD_PICTURE_GRID, lod ).rgb;
+}
 
 // Soft shadows. The lens is a disc, not a point: a surface point sees the part
 // of it no blocker hides, and that share is the light it gets. Seen from the
@@ -738,6 +783,7 @@ const LightField = {
       record.invFocus = 0;
       record.cosReach = null;
       record.shaperRow = -1;
+      record.pictureSlot = 0;
       if (sources[i].readLight(record)) {
         LightField.ensureCapacity(count + 1);
         const at = count * TEXELS_PER_LIGHT * 4;
@@ -780,12 +826,12 @@ const LightField = {
         data[at + 28] = area ? record.rectX.x : record.gobo.x;
         data[at + 29] = area ? record.rectX.y : record.gobo.y;
         data[at + 30] = area ? record.rectX.z : record.gobo.z;
-        data[at + 31] = area ? 0 : record.gobo.w;
+        data[at + 31] = area ? record.pictureSlot : record.gobo.w;
 
         data[at + 32] = area ? record.rectY.x : record.prism.x;
         data[at + 33] = area ? record.rectY.y : record.prism.y;
         data[at + 34] = area ? record.rectY.z : record.prism.z;
-        data[at + 35] = area ? 0 : record.prism.w;
+        data[at + 35] = area ? record.intensity : record.prism.w;
 
         const far = record.split > 0 ? record.colorB : record.color;
         data[at + 36] = far.r * record.intensity;

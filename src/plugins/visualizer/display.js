@@ -492,19 +492,25 @@ class Display {
     // needs it to carry a cell centre found on the panel back into the picture,
     // and taking it from the mapping itself means a rotated or mirrored slice
     // is already accounted for.
-    const uniforms = this._material && this._material.uniforms;
-    if (!uniforms || !uniforms.pictureAxisX) return;
     const origin = pick(0, 0);
     const alongX = pick(1, 0);
     const alongY = pick(0, 1);
-    uniforms.pictureAxisX.value.set(alongX.x - origin.x, alongX.y - origin.y);
-    uniforms.pictureAxisY.value.set(alongY.x - origin.x, alongY.y - origin.y);
     // Where the input holds picture, in the texture's coordinates: outside it
     // is the black of a fitted picture's bars.
     const { bounds } = mapping;
-    if (uniforms.pictureBounds) {
-      uniforms.pictureBounds.value.set(bounds.x0, 1 - bounds.y1, bounds.x1, 1 - bounds.y0);
-    }
+    // The same frame for the light the display throws, which samples the
+    // picture across the panel.
+    this._pictureFrame = {
+      origin: new THREE.Vector2(origin.x, origin.y),
+      axisX: new THREE.Vector2(alongX.x - origin.x, alongX.y - origin.y),
+      axisY: new THREE.Vector2(alongY.x - origin.x, alongY.y - origin.y),
+      bounds: new THREE.Vector4(bounds.x0, 1 - bounds.y1, bounds.x1, 1 - bounds.y0),
+    };
+    const uniforms = this._material && this._material.uniforms;
+    if (!uniforms || !uniforms.pictureAxisX) return;
+    uniforms.pictureAxisX.value.copy(this._pictureFrame.axisX);
+    uniforms.pictureAxisY.value.copy(this._pictureFrame.axisY);
+    if (uniforms.pictureBounds) uniforms.pictureBounds.value.copy(this._pictureFrame.bounds);
   }
 
   /**
@@ -675,7 +681,9 @@ class Display {
       const input = display._inputAt();
       const feed = input ? VideoRouter.feedFor(input.id) : null;
       if (!feed || !feed.displayTexture) return;
-      entries.push({ owner: display, texture: feed.displayTexture });
+      entries.push({
+        owner: display, texture: feed.displayTexture, frame: display._pictureFrame || null,
+      });
     });
     DisplayLight.update(renderer, entries);
   }
@@ -728,7 +736,12 @@ class Display {
     // half-width cross half-height points away from the lit side.
     record.rectX.set(width / 2, 0, 0).transformDirection(this._dummy.matrixWorld).multiplyScalar(width / 2);
     record.rectY.set(0, 0, 1).transformDirection(this._dummy.matrixWorld).multiplyScalar(height / 2);
-    if (lookTarget.crossVectors(record.rectX, record.rectY).dot(screenNormal) > 0) record.rectX.negate();
+    const mirrored = lookTarget.crossVectors(record.rectX, record.rectY).dot(screenNormal) > 0;
+    if (mirrored) record.rectX.negate();
+    // The picture's tile in the display atlas, 1-based, negative when the
+    // rectangle's x runs against the panel's.
+    const slot = DisplayLight.slotOf(this);
+    record.pictureSlot = slot < 0 ? 0 : (slot + 1) * (mirrored ? -1 : 1);
     if (this._depthSlot >= 0 && this._depthRect) {
       const cam = this._depthCam;
       record.hasTile = true;

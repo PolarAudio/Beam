@@ -39,6 +39,7 @@ import Selection from '@/models/DMX/selection';
 import confirm from '@/plugins/confirm';
 import importGdtfFiles from '@/plugins/gdtf_import';
 import ViewMode from '@/plugins/view_mode';
+import Screenshot from '@/plugins/visualizer/screenshot';
 import PreferencesPopup from './_popups/popup.preferences.vue';
 import LicensePopup from './_popups/popup.license.vue';
 import CreditsPopup from './_popups/popup.credits.vue';
@@ -122,6 +123,21 @@ export default {
               },
             },
             {
+              name: 'Save Project',
+              shortcut: 'Ctrl+S',
+              icon: 'save',
+              callback: () => {
+                this.saveShow();
+              },
+            },
+            {
+              name: 'Save Project As...',
+              icon: 'save',
+              callback: () => {
+                this.saveShowAs();
+              },
+            },
+            {
               name: 'Import JSON Project',
               icon: 'folder',
               callback: () => {
@@ -133,14 +149,6 @@ export default {
               icon: 'folder',
               callback: () => {
                 this.importGdtf();
-              },
-            },
-            {
-              name: 'Save Project',
-              shortcut: 'Ctrl+S',
-              icon: 'save',
-              callback: () => {
-                this.saveShow();
               },
             },
             {
@@ -230,6 +238,13 @@ export default {
               name: 'Stay on top',
               icon: ViewMode.state.stayOnTop ? 'tick' : 'undef',
               callback: () => ViewMode.toggleStayOnTop(),
+            },
+            {
+              name: 'Copy view to clipboard',
+              icon: 'export',
+              callback: () => {
+                this.copyView();
+              },
             },
           ],
         },
@@ -461,6 +476,34 @@ export default {
       // Save means save the document. With nowhere to write yet this becomes
       // Save As, because choosing where a first save lands is the user's.
       await this.$show.saveDocument();
+    },
+    /**
+     * Saves the show to a document the user picks.
+     *
+     * @public
+     * @async
+     */
+    async saveShowAs() {
+      await this.$show.saveDocumentAs();
+    },
+    /**
+     * Puts the 3D view on the clipboard as an image.
+     *
+     * @public
+     * @async
+     */
+    async copyView() {
+      try {
+        await Screenshot.copyView();
+      } catch (err) {
+        await confirm({
+          title: 'Copy view to clipboard',
+          message: 'The view could not be copied to the clipboard.',
+          detail: err.message,
+          yes: 'OK',
+          no: 'Close',
+        });
+      }
     },
     /**
      * Writes a frozen copy of the show, with everything it references, to a

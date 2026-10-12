@@ -634,7 +634,8 @@ class Show extends EventEmitter {
   }
 
   /**
-   * Saves the show to a document the user picks.
+   * Saves the show to a document the user picks. The dialog opens on the
+   * current document when there is one.
    *
    * @public
    * @async
@@ -642,7 +643,7 @@ class Show extends EventEmitter {
    */
   async saveDocumentAs() {
     if (typeof window === 'undefined' || !window.documentStore) return false;
-    const target = await window.documentStore.saveAs(this.projectName);
+    const target = await window.documentStore.saveAs(this.documentPath || this.projectName);
     // Cancelling a save dialog is an ordinary answer, not a failure.
     if (!target) return false;
     return this.writeDocument(target);

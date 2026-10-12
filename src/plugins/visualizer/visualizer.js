@@ -126,6 +126,7 @@ import Strobe from './strobe';
 import StrobeWashEffect from './strobe_wash';
 import { SelectionOutlineEffect } from './selection_outline';
 import Recorder from './recorder';
+import Screenshot from './screenshot';
 import {
   EffectComposer,
   RenderPass,
@@ -2544,6 +2545,7 @@ class Visualizer {
     // The finished picture, before anything is drawn over it. The recorder
     // takes it only when its own clock has reached the next frame slot.
     Recorder.frameDrawn();
+    Screenshot.frameDrawn(this.renderer.domElement);
 
     // Over the finished image, and after Perf.end() so their own cost is not
     // counted against the scene it is reporting on. The move gizmo is not

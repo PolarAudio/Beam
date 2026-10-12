@@ -413,21 +413,28 @@ async function openDialog() {
  * has actually asked to save something. Whatever they choose is then taken
  * literally: the file lands exactly where they said it would.
  *
- * @param {String} [suggestedName] project name, extension excluded
+ * @param {String} [suggested] the open document's absolute path, or a
+ *   project name, extension excluded, to place in the project root
  * @param {String} [title] dialog title
  * @returns {Promise<String|null>} chosen path, or null when cancelled
  */
-async function saveDialog(suggestedName, title) {
-  const name = suggestedName && String(suggestedName).trim() ? String(suggestedName) : 'Untitled';
-  const root = projectRoot();
-  try {
-    fs.mkdirSync(root, { recursive: true });
-  } catch (err) {
-    console.error(`[documentstore] could not create ${root}: ${err.message}`);
+async function saveDialog(suggested, title) {
+  let defaultPath;
+  if (suggested && path.isAbsolute(String(suggested))) {
+    defaultPath = String(suggested);
+  } else {
+    const name = suggested && String(suggested).trim() ? String(suggested) : 'Untitled';
+    const root = projectRoot();
+    try {
+      fs.mkdirSync(root, { recursive: true });
+    } catch (err) {
+      console.error(`[documentstore] could not create ${root}: ${err.message}`);
+    }
+    defaultPath = path.join(root, `${name}${EXTENSION}`);
   }
   const result = await dialog.showSaveDialog({
     title: title || 'Save project',
-    defaultPath: path.join(root, `${name}${EXTENSION}`),
+    defaultPath,
     filters: [{ name: 'Beam project', extensions: ['beam'] }],
     properties: ['createDirectory'],
   });

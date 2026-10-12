@@ -322,13 +322,14 @@ let occlusionEnabled = true;
 /**
  * The haze's scattering coefficient at full haze, per metre.
  *
- * Full haze is a thick stage haze with 10 m visibility. Visibility is where
- * contrast falls to 2 %, so the coefficient is ln(50) / 10 m; a lower haze
- * setting scales it linearly. The same coefficient sets how much light the
+ * Full haze is a thick concert haze with 50 m visibility, across which
+ * beams still read in an arena. Visibility is where contrast falls to 2 %,
+ * so the coefficient is ln(50) / 50 m; a lower haze setting scales it
+ * linearly. The same coefficient sets how much light the
  * air scatters out of a beam towards the eye and how fast the beam is
  * eaten on its way.
  */
-export const HAZE_SCATTER_AT_FULL = Math.log(50) / 10;
+export const HAZE_SCATTER_AT_FULL = Math.log(50) / 50;
 
 /**
  * The beam fragment shader, with the scene's haze configuration prepended.
@@ -3509,7 +3510,9 @@ class Light {
       // the surface fade reads the scene's depth, and this sits exactly where
       // the beam starts. It is a lens face, not an obstacle.
       depthWrite: false,
-      side: THREE.DoubleSide,
+      // The face emits forwards only: seen from behind, wherever the housing
+      // does not cover it, it would show at the lens's full brightness.
+      side: THREE.FrontSide,
     });
     // Something a reflection can meet, though it writes no depth: see
     // reflections.js.

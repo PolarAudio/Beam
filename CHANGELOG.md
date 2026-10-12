@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.1.0-alpha.21
+
+### LED fixtures
+
+- LED bars and panels are drawn at their real luminance, worked out from the fixture's lumens. A definition can state **Lumens** in the create dialog; without it a strip LED counts as 4 lm (a WS2812B) and a tile as 1500 nits over its face. An LED smaller than a screen pixel is drawn about a pixel wide with its light kept. The glare comes from bloom. LEDs are dark from behind.
+- LED bars and panels light the room. Each is a rectangle light the size of its face, coloured per point from its own pixels: a surface near the red end of a bar is lit red. No shadows yet.
+- The LED debug sliders for gain, die size, halo strength, near dimming and back scatter no longer affect LED fixtures.
+
+### Displays
+
+- A display's light takes its colour from the part of the picture nearest each surface point, blurred with distance, instead of from the whole picture's average.
+- **See-through** displays: a mesh screen with the LEDs on opaque strips along the rows and open space between them, in a frame with no back. **Transparency %** is the open share as quoted; 0 makes each strip as tall as its LEDs.
+
+### Reflections
+
+- Screen-space reflections trace a depth pyramid instead of a fixed march, so thin bars no longer break into dots in a reflection.
+- The largest glossy flat surface is reflected as a mirror: the scene is drawn from below it, blurred by roughness and distance. Vertical glossy faces still use screen-space reflections.
+
+### Fixtures
+
+- Framing blades are drawn only when inserted. All blades at 0 no longer square the beam, and one inserted blade no longer draws all four.
+- A gobo or colour wheel stops spinning when its channel leaves the spin range for a wheel mode or a range with no function.
+- A lens face's brightness cap is 30 times higher, so an LED bar's lens and a discharge spot's no longer draw the same. Seen from behind, a lens face no longer glows.
+- Full haze is 50 m visibility, was 10 m. A beam seen from across a large room no longer fades out while the floor behind it stays bright; beams seen over more than about 5 m are brighter than before.
+
+### Interface
+
+- **File → Save Project** sits under Open Project and saves without a dialog; **Save Project As…** opens the dialog on the current file.
+- **View → Copy view to clipboard** copies the 3D view as a PNG, without the gizmo, view cube or timings.
+- The channel range guide is always on; its preference is gone.
+
 ## 0.1.0-alpha.20
 
 ### Video inputs

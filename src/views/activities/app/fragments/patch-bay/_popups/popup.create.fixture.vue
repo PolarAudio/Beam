@@ -121,6 +121,15 @@
             :min="10"
             :max="180"
           />
+          <!-- The whole fixture at full white. 0 takes a typical figure:
+               4 lm per strip emitter, or 1500 nits over a tile's face. -->
+          <uk-num-input
+            v-model="barLumens"
+            class="field"
+            label="Lumens"
+            :min="0"
+            :max="1000000"
+          />
           <uk-select-input
             v-model="orderIndex"
             style="width: 110px"
@@ -897,6 +906,7 @@ export default {
       rows: DEFAULT_BAR_PARAMS.rows,
       emitterSize: DEFAULT_BAR_PARAMS.emitterSize * MM,
       beamAngle: DEFAULT_BAR_PARAMS.beamAngle,
+      barLumens: 0,
       orderIndex: Math.max(ORDERS.indexOf(DEFAULT_BAR_PARAMS.order), 0),
       orders: ORDERS,
       startCornerIndex: Math.max(CORNERS.indexOf(DEFAULT_BAR_PARAMS.startCorner), 0),
@@ -1542,6 +1552,7 @@ export default {
         rows: this.rows,
         emitterSize: this.emitterSize / MM,
         beamAngle: this.beamAngle,
+        lumens: this.barLumens > 0 ? this.barLumens : undefined,
         order: this.order,
         startCorner: this.startCorner,
         scanAxis: this.scanAxis,

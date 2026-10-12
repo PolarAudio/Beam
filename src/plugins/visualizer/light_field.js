@@ -454,8 +454,8 @@ uniform sampler2D lightFieldPictures;
 ${SHAPER_GLSL}
 
 // The display atlas, as display_light.js: GRID tiles across of TILE texels.
-#define FIELD_PICTURE_GRID 4.0
-#define FIELD_PICTURE_TILE 128.0
+#define FIELD_PICTURE_GRID ${DisplayLight.GRID.toFixed(1)}
+#define FIELD_PICTURE_TILE ${DisplayLight.TILE.toFixed(1)}
 
 // A display's light at a point, per unit intensity. A point takes light from
 // the whole panel weighted by cos^2 / d^2, which gathers the part of it within

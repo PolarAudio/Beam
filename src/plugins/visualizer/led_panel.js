@@ -7,8 +7,10 @@ import {
   GLOW_BASE_SIZE, STANDOFF,
 } from './led_field';
 import {
-  gridSteps, gridPitch, START_CORNERS, SCAN_AXES,
+  gridSteps, gridPitch, barLumens, START_CORNERS, SCAN_AXES, DEFAULT_BAR_PARAMS,
 } from '../../models/DMX/generic/led_bar';
+import LightField, { SCENE_PER_NIT } from './light_field';
+import DisplayLight from './display_light';
 // eslint-disable-next-line import/no-unresolved, import/extensions
 import { hazeShaderPrelude, hazeUniforms } from './haze_noise';
 import { castsContactShadow } from './contact_shadows';
@@ -48,6 +50,15 @@ import { castsContactShadow } from './contact_shadows';
  * addressing, and for whatever polyline strip fixture eventually needs to walk
  * arbitrary endpoints, which no lattice can be inverted for.
  */
+
+/**
+ * Emitters at their real luminance, from the fixture's lumens, rather than
+ * at the tuned gain with a halo and near-camera dimming. False restores the
+ * tuned look.
+ *
+ * @constant {Boolean}
+ */
+const PHOTOMETRIC_LEDS = true;
 
 /**
  * Cells a screen pixel may span before the fragment stops resolving individual
@@ -229,7 +240,73 @@ const GLOW_GEOMETRY = new THREE.BoxGeometry(1, 1, 1);
 
 const scratch = {
   offset: new THREE.Vector3(),
+  axisX: new THREE.Vector3(),
+  axisY: new THREE.Vector3(),
+  normal: new THREE.Vector3(),
+  cross: new THREE.Vector3(),
 };
+
+/** Furthest a fixture's light is followed, in metres, as for a display. */
+const LIGHT_RANGE_MAX = 60;
+
+/** Illuminance at which a fixture's light is no longer followed, in lux. */
+const LIGHT_FLOOR_LUX = 0.1;
+
+/**
+ * A panel as an area light, for `LightField`: a matte rectangle the size of
+ * its emitting face at its mean luminance, coloured per point from its
+ * picture in the display atlas -- the same light a display throws.
+ *
+ * @param {Object} panel
+ * @param {Object} record the field's record, filled in
+ * @returns {Boolean} whether it is lighting anything
+ */
+function readPanelLight(panel, record) {
+  if (!panel.mesh.visible || !(panel.faceLuminance > 0)) return false;
+  const slot = DisplayLight.slotOf(panel);
+  if (slot < 0) return false;
+  const matrix = panel.mesh.matrixWorld;
+  const axisX = scratch.axisX.setFromMatrixColumn(matrix, 0).normalize();
+  const axisY = scratch.axisY.setFromMatrixColumn(matrix, 1).normalize();
+  const normal = scratch.normal.setFromMatrixColumn(matrix, 2).normalize();
+  const area = 4 * panel.halfFace.x * panel.halfFace.y;
+
+  record.position.setFromMatrixPosition(matrix).addScaledVector(normal, 0.002);
+  record.direction.copy(normal).negate();
+  record.color.setRGB(1, 1, 1);
+  // Luminance times area is the candela straight out; on the field's scale.
+  record.intensity = panel.faceLuminance * area;
+  record.range = Math.min(
+    LIGHT_RANGE_MAX,
+    Math.sqrt(record.intensity / SCENE_PER_NIT / LIGHT_FLOOR_LUX),
+  );
+  record.cosOuter = 0;
+  record.cosInner = 0;
+  record.iris = -1;
+  record.lensRadius = Math.sqrt(area / Math.PI);
+  // Wound for the field: half-width cross half-height points away from the
+  // lit side. The atlas tile is signed when that turns x against the panel's.
+  record.rectX.copy(axisX).multiplyScalar(panel.halfFace.x);
+  record.rectY.copy(axisY).multiplyScalar(panel.halfFace.y);
+  const mirrored = scratch.cross.crossVectors(record.rectX, record.rectY).dot(normal) > 0;
+  if (mirrored) record.rectX.negate();
+  record.pictureSlot = (slot + 1) * (mirrored ? -1 : 1);
+  return true;
+}
+
+// Every lit panel's picture goes into the display atlas, for its light.
+DisplayLight.provide(() => {
+  const pictures = [];
+  if (!PHOTOMETRIC_LEDS) return pictures;
+  panels.forEach((panel) => {
+    if (panel.mesh.visible && panel.faceLuminance > 0) {
+      pictures.push({
+        owner: panel, texture: panel.target.texture, frame: DisplayLight.WHOLE_PICTURE,
+      });
+    }
+  });
+  return pictures;
+});
 
 const SHADER_DEFINES = /* glsl */`
   #define UNIVERSE_SIZE ${DMXStore.UNIVERSE_SIZE}
@@ -371,7 +448,7 @@ const PANEL_VERTEX = /* glsl */`
   }
 `;
 
-const PANEL_FRAGMENT = /* glsl */`
+const PANEL_FRAGMENT_HEAD = /* glsl */`
   uniform sampler2D panelTexture;
   uniform ivec2 gridSize;
   /** Cell size in metres, per axis: a cell need not be square. */
@@ -390,6 +467,10 @@ const PANEL_FRAGMENT = /* glsl */`
    */
   uniform float cellNorm;
   uniform float beamCutoff;
+  /** One die's luminance at full white, in scene units. */
+  uniform float dieLuminance;
+  /** One die's real radius, in metres. */
+  uniform float dieRadiusMetres;
 
   // Shared by reference with the billboard emitters, so a strip and a tile
   // standing side by side cannot drift and one debug panel drives both.
@@ -415,7 +496,10 @@ const PANEL_FRAGMENT = /* glsl */`
     float halo = pow(max(0.0, 1.0 - u), 3.0);
     return die + halo * haloStrength * distanceScale;
   }
+`;
 
+/** The tuned emitter: gain, a halo, and dimming as the camera closes in. */
+const PANEL_MAIN_TUNED = /* glsl */`
   void main() {
     vec3 normal = normalize(vNormalWorld);
     vec3 toCamera = normalize(vToCamera);
@@ -497,6 +581,77 @@ const PANEL_FRAGMENT = /* glsl */`
   }
 `;
 
+/** The photometric emitter. */
+const PANEL_MAIN_PHOTOMETRIC = /* glsl */`
+  // Photometric: each die is a disc of its real size at its real luminance.
+  // Smaller than a pixel, it is drawn about a pixel wide at the luminance
+  // that keeps its flux, so it neither vanishes nor shimmers. Glare is the
+  // bloom's, as for any other very bright source.
+  void main() {
+    vec3 normal = normalize(vNormalWorld);
+    vec3 toCamera = normalize(vToCamera);
+    float facing = dot(normal, toCamera);
+    // Within the emission cone at full luminance, falling away near its edge.
+    // Behind the face nothing: the body and board hide the dies.
+    float visibility = smoothstep(beamCutoff, mix(beamCutoff, 1.0, 0.15), facing);
+
+    vec2 p = (vUv - 0.5) * (halfQuad * 2.0);
+    vec2 grid = vec2(
+      (p.x + halfFace.x) / cellSize.x,
+      (halfFace.y - p.y) / cellSize.y
+    );
+    float cellsPerPixel = max(fwidth(grid.x), fwidth(grid.y));
+    float farness = smoothstep(
+      ${DETAIL_RANGE[0].toFixed(2)},
+      ${DETAIL_RANGE[1].toFixed(2)},
+      cellsPerPixel
+    );
+    float pixelMetres = max(fwidth(p.x), fwidth(p.y));
+    float dieArea = 3.14159265 * dieRadiusMetres * dieRadiusMetres;
+
+    // Far field: the mean over a cell is the die's luminance times the share
+    // of the cell it covers.
+    vec2 faceUv = (p + halfFace) / (halfFace * 2.0);
+    float beyond = length(max(abs(p) - halfFace, vec2(0.0)));
+    float within = pow(max(0.0, 1.0 - beyond / (quadSize * 0.5)), 3.0);
+    vec3 far = texture2D(panelTexture, clamp(faceUv, 0.0, 1.0)).rgb
+      * dieLuminance * dieArea / (cellSize.x * cellSize.y) * within;
+
+    vec3 near = vec3(0.0);
+    if (farness < 0.999) {
+      float cellMin = min(cellSize.x, cellSize.y);
+      float radius = min(
+        max(dieRadiusMetres, 0.75 * pixelMetres),
+        max(dieRadiusMetres, 0.5 * cellMin)
+      );
+      float edge = min(0.5 * pixelMetres, 0.5 * radius);
+      float scale = dieRadiusMetres * dieRadiusMetres / (radius * radius);
+      ivec2 cell = ivec2(floor(grid));
+      for (int dy = -1; dy <= 1; dy += 1) {
+        for (int dx = -1; dx <= 1; dx += 1) {
+          ivec2 at = cell + ivec2(dx, dy);
+          if (at.x < 0 || at.y < 0 || at.x >= gridSize.x || at.y >= gridSize.y) continue;
+          float d = length((grid - (vec2(at) + 0.5)) * cellSize);
+          if (d > radius + edge) continue;
+          vec3 emitted = texelFetch(
+            panelTexture,
+            ivec2(at.x, gridSize.y - 1 - at.y),
+            0
+          ).rgb;
+          near += emitted * (1.0 - smoothstep(radius - edge, radius + edge, d));
+        }
+      }
+      near *= dieLuminance * scale;
+    }
+
+    // Linear HDR on purpose: tone mapping happens in the composer.
+    gl_FragColor = vec4(mix(near, far, farness) * visibility, 1.0);
+  }
+`;
+
+const PANEL_FRAGMENT = PANEL_FRAGMENT_HEAD
+  + (PHOTOMETRIC_LEDS ? PANEL_MAIN_PHOTOMETRIC : PANEL_MAIN_TUNED);
+
 /**
  * Scattered light from a fixture, marched through the air around it.
  *
@@ -566,6 +721,8 @@ const PANEL_GLOW_FRAGMENT = `${hazeShaderPrelude() /* glsl */}
   uniform vec3 faceNormal;
 
   uniform float glowSize;
+  /** The fixture's face luminance against the default strip's. */
+  uniform float glowScale;
   uniform float haloFalloff;
   uniform float haloRadiance;
   uniform float haloBackScatter;
@@ -669,7 +826,7 @@ const PANEL_GLOW_FRAGMENT = `${hazeShaderPrelude() /* glsl */}
     total *= dt / r;
 
     // Linear HDR on purpose: tone mapping happens in the composer.
-    gl_FragColor = vec4(total * hazeAmount * haloRadiance, 1.0);
+    gl_FragColor = vec4(total * hazeAmount * haloRadiance * glowScale, 1.0);
   }
 `;
 
@@ -780,6 +937,32 @@ function geometryOf(params) {
 }
 
 /**
+ * What one emitter puts out at full white.
+ *
+ * Each emitter is a Lambertian disc of the emitter size: its on-axis candela
+ * is its flux over pi, and its luminance that over its area. The face's mean
+ * luminance is the same candela over a cell.
+ *
+ * @param {Object} params bar parameters
+ * @returns {Object} `{ dieLuminance, dieRadius, faceLuminance }`, luminance in
+ *   scene units
+ */
+function emitterOutput(params) {
+  const count = Math.max(params.columns, 1) * Math.max(params.rows, 1);
+  const candela = barLumens(params) / count / Math.PI;
+  const dieRadius = Math.max(params.emitterSize, 1e-4) / 2;
+  const { stepX, stepY } = gridSteps(params);
+  return {
+    dieLuminance: (candela / (Math.PI * dieRadius * dieRadius)) * SCENE_PER_NIT,
+    dieRadius,
+    faceLuminance: (candela / Math.max(stepX * stepY, 1e-8)) * SCENE_PER_NIT,
+  };
+}
+
+/** The default strip's mean face luminance, which the tuned glow was set against. */
+const REFERENCE_FACE_LUMINANCE = emitterOutput(DEFAULT_BAR_PARAMS).faceLuminance;
+
+/**
  * Creates a panel: its render target, its two materials and its quad.
  *
  * @param {Object} params bar parameters
@@ -827,6 +1010,8 @@ function createPanel(params) {
       dieRadius: { value: 0.15 },
       cellNorm: { value: 1 },
       beamCutoff: { value: 0 },
+      dieLuminance: { value: 0 },
+      dieRadiusMetres: { value: 0.0025 },
       // By reference, not by value: one copy of each tunable, shared with the
       // billboard emitters so neither can drift from the other.
       gain: EMITTER_UNIFORMS.gain,
@@ -853,6 +1038,7 @@ function createPanel(params) {
       faceNormal: { value: new THREE.Vector3(0, 0, 1) },
       reach: { value: 0.1 },
       mipLevel: { value: 0 },
+      glowScale: { value: 1 },
       // By reference again: haze belongs to the room, so a tile and a strip
       // standing in it are scattering through the same air, and `update` and
       // `syncEnvironment` in led_field.js reach both without knowing this
@@ -902,7 +1088,11 @@ function createPanel(params) {
     rows: params.rows,
     dirty: true,
   };
+  panel.halfFace = new THREE.Vector2(0.5, 0.5);
+  panel.faceLuminance = 0;
+  panel.readLight = (record) => readPanelLight(panel, record);
   panels.add(panel);
+  if (PHOTOMETRIC_LEDS) LightField.register(panel);
   return panel;
 }
 
@@ -923,6 +1113,8 @@ SceneEnv.on('changed', syncEnvironment);
 function release(panel) {
   if (!panel) return;
   panels.delete(panel);
+  LightField.unregister(panel);
+  DisplayLight.forget(panel);
   SceneManager.remove(panel.mesh, panel.glow);
   panel.target.dispose();
   panel.material.dispose();
@@ -980,6 +1172,11 @@ function sync(panel, {
   uniforms.dieRadius.value = geometry.dieRadius;
   uniforms.cellNorm.value = geometry.cellNorm;
   uniforms.beamCutoff.value = Math.cos((params.beamAngle / 2) * (Math.PI / 180));
+  const output = emitterOutput(params);
+  live.halfFace.set(geometry.spanX / 2, geometry.spanY / 2);
+  live.faceLuminance = output.faceLuminance;
+  uniforms.dieLuminance.value = output.dieLuminance;
+  uniforms.dieRadiusMetres.value = output.dieRadius;
 
   // The emitter face, standing proud of the body exactly as the billboards do.
   scratch.offset.set(0, 0, params.height / 2 + STANDOFF).applyQuaternion(quaternion);
@@ -999,6 +1196,9 @@ function sync(panel, {
   glowUniforms.boxHalf.value.fromArray(halo.boxHalf);
   glowUniforms.reach.value = halo.reach;
   glowUniforms.mipLevel.value = halo.mip;
+  glowUniforms.glowScale.value = PHOTOMETRIC_LEDS
+    ? output.faceLuminance / REFERENCE_FACE_LUMINANCE
+    : 1;
   // On the body's centre, not the emitter face: the volume wraps the whole
   // profile, which is what lets a bar glow all the way round rather than off
   // one side. Scale stays 1 -- the box is sized by uniform, so the model matrix

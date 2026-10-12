@@ -22,11 +22,25 @@ import * as THREE from 'three';
 /** Displays averaged at once; more than this keep their last colour. */
 const SLOTS = 16;
 
-/** Atlas tiles across; SLOTS of them in all. Matches FIELD_PICTURE_GRID. */
-const GRID = 4;
+/** Atlas tiles across, so GRID x GRID pictures: displays and LED fixtures. */
+const GRID = 8;
 
-/** Atlas tile size, texels. Matches FIELD_PICTURE_TILE. */
+/** Atlas tile size, texels. */
 const TILE = 128;
+
+/** Pictures the atlas holds; more than this throw no light. */
+const ATLAS_SLOTS = GRID * GRID;
+
+/** The mapping for a picture that fills its panel the right way up. */
+const WHOLE_PICTURE = {
+  origin: new THREE.Vector2(0, 0),
+  axisX: new THREE.Vector2(1, 0),
+  axisY: new THREE.Vector2(0, 1),
+  bounds: new THREE.Vector4(0, 0, 1, 1),
+};
+
+/** Functions returning more `{ owner, texture, frame }` for the atlas. */
+const providers = [];
 
 // The panel into its tile: (0,0) to (1,1) of the panel is read through the
 // display's picture mapping, black outside the picture's bounds, four
@@ -132,7 +146,8 @@ const DisplayLight = {
    * @param {Array} entries `{ owner, texture }`, the decoded picture
    */
   update(renderer, entries) {
-    DisplayLight.drawAtlas(renderer, entries);
+    const pictures = providers.reduce((all, provide) => all.concat(provide()), entries.slice());
+    DisplayLight.drawAtlas(renderer, pictures);
     if (pending || !entries.length || !renderer.readRenderTargetPixelsAsync) return;
     if (!target) {
       target = new THREE.WebGLRenderTarget(SLOTS, 1, {
@@ -182,7 +197,7 @@ const DisplayLight = {
    */
   drawAtlas(renderer, entries) {
     slots.clear();
-    const owners = entries.filter((entry) => entry.frame).slice(0, SLOTS);
+    const owners = entries.filter((entry) => entry.frame).slice(0, ATLAS_SLOTS);
     if (!owners.length) return;
     if (!atlas) {
       atlas = new THREE.WebGLRenderTarget(GRID * TILE, GRID * TILE, {
@@ -238,6 +253,23 @@ const DisplayLight = {
 
   /** The atlas uniform, for the light field. */
   atlasUniform,
+
+  /** The atlas layout, for the light field's lookup. */
+  GRID,
+  TILE,
+
+  /** The mapping of a picture that fills its panel the right way up. */
+  WHOLE_PICTURE,
+
+  /**
+   * Adds pictures to the atlas beside the displays'.
+   *
+   * @public
+   * @param {Function} provide returns an array of `{ owner, texture, frame }`
+   */
+  provide(provide) {
+    providers.push(provide);
+  },
 
   /**
    * @public

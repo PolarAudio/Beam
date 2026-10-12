@@ -144,6 +144,17 @@ export const DEFAULT_DISPLAY_PARAMS = {
    */
   curveAngle: 0,
   /**
+   * Whether the panel is a mesh the room shows through: the emitters sit on
+   * opaque strips along the pixel rows, with open air between the strips, and
+   * the casing is a frame with no back.
+   */
+  seeThrough: false,
+  /**
+   * The open share of a see-through panel, 0-1, as manufacturers quote it.
+   * `null` makes each strip as tall as its emitters.
+   */
+  transparency: null,
+  /**
    * Which channels this model actually has.
    *
    * **None by default**, because most displays have no DMX socket -- and
@@ -385,6 +396,24 @@ export function pixelFill(params) {
 }
 
 /**
+ * How much of each pixel row a see-through panel's opaque strip covers, as a
+ * fraction of the row pitch; 0 for a solid panel.
+ *
+ * A strip carries its row's emitters, so it is never shorter than they are.
+ *
+ * @public
+ * @param {Object} params display parameters
+ * @returns {Number} 0-1
+ */
+export function stripShare(params) {
+  if (!params.seeThrough) return 0;
+  const emitter = Math.max(pixelFill(params).y, 0.001);
+  const open = Number(params.transparency);
+  if (params.transparency == null || !(open >= 0)) return Math.min(emitter, 1);
+  return Math.min(Math.max(1 - open, emitter), 1);
+}
+
+/**
  * The curve a display is bent on, resolved and made safe to build from.
  *
  * Given in degrees and returned as a radius and an arc in radians, which is
@@ -504,4 +533,5 @@ export default {
   emitterFill,
   unusualEmitter,
   displayCurve,
+  stripShare,
 };

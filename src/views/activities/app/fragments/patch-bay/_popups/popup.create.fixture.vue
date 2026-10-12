@@ -494,6 +494,23 @@
             :max="100"
           />
         </uk-flex>
+        <!-- A mesh panel: emitters on strips along the rows, open between
+             them, in a frame with no back. Transparency is the open share as
+             quoted; 0 makes each strip as tall as its emitters. -->
+        <uk-flex :gap="8">
+          <uk-checkbox
+            v-model="screenSeeThrough"
+            label="See-through"
+          />
+          <uk-num-input
+            v-if="screenSeeThrough"
+            v-model="screenTransparency"
+            class="wide_field"
+            label="Transparency %"
+            :min="0"
+            :max="99"
+          />
+        </uk-flex>
 
         <span class="create_section">Summary</span>
         <p class="create_headline">
@@ -950,6 +967,8 @@ export default {
       screenHeight: DEFAULT_DISPLAY_PARAMS.height * MM,
       screenDepth: DEFAULT_DISPLAY_PARAMS.depth * MM,
       screenBezel: DEFAULT_DISPLAY_PARAMS.bezel * MM,
+      screenSeeThrough: DEFAULT_DISPLAY_PARAMS.seeThrough,
+      screenTransparency: 0,
       screenPixelsWide: DEFAULT_DISPLAY_PARAMS.pixelsWide,
       screenPixelsHigh: DEFAULT_DISPLAY_PARAMS.pixelsHigh,
       // An index into emitterOptions: Auto, Manual, then each package.
@@ -1210,6 +1229,10 @@ export default {
         emitterFill: this.fillForChoice(this.emitterChoice),
         curveAngle: this.screenCurveAngle,
         nits: this.nits,
+        seeThrough: this.screenSeeThrough,
+        transparency: this.screenSeeThrough && this.screenTransparency > 0
+          ? this.screenTransparency / 100
+          : null,
       };
     },
     /**

@@ -256,7 +256,8 @@ const GRID_PRELUDE = /* glsl */`
  * see `video_decode.js` -- so this shader can simply sample.
  *
  * @param {THREE.Texture} picture the decoded frame
- * @param {Object} panel `{ pixelsWide, pixelsHigh, fillX, fillY }`
+ * @param {Object} panel `{ pixelsWide, pixelsHigh, fillX, fillY, stripShare }`;
+ *   a strip share above 0 makes the panel see-through
  * @returns {THREE.Material}
  */
 export function createPanelMaterial(picture, panel) {
@@ -275,9 +276,21 @@ export function createPanelMaterial(picture, panel) {
     uniform sampler2D picture;
     uniform float gain;
     uniform vec4 pictureBounds;
+    uniform float stripShare;
     varying vec2 vUv;
     varying vec2 vPanelUv;
     ${GRID_PRELUDE}
+
+    // How much of the fragment the opaque strips cover: a band along each
+    // pixel row, its share of the row pitch tall, fading to that share once
+    // the rows are too fine to draw.
+    float stripCover(vec2 panelUv, float rowGive) {
+      float row = panelUv.y * panelPixels.y;
+      float edge = stripShare * 0.5;
+      float blur = fwidth(row) * 0.5 + 1e-5;
+      float inside = smoothstep(edge + blur, edge - blur, abs(fract(row) - 0.5));
+      return mix(inside, stripShare, rowGive);
+    }
 
     void main() {
       // Sampled at the cell's centre while the cells are big enough to see --
@@ -295,7 +308,10 @@ export function createPanelMaterial(picture, panel) {
       float inside = step(pictureBounds.x, at.x) * step(at.x, pictureBounds.z)
         * step(pictureBounds.y, at.y) * step(at.y, pictureBounds.w);
       vec3 colour = texture2D(picture, at).rgb * inside;
-      gl_FragColor = vec4(colour * gain * panelMask(vPanelUv, drawn, gapGive), 1.0);
+      // Premultiplied: the emitters' light is added, and the alpha is what the
+      // strips hide of the room behind. A solid panel hides all of it.
+      float cover = stripShare > 0.0 ? stripCover(vPanelUv, gapGive.y) : 1.0;
+      gl_FragColor = vec4(colour * gain * panelMask(vPanelUv, drawn, gapGive), cover);
       #include <colorspace_fragment>
     }
   `;
@@ -312,11 +328,22 @@ export function createPanelMaterial(picture, panel) {
     }
   `;
 
+  const strips = Math.min(Math.max(Number(panel.stripShare) || 0, 0), 1);
+  const seeThrough = strips > 0 ? {
+    transparent: true,
+    blending: THREE.CustomBlending,
+    blendSrc: THREE.OneFactor,
+    blendDst: THREE.OneMinusSrcAlphaFactor,
+    depthWrite: false,
+  } : {};
+
   return new THREE.ShaderMaterial({
+    ...seeThrough,
     uniforms: {
       picture: { value: picture },
       panelPixels: { value: pixels },
       fill: { value: fill },
+      stripShare: { value: strips },
       gain: { value: 1 },
       // Overwritten whenever the connector's rectangle is written.
       pictureAxisX: { value: new THREE.Vector2(1, 0) },

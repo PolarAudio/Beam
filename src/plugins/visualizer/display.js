@@ -3,7 +3,9 @@ import SceneManager from './scene_manager';
 import VideoRouter from './video_router';
 import { pictureOf, pictureMapping } from '../../models/DMX/picture_controls';
 import { createPanelMaterial } from './video_material';
-import { DEFAULT_DISPLAY_PARAMS, pixelFill, displayCurve } from '../../models/DMX/generic/display';
+import {
+  DEFAULT_DISPLAY_PARAMS, pixelFill, displayCurve, stripShare,
+} from '../../models/DMX/generic/display';
 import BodyFinish from './body_finish';
 import { castsContactShadow } from './contact_shadows';
 import LightField, { SCENE_PER_NIT } from './light_field';
@@ -196,9 +198,12 @@ function buildScreen(width, height, offset, curve, hy) {
  * @param {Number} depth casing depth
  * @param {Number} bezel border width around the picture
  * @param {Number} recess how far the screen sits back from the front face
+ * @param {Object} curve
+ * @param {Boolean} open a see-through panel's casing: the frame alone, with no
+ *   back, so the room shows through the picture; nothing without a bezel
  * @returns {Object} THREE.BufferGeometry
  */
-function buildCasing(width, height, depth, bezel, recess, curve) {
+function buildCasing(width, height, depth, bezel, recess, curve, open = false) {
   const outer = width + bezel * 2;
   const hx = outer / 2;
   const hz = height / 2 + bezel;
@@ -213,9 +218,11 @@ function buildCasing(width, height, depth, bezel, recess, curve) {
   // arc position to another.
   const along = (from, to, sz, offset) => (t) => at(from + (to - from) * t, sz, offset);
 
+  if (open && !(bezel > 0)) return build.geometry();
+
   // Back, and the two ends. The ends are flat whatever the curve, because both
   // their edges sit at one arc position.
-  build.band(segments, along(-hx, hx, hz, depth), along(-hx, hx, -hz, depth));
+  if (!open) build.band(segments, along(-hx, hx, hz, depth), along(-hx, hx, -hz, depth));
   build.quad(at(hx, -hz, 0), at(hx, -hz, depth), at(hx, hz, depth), at(hx, hz, 0));
   build.quad(at(-hx, -hz, 0), at(-hx, hz, 0), at(-hx, hz, depth), at(-hx, -hz, depth));
 
@@ -237,13 +244,26 @@ function buildCasing(width, height, depth, bezel, recess, curve) {
     frame(w, hx, -h, h, 1);
   }
 
+  // An open frame has a back face as well, and its inner walls run the full
+  // depth, since there is no box behind the picture for them to meet.
+  if (open) {
+    const back = (from, to, z0, z1, count) => {
+      build.band(count, along(from, to, z1, depth), along(from, to, z0, depth));
+    };
+    back(-hx, hx, -hz, -h, segments);
+    back(-hx, hx, h, hz, segments);
+    back(-hx, -w, -h, h, 1);
+    back(w, hx, -h, h, 1);
+  }
+
   // The recess walls, facing inwards so they are seen from the front. With the
   // screen flush there is no recess and no walls -- see `recessFor`.
-  if (recess > 0) {
-    build.quad(at(-w, -h, 0), at(-w, -h, recess), at(-w, h, recess), at(-w, h, 0));
-    build.quad(at(w, -h, 0), at(w, h, 0), at(w, h, recess), at(w, -h, recess));
-    build.band(segments, along(-w, w, -h, 0), along(-w, w, -h, recess));
-    build.band(segments, along(-w, w, h, recess), along(-w, w, h, 0));
+  const wall = open ? depth : recess;
+  if (wall > 0) {
+    build.quad(at(-w, -h, 0), at(-w, -h, wall), at(-w, h, wall), at(-w, h, 0));
+    build.quad(at(w, -h, 0), at(w, h, 0), at(w, h, wall), at(w, -h, wall));
+    build.band(segments, along(-w, w, -h, 0), along(-w, w, -h, wall));
+    build.band(segments, along(-w, w, h, wall), along(-w, w, h, 0));
   }
 
   return build.geometry();
@@ -364,7 +384,8 @@ class Display {
     const recess = recessFor(bezel, depth);
     const curve = displayCurve(params, width + bezel * 2);
     this._body.geometry.dispose();
-    this._body.geometry = buildCasing(width, height, depth, bezel, recess, curve);
+    const open = !!params.seeThrough;
+    this._body.geometry = buildCasing(width, height, depth, bezel, recess, curve, open);
 
     // On the floor of the recess, filling the opening exactly and bent on the
     // same curve. The walls meet it at right angles, so there is no pair of
@@ -396,7 +417,8 @@ class Display {
     // rather than `texture`: the raw one cannot be filtered, which is the whole
     // reason the decode pass exists.
     if (!feed || !feed.displayTexture) {
-      if (this._screen.material !== BLANK_MATERIAL) this._screen.material = BLANK_MATERIAL;
+      const blank = this.blankMaterial();
+      if (this._screen.material !== blank) this._screen.material = blank;
       this._material = null;
       this._feedGeneration = -1;
       return;
@@ -413,6 +435,7 @@ class Display {
         pixelsHigh: this._params.pixelsHigh,
         fillX: fill.x,
         fillY: fill.y,
+        stripShare: stripShare(this._params),
       });
       this._screen.material = this._material;
       this._feedGeneration = VideoRouter.generation();
@@ -427,6 +450,25 @@ class Display {
       level = settings.value('shutter') ? (Number(settings.value('dimmer')) || 0) / 100 : 0;
     }
     this.setGain(level);
+  }
+
+  /**
+   * What the screen shows with no picture: the shared blank, or for a
+   * see-through panel its strips alone, so the room shows between them.
+   *
+   * @returns {THREE.Material}
+   */
+  blankMaterial() {
+    const strips = stripShare(this._params);
+    if (!(strips > 0)) return BLANK_MATERIAL;
+    if (!this._blankStrips || this._blankStrips.opacity !== strips) {
+      if (this._blankStrips) this._blankStrips.dispose();
+      this._blankStrips = BLANK_MATERIAL.clone();
+      this._blankStrips.transparent = true;
+      this._blankStrips.opacity = strips;
+      this._blankStrips.depthWrite = false;
+    }
+    return this._blankStrips;
   }
 
   /**

@@ -70,7 +70,7 @@ export const COMMON_CONTROLS = {
 class DeviceSettings {
   /**
    * @param {Array} defs the kind's parameter declarations, in addressing order
-   * @param {Object} params the profile's `asls.*` block -- the envelope, and
+   * @param {Object} params the profile's `beam.*` block -- the envelope, and
    *   the source of `controls` (or the legacy `channels` tick-list)
    * @param {Object} [data] stored values from the show
    */

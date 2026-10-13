@@ -14,6 +14,7 @@
  * Usage:
  *   npm test
  */
+import { kindOf } from '@/models/DMX/generic/fixture_kind';
 import {
   buildLaserProfile, isLaserProfile, DEFAULT_LASER_PARAMS,
   scanHalfAngles, beamWidthAt, imageSizeAt, apertureOrigin,
@@ -47,9 +48,9 @@ check('nonsense is not a laser', isLaserProfile({}), false);
 check('name carries the power', profile.name, 'Laser 5W');
 check('category is OFL Other', profile.categories[0], 'Other');
 check('marked generated', profile.meta.generated, true);
-check('asls.laser carries the params', profile.asls.laser.scanAngleH, 50);
+check('beam.laser carries the params', profile.beam.laser.scanAngleH, 50);
 check('bulb type laser', profile.physical.bulb.type, 'Laser');
-check('dimensions in mm, w/h/d', profile.physical.dimensions.join(), '300,160,340');
+check('size in mm, w/h/d, from the kind', kindOf(profile).sizeOf(profile).join(), '300,160,340');
 
 // Channels: none by default, like a projector.
 check('no channels by default', profile.modes[0].channels.length, 0);
@@ -78,11 +79,11 @@ check('a fixed parameter takes no channel', withControls.modes[0].channels.inclu
 // Overrides flow through.
 const big = buildLaserProfile({ power: 10, scanAngleH: 60 });
 check('power override in the name', big.name, 'Laser 10W');
-check('scan override in asls', big.asls.laser.scanAngleH, 60);
+check('scan override in beam', big.beam.laser.scanAngleH, 60);
 
 // -- The settings / output stage ------------------------------------------
 // A laser with no controls: everything adjustable, at its parked default.
-const plain = new LaserSettings(buildLaserProfile().asls.laser, {});
+const plain = new LaserSettings(buildLaserProfile().beam.laser, {});
 check('no controls means nothing is driven', plain.channels.length, 0);
 check('everything defaults to adjustable', plain.mode('dimmer'), 'adjustable');
 check('dimmer parks at full', plain.value('dimmer'), 100);
@@ -96,7 +97,7 @@ plain.set('shutter', false);
 check('a closed shutter is no light', plain.gain, 0);
 
 // Fixed: baked in the profile, not shown, not settable, not in the show.
-const fixed = new LaserSettings(buildLaserProfile({ controls }).asls.laser, {});
+const fixed = new LaserSettings(buildLaserProfile({ controls }).beam.laser, {});
 check('a fixed parameter reports fixed', fixed.isFixed('red'), true);
 check('a fixed parameter takes its baked value', fixed.value('red'), 50);
 fixed.set('red', 90);
@@ -139,7 +140,7 @@ check('legacy red from DMX 0', legacy.value('red'), 0);
 check('legacy leaves the rest adjustable', legacy.mode('green'), 'adjustable');
 
 // Only non-fixed values travel; source among them.
-const parked = new LaserSettings(buildLaserProfile().asls.laser, {});
+const parked = new LaserSettings(buildLaserProfile().beam.laser, {});
 parked.set('green', 40);
 parked.set('source', 'etherdream');
 check('showData carries the parked values', parked.showData.green, 40);
@@ -147,9 +148,9 @@ check('showData carries source', parked.showData.source, 'etherdream');
 check('source never becomes a channel', parked.isDriven('source'), false);
 
 // -- The geometry ---------------------------------------------------------
-// The geometry helpers take the `asls.laser` params, the way the renderer
+// The geometry helpers take the `beam.laser` params, the way the renderer
 // reads them off a fixture -- not the whole OFL profile.
-const p = profile.asls.laser;
+const p = profile.beam.laser;
 // 50 degree full scan -> 25 degree half angle -> 0.4363 rad.
 near('scan half-angle H is half the full, in rad', scanHalfAngles(p).h, (25 * Math.PI) / 180);
 near('scan half-angle V likewise', scanHalfAngles(p).v, (25 * Math.PI) / 180);
@@ -165,7 +166,7 @@ near('image width at 10 m', imageSizeAt(10, p).width, 2 * 10 * Math.tan(halfRad)
 near('image is square when the two scans match', imageSizeAt(10, p).height, imageSizeAt(10, p).width);
 
 // Aperture origin: centred X/Z, on the front face at -depth/2, +Z up.
-const ap = apertureOrigin(profile.asls.laser);
+const ap = apertureOrigin(profile.beam.laser);
 check('aperture x centred', ap.x, 0);
 check('aperture on the front face along -Y', ap.y, -(DEFAULT_LASER_PARAMS.depth / 2));
 check('aperture z centred', ap.z, 0);

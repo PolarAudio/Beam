@@ -820,7 +820,7 @@ export default {
      */
     alignmentPixelSize() {
       if (!this.fixture.loaded || !this.fixture.universeAligned) return 1;
-      const { components } = (this.fixture.OFLData || {}).asls || {};
+      const { components } = (this.fixture.OFLData || {}).beam || {};
       if (components && components.length) return components.length;
       const mode = this.fixture.modes[this.fixture.mode];
       return (mode && mode.channels && mode.channels.length) || 1;

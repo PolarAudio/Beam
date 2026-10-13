@@ -110,7 +110,7 @@ export class ControlType {
   /**
    * The value a parameter starts at when nobody has chosen one.
    *
-   * @param {Object} params the profile's `asls.*` block
+   * @param {Object} params the profile's `beam.*` block
    * @returns {*}
    */
   // eslint-disable-next-line no-unused-vars, class-methods-use-this
@@ -458,7 +458,7 @@ export class ControlDef {
   /**
    * The OFL capability for this parameter, given the machine it belongs to.
    *
-   * @param {Object} params the profile's `asls.*` block
+   * @param {Object} params the profile's `beam.*` block
    * @returns {Object}
    */
   capabilityFor(params) {
@@ -495,7 +495,7 @@ export class DeviceControl {
   /**
    * @param {ControlDef} def
    * @param {Object} [choice] `{ mode, value, channel, bits }` as stored
-   * @param {Object} [params] the profile's `asls.*` block, for coercion
+   * @param {Object} [params] the profile's `beam.*` block, for coercion
    */
   constructor(def, choice = {}, params = {}) {
     this.def = def;
@@ -588,7 +588,7 @@ export class ControlSet {
    * contiguously without anyone having to think about it.
    *
    * @param {Array} defs
-   * @param {Object} [params] the profile's `asls.*` block
+   * @param {Object} [params] the profile's `beam.*` block
    * @returns {ControlSet}
    */
   static fromProfile(defs, params = {}) {

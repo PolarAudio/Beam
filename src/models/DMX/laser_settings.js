@@ -78,7 +78,7 @@ export const LASER_DEFS = [...CONTROL_DEFS, ...FEED_DEFS];
 
 class LaserSettings extends DeviceSettings {
   /**
-   * @param {Object} params the profile's `asls.laser` -- the envelope
+   * @param {Object} params the profile's `beam.laser` -- the envelope
    * @param {Object} [data] stored values from the show
    */
   constructor(params, data = {}) {

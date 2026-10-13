@@ -14,6 +14,7 @@ import VideoRouter from '../../plugins/visualizer/video_router';
 import Laser from '../../plugins/visualizer/laser';
 import Strobe from '../../plugins/visualizer/strobe';
 import { kindOf } from './generic/fixture_kind';
+import withBeamSection from './generic/beam_section';
 import Controls from '../../plugins/visualizer/controls';
 import withTransform from './scene_item.transform';
 import { SCENE_ITEM_KINDS } from './scene_item';
@@ -256,7 +257,8 @@ class Fixture extends withTransform(Proxify) {
        * once by the show and shared by every fixture of that type.
        */
       this.fixtureType = data.fixtureType ? markRaw(data.fixtureType) : null;
-      this.OFLData = data.OFLData || (this.fixtureType ? listingFor(this.fixtureType) : null);
+      this.OFLData = withBeamSection(data.OFLData)
+        || (this.fixtureType ? listingFor(this.fixtureType) : null);
       this.id = parseInt(data.id, 10);
       // Read before the address: patching lays the channels out according to
       // this, so it has to be known by the time the address is claimed.
@@ -419,7 +421,7 @@ class Fixture extends withTransform(Proxify) {
    * @type {Boolean}
    */
   get isBar() {
-    return !!(this.OFLData && this.OFLData.asls && this.OFLData.asls.bar);
+    return !!(this.OFLData && this.OFLData.beam && this.OFLData.beam.bar);
   }
 
   /**
@@ -850,7 +852,7 @@ class Fixture extends withTransform(Proxify) {
    * @type {Number}
    */
   get channelsPerPixel() {
-    const { components } = this.OFLData.asls || {};
+    const { components } = this.OFLData.beam || {};
     if (components && components.length) return components.length;
     return this.channels.length || 1;
   }
@@ -1380,7 +1382,7 @@ class Fixture extends withTransform(Proxify) {
    * @returns {Array} [r, g, b, w], -1 for a component this fixture lacks
    */
   pixelTexels(pixel) {
-    const components = (this.OFLData.asls || {}).components || [];
+    const components = (this.OFLData.beam || {}).components || [];
     const perPixel = components.length;
     if (!perPixel) return [-1, -1, -1, -1];
     return ['R', 'G', 'B', 'W'].map((letter) => {
@@ -1402,7 +1404,7 @@ class Fixture extends withTransform(Proxify) {
    * @returns {Object} `{ address, pixelSize, channelsPerPixel, componentOffsets }`
    */
   get pixelAddressing() {
-    const components = (this.OFLData.asls || {}).components || [];
+    const components = (this.OFLData.beam || {}).components || [];
     return {
       address: this.address,
       pixelSize: this.alignmentPixelSize,
@@ -1423,11 +1425,11 @@ class Fixture extends withTransform(Proxify) {
     // Asked of the geometry, for the same reason the bar below is: a projector's
     // category is 'Other', which says nothing at all, and a projector with no
     // DMX has no channels to recognise it by either.
-    if (this.OFLData.asls && this.OFLData.asls.projector) {
+    if (this.OFLData.beam && this.OFLData.beam.projector) {
       // Never proxied, for the same reason as the bar: three.js cannot be
       // handed an Object3D reached through a reactive proxy.
       this._3DModel = markRaw(new Projector({
-        params: this.OFLData.asls.projector,
+        params: this.OFLData.beam.projector,
         // Read rather than copied: the panel edits the settings object in
         // place and the renderer has to see the new value on its next refresh.
         settingsAt: () => this.device,
@@ -1439,9 +1441,9 @@ class Fixture extends withTransform(Proxify) {
       this._3DModel.rotation = this._rotation;
       return;
     }
-    if (this.OFLData.asls && this.OFLData.asls.display) {
+    if (this.OFLData.beam && this.OFLData.beam.display) {
       this._3DModel = markRaw(new Display({
-        params: this.OFLData.asls.display,
+        params: this.OFLData.beam.display,
         settingsAt: () => this.device,
         // The input this display shows, resolved through the router so nothing
         // in the model layer has to reach for the show.
@@ -1452,12 +1454,12 @@ class Fixture extends withTransform(Proxify) {
       this._3DModel.rotation = this._rotation;
       return;
     }
-    if (this.OFLData.asls && this.OFLData.asls.laser) {
+    if (this.OFLData.beam && this.OFLData.beam.laser) {
       // A box with an aperture, drawn like the projector's chassis so a laser
       // is visible and placeable. The renderer reads the settings in place,
       // the way the projector does.
       this._3DModel = markRaw(new Laser({
-        params: this.OFLData.asls.laser,
+        params: this.OFLData.beam.laser,
         settingsAt: () => this.device,
       }));
       this._3DModel.fixtureHandle = this;
@@ -1465,11 +1467,11 @@ class Fixture extends withTransform(Proxify) {
       this._3DModel.rotation = this._rotation;
       return;
     }
-    if (this.OFLData.asls && this.OFLData.asls.strobe) {
+    if (this.OFLData.beam && this.OFLData.beam.strobe) {
       // A box with a lamp face. Its channels are routed to the settings by
       // position, like a projector's, and the renderer reads them each frame.
       this._3DModel = markRaw(new Strobe({
-        params: this.OFLData.asls.strobe,
+        params: this.OFLData.beam.strobe,
         settingsAt: () => this.device,
       }));
       this._3DModel.fixtureHandle = this;
@@ -1480,13 +1482,13 @@ class Fixture extends withTransform(Proxify) {
     // A generated profile carries the geometry OFL cannot express. Its presence
     // is what identifies the fixture, rather than a category string, because
     // 'Matrix' says nothing about where the emitters actually are.
-    if (this.OFLData.asls && this.OFLData.asls.bar) {
+    if (this.OFLData.beam && this.OFLData.beam.bar) {
       // Never proxied: the show is reactive, and a renderer reached through a
       // reactive fixture would be handed to three.js as a proxy, which cannot
       // return Object3D internals like modelViewMatrix unchanged.
       this._3DModel = markRaw(new LedBar({
-        params: this.OFLData.asls.bar,
-        components: this.OFLData.asls.components,
+        params: this.OFLData.beam.bar,
+        components: this.OFLData.beam.components,
         texelAt: this.pixelTexels.bind(this),
         // Read rather than bound: a repatch changes the address, and the panel
         // has to see the new one on the rebuild that follows.
@@ -1560,7 +1562,7 @@ class Fixture extends withTransform(Proxify) {
     // every one of them is the same colour intensity under a different name,
     // and all of that is arithmetic on the index. See bar_channels.js.
     if (this.isBar) {
-      this.channels = new BarChannels(OFLData.asls.bar);
+      this.channels = new BarChannels(OFLData.beam.bar);
       return;
     }
 
@@ -1808,11 +1810,11 @@ class Fixture extends withTransform(Proxify) {
    * @returns {Boolean}
    */
   static profileKeepsPixelsWhole(OFLData) {
-    const asls = (OFLData || {}).asls || {};
-    if (asls.bar && asls.bar.universeAligned !== undefined) {
-      return !!asls.bar.universeAligned;
+    const section = (OFLData || {}).beam || {};
+    if (section.bar && section.bar.universeAligned !== undefined) {
+      return !!section.bar.universeAligned;
     }
-    const perPixel = (asls.components || []).length;
+    const perPixel = (section.components || []).length;
     return perPixel > 0 && DMX_UNIVERSE_LENGTH % perPixel !== 0;
   }
 

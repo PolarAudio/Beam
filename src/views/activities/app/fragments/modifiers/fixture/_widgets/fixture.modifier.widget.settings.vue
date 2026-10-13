@@ -1292,7 +1292,7 @@ export default {
     throwHint() {
       if (!this.device) return '';
       if (this.isMixed('zoom')) return 'throw ratios differ';
-      const params = this.fixture.OFLData.asls.projector;
+      const params = this.fixture.OFLData.beam.projector;
       const at = imageSizeAt(5, this.read('zoom'), params);
       const size = `at 5 m ${at.width.toFixed(2)} × ${at.height.toFixed(2)} m`;
       if (!this.device.zooms) return `prime · ${size}`;

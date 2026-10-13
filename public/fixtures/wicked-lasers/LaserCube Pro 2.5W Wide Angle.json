@@ -7,11 +7,6 @@
     "generated": true
   },
   "physical": {
-    "dimensions": [
-      100,
-      145,
-      100
-    ],
     "bulb": {
       "type": "Laser"
     },
@@ -29,7 +24,7 @@
       "channels": []
     }
   ],
-  "asls": {
+  "beam": {
     "laser": {
       "power": 2.5,
       "scanAngleH": 70,

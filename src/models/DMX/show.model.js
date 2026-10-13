@@ -28,6 +28,7 @@ import Preferences from '../../plugins/visualizer/preferences';
 import SceneObjects from '../../plugins/visualizer/scene_objects';
 import Studio from './studio';
 import { normaliseMatrixProfile } from './ofl_matrix';
+import withBeamSection from './generic/beam_section';
 import readGdtf, { wheelImages } from './gdtf/gdtf_reader';
 import buildBody from '../../plugins/visualizer/gdtf_body';
 import { headInputs } from './gdtf/fixture_parts';
@@ -105,7 +106,7 @@ async function fetchProfile(profileKey) {
     // is written out here, once, so that nothing downstream has to know the
     // difference between a profile that listed its channels and one that
     // described them.
-    return usable ? normaliseMatrixProfile(profile) : null;
+    return usable ? normaliseMatrixProfile(withBeamSection(profile)) : null;
   } catch (err) {
     return null;
   }

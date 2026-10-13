@@ -36,9 +36,9 @@ function near(label, got, want, tol = 1e-6) {
 }
 
 const profile = buildStrobeProfile();
-const settings = new StrobeSettings(profile.asls.strobe);
+const settings = new StrobeSettings(profile.beam.strobe);
 const before = SceneManager.children.length;
-const strobe = new Strobe({ params: profile.asls.strobe, settingsAt: () => settings });
+const strobe = new Strobe({ params: profile.beam.strobe, settingsAt: () => settings });
 strobe.position = { x: 1, y: 2, z: 1.5 };
 strobe.rotation = { x: 0, y: 0, z: 0 };
 

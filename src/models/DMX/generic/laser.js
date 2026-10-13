@@ -7,7 +7,7 @@
  *
  * Like `led_bar.js` and `projector.js`, the generated document is OFL-shaped so
  * `Fixture` reads it through the same path as a library profile, and everything
- * OFL cannot express lives under `asls.laser`.
+ * OFL cannot express lives under `beam.laser`.
  *
  * **A laser is not driven over DMX; it is driven by a point stream.** The picture
  * -- every position and colour -- arrives from a DAC (Ether Dream or LaserCube,
@@ -288,14 +288,14 @@ export function imageSizeAt(distance, params) {
  * Whether a profile was made here.
  *
  * Asked of the geometry rather than a category, for the same reason
- * `prepare3DModelInstance` asks it of `asls.bar` and `asls.projector`.
+ * `prepare3DModelInstance` asks it of `beam.bar` and `beam.projector`.
  *
  * @public
  * @param {Object} profile
  * @returns {Boolean}
  */
 export function isLaserProfile(profile) {
-  return !!(profile && profile.asls && profile.asls.laser);
+  return !!(profile && profile.beam && profile.beam.laser);
 }
 
 /**
@@ -316,10 +316,8 @@ export function buildLaserProfile(overrides = {}) {
     categories: ['Other'],
     meta: { generated: true },
     physical: {
-      // OFL's order is width, height, depth, in millimetres. Nothing reads it
-      // -- the geometry the renderer needs is in `asls.laser` -- but a profile
-      // stating its size wrongly is a trap for whatever reads it next.
-      dimensions: [params.width * 1000, params.height * 1000, params.depth * 1000],
+      // No `dimensions`: the size is the parameters', read through
+      // `FixtureKind.sizeOf`. A second copy drifts when a file is edited by hand.
       bulb: { type: 'Laser' },
       // The full scan angle, widest first, in the shape `physical.lens` uses.
       // A laser has no lens, but the field is where anything already reading a
@@ -335,7 +333,7 @@ export function buildLaserProfile(overrides = {}) {
     modes,
     // Everything OFL cannot express: the optics, the box, the scan and beam,
     // and which channels this model actually has.
-    asls: { laser: params },
+    beam: { laser: params },
   };
 }
 

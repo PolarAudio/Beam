@@ -261,7 +261,7 @@ import {
 import {
   throwRange, throwAngles, imageSizeAt, illuminanceAt,
 } from '@/models/DMX/generic/projector';
-import { fixtureIcon } from '@/models/DMX/generic/fixture_kind';
+import { fixtureIcon, kindOf } from '@/models/DMX/generic/fixture_kind';
 import { isShowKey } from '@/models/DMX/definition_store';
 import fixtureGuide from '@/models/DMX/fixture_guide';
 import gdtfGuide from '@/models/DMX/gdtf/gdtf_guide';
@@ -402,7 +402,9 @@ export default {
         if (lumens) facts.push(peakFact(lumens, narrow, wide));
       }
       if (physical.weight) facts.push({ label: 'Weight', value: `${physical.weight} kg` });
-      const size = physical.dimensions;
+      // A generic fixture's size is its parameters'; a library profile's is OFL's.
+      const kind = kindOf(data);
+      const size = (kind && kind.sizeOf(data)) || physical.dimensions;
       if (Array.isArray(size) && size.length === 3) {
         facts.push({ label: 'Size', value: `${size.join(' x ')} mm (W x H x D)` });
       }
@@ -523,9 +525,9 @@ export default {
      * @type {Array}
      */
     deviceFacts() {
-      const asls = (this.fixture && this.fixture.OFLData && this.fixture.OFLData.asls) || {};
-      if (asls.display) return this.displayFacts(asls.display);
-      if (asls.projector) return this.projectorFacts(asls.projector);
+      const section = (this.fixture && this.fixture.OFLData && this.fixture.OFLData.beam) || {};
+      if (section.display) return this.displayFacts(section.display);
+      if (section.projector) return this.projectorFacts(section.projector);
       return [];
     },
     /**
@@ -592,7 +594,7 @@ export default {
     barSummary() {
       const { fixture } = this;
       if (!fixture || !fixture.isBar || !fixture.channels) return null;
-      const { bar } = fixture.OFLData.asls;
+      const { bar } = fixture.OFLData.beam;
       const total = fixture.channels.length;
       if (!total) return null;
 
@@ -699,7 +701,7 @@ export default {
      * A display's specification, in the order someone reads one.
      *
      * @public
-     * @param {Object} p the profile's `asls.display`
+     * @param {Object} p the profile's `beam.display`
      * @returns {Array}
      */
     displayFacts(p) {
@@ -743,7 +745,7 @@ export default {
      * A projector's specification.
      *
      * @public
-     * @param {Object} p the profile's `asls.projector`
+     * @param {Object} p the profile's `beam.projector`
      * @returns {Array}
      */
     /**
@@ -758,7 +760,7 @@ export default {
       const { physical } = this;
       const stated = Number((physical.bulb || {}).lumens);
       if (!this.isMover) {
-        const projector = ((this.fixture.OFLData || {}).asls || {}).projector || {};
+        const projector = ((this.fixture.OFLData || {}).beam || {}).projector || {};
         const lumens = stated > 0 ? stated : Number(projector.lumens);
         return lumens > 0 ? `${grouped(lumens)} lm` : '';
       }

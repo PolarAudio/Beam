@@ -114,9 +114,8 @@ function shown(item) {
   return !!item && !item.isHidden;
 }
 
-function itemFor(fixture, drill = false) {
+function itemFor(fixture) {
   if (!fixture) return null;
-  if (drill) return fixture;
   return fixture.structure || fixture;
 }
 
@@ -164,6 +163,14 @@ const MIN_GIZMO_SCALE = 0.01;
  * @constant {Number} CLICK_SLOP_PX
  */
 const CLICK_SLOP_PX = 4;
+
+/**
+ * Below these an item handed back by the gizmo has not moved: half the
+ * centimetre positions are rounded to, and half the tenth of a degree
+ * rotations are rounded to.
+ */
+const MOVE_EPSILON_M = 0.005;
+const TURN_EPSILON_RAD = THREE.MathUtils.degToRad(0.05);
 /**
  * Picking ray and normalised pointer position
  *
@@ -1003,16 +1010,15 @@ class Controls {
     }
 
     const hit = this.pickFixtureAt(e);
-    // Reaching inside a structure selects a member to *look at and set*, and
-    // deliberately not to move: a member holds absolute coordinates but the
-    // structure writes them, so a gizmo on one offers a drag that the
-    // structure would overwrite -- or worse, that would leave the structure
-    // holding a layout nobody arranged. The widgets follow the member; the
-    // handle stays where the authority is.
-    const inside = !!(e.altKey && hit && hit.structure);
-    const item = itemFor(hit, e.altKey);
+    // Alt-click on a structure member selects the structure with that member
+    // highlighted in its member list, the same state as clicking the member's
+    // row. The structure keeps the gizmo, because it writes its members'
+    // coordinates; the widgets edit the member.
+    const inside = !!(e.altKey && hit && hit.structure && !additive);
+    const item = itemFor(hit);
     if (item) {
-      this.selectItem(item, additive, !inside);
+      this.selectItem(item, additive);
+      if (inside) EventBus.emit('structure_member_picked', { structure: item, member: hit });
     } else if (!additive) {
       // A modified click that misses keeps whatever is already selected.
       this.deselectAll();
@@ -1822,25 +1828,45 @@ class Controls {
       child.getWorldQuaternion(quaternion);
       this.groupedInstances.remove(child);
       SceneManager.add(child);
+      // Back in the scene where it stood inside the group. Its local transform
+      // is still relative to the group, and nothing else puts it back when
+      // the model is not written.
+      child.position.copy(position);
+      child.quaternion.copy(quaternion);
       const instanceHandle = this.pooledInstances.find((h) => h._3DModel._dummy === child);
       if (instanceHandle) {
-        // Two decimal places, centimetres: three's Vector3.round() snaps to
-        // whole numbers, which would put every dropped fixture on the metre.
-        instanceHandle.position = position.multiplyScalar(100).round().divideScalar(100);
+        // Written back only when it moved. This runs on every detach, so
+        // selecting something else or nothing would otherwise rewrite every
+        // item, mark the project unsaved and queue undo steps.
+        const was = instanceHandle.position;
+        const moved = Math.abs(position.x - was.x) > MOVE_EPSILON_M
+          || Math.abs(position.y - was.y) > MOVE_EPSILON_M
+          || Math.abs(position.z - was.z) > MOVE_EPSILON_M;
+        if (moved) {
+          // Two decimal places, centimetres: three's Vector3.round() snaps to
+          // whole numbers, which would put every dropped fixture on the metre.
+          instanceHandle.position = position.multiplyScalar(100).round().divideScalar(100);
+        }
         euler.setFromQuaternion(quaternion);
         // The triple nearest what the item had: the other one for the same
         // orientation turns a 180 about Y into X 180, Z 180, which a mover
         // reads as hung and flips its body.
-        const angles = closestEuler(euler, instanceHandle.rotationRad);
-        // Tenths, the rotation fields' precision. This runs before every field
-        // write, not only after a drag, so whole degrees took the decimals off
-        // anything typed.
-        const tenths = (rad) => Math.round(THREE.MathUtils.radToDeg(rad) * 10) / 10;
-        instanceHandle.rotation = {
-          x: tenths(angles.x),
-          y: tenths(angles.y),
-          z: tenths(angles.z),
-        };
+        const before = instanceHandle.rotationRad;
+        const angles = closestEuler(euler, before);
+        const turned = Math.abs(angles.x - before.x) > TURN_EPSILON_RAD
+          || Math.abs(angles.y - before.y) > TURN_EPSILON_RAD
+          || Math.abs(angles.z - before.z) > TURN_EPSILON_RAD;
+        if (turned) {
+          // Tenths, the rotation fields' precision. This runs before every
+          // field write, not only after a drag, so whole degrees took the
+          // decimals off anything typed.
+          const tenths = (rad) => Math.round(THREE.MathUtils.radToDeg(rad) * 10) / 10;
+          instanceHandle.rotation = {
+            x: tenths(angles.x),
+            y: tenths(angles.y),
+            z: tenths(angles.z),
+          };
+        }
       }
     }
     this.hideHelpers();

@@ -501,7 +501,7 @@ Fields are **colour-coded by axis**, consistently, so you can see which is which
 
 **Selection.** Left-click for one, left-drag for a rubber band, Shift or Ctrl to add. The band drag survives leaving the canvas, so you can start inside the viewport and finish outside it.
 
-**Alt+click reaches inside.** Clicking a fixture that belongs to a structure selects the whole structure, which is what you want for moving it. Hold **Alt** and the click lands on the individual fixture instead: its widgets open, so you can address it, set its channels or change its settings without breaking the structure up. No handle appears — the structure is still the thing you move.
+**Editing a structure's members.** Clicking a fixture that belongs to a structure selects the whole structure, which is what you want for moving it. The structure widget lists its members, all highlighted to start with, and the fixture widgets edit the highlighted ones: with every member the same fixture in the same mode, their channels are set together, the same way as several loose fixtures. Narrow the set in the member list with click, Ctrl+click, Shift+click or a band dragged from beside the rows; click the only highlighted member again, or beside the rows, to go back to all of them. **Alt+click** a fixture in the 3D view to highlight just that member. Only highlighted members are outlined, and the structure keeps the handle, because it is still the thing you move.
 
 ## Arranging a selection
 

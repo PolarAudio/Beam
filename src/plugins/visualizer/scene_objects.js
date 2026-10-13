@@ -4,10 +4,15 @@ import * as THREE from 'three';
 import LightField from './light_field';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
+<<<<<<< Updated upstream
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/examples/jsm/loaders/MTLLoader.js';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
+=======
+import { parseAnchorName, collectAnchors } from './model_anchors';
+import { worldAnchor } from './anchor_snap';
+>>>>>>> Stashed changes
 import SceneManager from './scene_manager';
 import primitiveGeometry from './primitive_geometry';
 import { castsContactShadow, standsUp } from './contact_shadows';
@@ -495,9 +500,8 @@ async function load(descriptor) {
     : loadModelFile(descriptor, source);
 
   const pending = fetched.then((gltf) => {
-    const primitives = gltf
-      ? flatten(gltf, correction(descriptor))
-      : buildPrimitive(descriptor);
+    const fix = correction(descriptor);
+    const primitives = gltf ? flatten(gltf, fix) : buildPrimitive(descriptor);
     const bounds = new THREE.Box3();
     primitives.forEach(({ geometry }) => {
       if (geometry.boundingBox) bounds.union(geometry.boundingBox);
@@ -507,6 +511,8 @@ async function load(descriptor) {
       key,
       descriptor,
       primitives,
+      /** Connection points, in corrected model space. See `model_anchors.js`. */
+      anchors: gltf ? collectAnchors(gltf.scene, fix) : [],
       /** Local-space extent, for whatever wants to draw a box round one. */
       bounds,
       /** 1 per selected placement, read by the selection outline. */
@@ -886,6 +892,46 @@ function clear() {
  * @public
  * @returns {Object}
  */
+/**
+ * Every placement of every loaded model, so a search can walk the whole room.
+ *
+ * @public
+ * @returns {Array} placements, as `place` hands them out
+ */
+function everyPlacement() {
+  const out = [];
+  models.forEach((model) => {
+    model.placements.forEach((placement) => out.push(placement));
+  });
+  return out;
+}
+
+/**
+ * The world anchors of some placements, each tagged with where it came from.
+ *
+ * **The tag is what makes a selection work.** Whether an anchor is free to join
+ * something is a question about the whole room, not about one object: a run of
+ * five spans has four internal joints, and at each of those two anchors occupy
+ * the same point and are therefore spent. Carrying the placement through is what
+ * lets `anchor_snap.js` work that out. See `availableAnchors`.
+ *
+ * @public
+ * @param {Array} placements from `place`, or `everyPlacement`
+ * @returns {Array} `{ name, group, side, position, heading, placement }`
+ */
+function anchorsFor(placements) {
+  const out = [];
+  (placements || []).forEach((placement) => {
+    const model = models.get(placement.model);
+    if (!model || !model.anchors || !model.anchors.length) return;
+    model.anchors.forEach((anchor) => {
+      const world = worldAnchor(anchor, placement);
+      if (world) out.push({ ...world, placement });
+    });
+  });
+  return out;
+}
+
 function stats() {
   let placements = 0;
   let drawCalls = 0;
@@ -916,6 +962,8 @@ export default {
   pickObjects,
   ownerAt,
   boundsOf,
+  everyPlacement,
+  anchorsFor,
   syncFromOwners,
   clear,
   stats,

@@ -16,6 +16,9 @@ import Laser from './laser';
 import Strobe from './strobe';
 import SceneObjects from './scene_objects';
 import GroupHandle from './group_handle';
+import AnchorMarkers from './anchor_markers';
+import { nearestJoin, joinMatrix, availableAnchors } from './anchor_snap';
+import { isPivot } from './model_anchors';
 
 /**
  * Identity of a selected item, across kinds.
@@ -204,9 +207,14 @@ const bandEdge = new THREE.Vector3();
  */
 const frustum = new THREE.Frustum();
 
-
 /** Scratch world position, for the floor test during a drag. */
 const floorProbe = new THREE.Vector3();
+
+/** Scratch scale, for decomposing a group's matrix after an anchor snap. */
+const snapScale = new THREE.Vector3();
+
+/** Scratch for the point the gizmo turns about. */
+const pivotProbe = new THREE.Vector3();
 
 /** Scratch position, and the box size assumed for an unrendered fixture. */
 const boundsFallback = new THREE.Vector3();
@@ -588,6 +596,7 @@ class Controls {
    */
   init(camera, el, orbitcontrolsControlsHandle) {
     this.groupedInstances = new THREE.Group(); // Creating new group instance
+    this.anchorMarkers = new AnchorMarkers();
     this.handle = new TransformControls(camera, el); // Loding transformcontrol instance into handle
     this.handle.size = GIZMO_SIZE;
     this.stripCentreHandle();
@@ -661,6 +670,9 @@ class Controls {
         return;
       }
       this.clampToFloor();
+      // After the floor clamp, so a piece snapped up out of the floor is not
+      // then pushed back down by a join that was measured before it moved.
+      this.snapAnchors();
       this.syncGroupsFromGizmo();
       // Said out loud so the coordinate fields can follow a drag. They cannot
       // watch for it themselves: a fixture's model is deliberately not written
@@ -1788,6 +1800,127 @@ class Controls {
   }
 
   /**
+   * Where the gizmo should turn about, for the one thing selected.
+   *
+   * **The middle of the bounding box, unless the model says otherwise.** A model
+   * with a pivot anchor turns about that point instead, which is the whole of
+   * what makes an adjustable corner work as two pieces: each arm is pivoted at
+   * its `anchor_center`, and rotating one turns it in place instead of swinging
+   * its pivot across the floor.
+   *
+   * One piece at a time only. A run of five arms has five pivots, and there is
+   * no single right answer for where the group should hang, so a multi-selection
+   * keeps the middle of its box as it always did.
+   *
+   * @public
+   * @returns {Object|null} a world-space anchor, or null to use the box centre
+   */
+  gizmoPivot() {
+    if (this.pooledInstances.length !== 1) return null;
+    const owner = this.pooledInstances[0];
+    const placement = SceneObjects.everyPlacement().find((p) => p.owner === owner);
+    if (!placement) return null;
+    return SceneObjects.anchorsFor([placement]).find(isPivot) || null;
+  }
+
+  /**
+   * Every anchor in the room, and which of them are still free to be joined.
+   *
+   * **Free is a question about the whole room, not about the selection.** A run
+   * of five spans has four internal joints, and at each of those two anchors
+   * share a point and are spent, so only the first span's start and the last
+   * span's end are places another piece can go. That is what makes a run look
+   * extendable, and it is the same answer for one piece selected as for five.
+   *
+   * @public
+   * @returns {Object} `{ every, free, mine, theirs }`, each an array of anchors
+   */
+  anchorSets() {
+    const every = SceneObjects.anchorsFor(SceneObjects.everyPlacement());
+    const free = availableAnchors(every);
+    const selected = new Set(this.pooledInstances);
+    return {
+      every,
+      free,
+      mine: free.filter((anchor) => selected.has(anchor.placement.owner)),
+      theirs: free.filter((anchor) => !selected.has(anchor.placement.owner)),
+    };
+  }
+
+  /**
+   * Joins the dragged selection to whatever it has been brought next to.
+   *
+   * Applied to the group rather than to each piece, so a selection keeps its own
+   * arrangement: a run of spans dragged as five moves as five, and only the run's
+   * two free ends can make a connection.
+   *
+   * **The correction is recomputed from the gizmo's own result every frame**
+   * rather than accumulated, so it cannot drift. Once a join is made the two
+   * anchors already coincide and the correction is a no-op, which is what makes
+   * holding a piece against its neighbour stable instead of sliding.
+   *
+   * The turn is the *selected* piece matching the one standing still. A corner's
+   * exit anchor carries the change of direction the run has to make, and the
+   * span joining it takes that turn -- but only if it is already nearly square,
+   * so a piece dropped near a corner at the wrong angle is drawn into place and
+   * left pointing where the user put it.
+   *
+   * @public
+   * @returns {Object|null} the join, or null when nothing is in range
+   */
+  snapAnchors() {
+    if (!this.snapEnabled || !this.groupedInstances || !this.pooledInstances.length) {
+      return null;
+    }
+    const { mine, theirs } = this.anchorSets();
+    if (!mine.length || !theirs.length) return null;
+
+    const join = nearestJoin(mine, theirs);
+    if (!join) return null;
+    // Where two pairs are in range, the nearer one is the one the piece was
+    // dragged towards, which is the call the user was already making.
+
+    this.groupedInstances.updateMatrixWorld(true);
+    const delta = joinMatrix(join);
+    this.groupedInstances.matrix.premultiply(delta);
+    this.groupedInstances.matrix.decompose(position, quaternion, snapScale);
+    this.groupedInstances.position.copy(position);
+    this.groupedInstances.quaternion.copy(quaternion);
+    this.groupedInstances.scale.copy(snapScale);
+    this.groupedInstances.updateMatrixWorld(true);
+    return join;
+  }
+
+  /**
+   * Draws the markers, and keeps the live join visible while a drag is making
+   * one.
+   *
+   * On the render loop rather than on selection changes, because the useful
+   * moment for seeing where a piece can connect is *before* the drag, while
+   * deciding where to put it.
+   *
+   * @public
+   */
+  updateAnchorMarkers() {
+    if (!this.anchorMarkers) return;
+    // The one toggle for both: snapping off means no dots either, rather than
+    // two switches for one idea where one of them ends up on and the other off.
+    if (!this.snapEnabled) {
+      this.anchorMarkers.hide();
+      return;
+    }
+    // The live join is worked out here rather than carried over from the drag,
+    // because the anchors are rebuilt every frame and a pair held from the last
+    // `objectChange` no longer refers to the same objects -- it would draw a
+    // stale dot at the position the piece was at before the snap moved it.
+    const { free, mine, theirs } = this.anchorSets();
+    const joining = this.handle && this.handle.dragging
+      ? nearestJoin(mine, theirs)
+      : null;
+    this.anchorMarkers.show(free, joining);
+  }
+
+  /**
    * Lifts the dragged selection until nothing sits below the floor.
    *
    * Applied to the group rather than to each fixture, so a multi-selection
@@ -1939,18 +2072,27 @@ class Controls {
 
       this.boundingBoxMesh.updateMatrixWorld();
       this.boundingBoxMesh.getWorldPosition(position2);
+      // Where the gizmo hangs. The middle of the box is right for anything with
+      // a fixed shape, and wrong for anything with a joint: an adjustable
+      // corner's arm is pivoted at one end, so rotating it about the middle
+      // swings that end across the floor instead of turning the arm in place.
+      // A model that says where it turns about is believed.
+      const pivot = this.gizmoPivot();
+      if (pivot) pivotProbe.copy(pivot.position);
+      else pivotProbe.set(position2.x, position2.y, Math.max(position2.z, 0));
+
       this.groupedInstances.updateMatrixWorld();
       this.groupedInstances.children.forEach((child) => {
         child.updateMatrixWorld(true);
         child.getWorldPosition(position);
-        child.position.setX(position.x - position2.x);
-        child.position.setY(position.y - position2.y);
-        child.position.setZ(position.z - Math.max(position2.z, 0));
+        child.position.setX(position.x - pivotProbe.x);
+        child.position.setY(position.y - pivotProbe.y);
+        // Never hung below the floor, whatever the pivot's own height.
+        child.position.setZ(position.z - Math.max(pivotProbe.z, 0));
       });
 
       this.groupedInstances.updateMatrixWorld();
-      this.boundingBoxMesh.getWorldPosition(position2);
-      this.groupedInstances.position.copy(position2);
+      this.groupedInstances.position.copy(pivotProbe);
       if (this.mode !== CONTROL_MODES.DISCRETE) {
         const target = this.lastGizmoMode === GIZMO_MODES.SCALE ? this.scaleTarget() : null;
         if (target) {

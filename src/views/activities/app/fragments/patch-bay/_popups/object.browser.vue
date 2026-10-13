@@ -4,7 +4,7 @@
     class="object_browser"
   >
     <h4
-      v-if="!groups.length"
+      v-if="!rows.length"
       class="object_browser_empty"
     >
       No objects yet
@@ -14,38 +14,44 @@
          from the dialog, which fixes the height and sets `overflow: hidden`,
          so anything scrollable has to be a child of it. -->
     <div
-      v-if="groups.length"
+      v-if="rows.length"
       class="object_browser_scroll"
     >
-      <div
-        v-for="group in groups"
-        :key="group.name"
-        class="object_browser_group"
+      <!-- One flat list of folder headings and tile grids, indented by depth.
+           A recursive template would draw the same thing; this keeps the tree
+           to one pass of a computed and lets CSS do the nesting, which is all
+           depth is -- the chevron, the indent and `opened` say the rest. -->
+      <template
+        v-for="row in rows"
+        :key="row.key"
       >
         <button
+          v-if="row.folder"
           type="button"
           class="object_browser_folder"
-          @click="toggle(group.name)"
+          :style="{ paddingLeft: `${8 + row.depth * 14}px` }"
+          @click="toggle(row.path)"
         >
           <uk-icon
             class="object_browser_chevron"
-            :class="{ open: isOpen(group.name) }"
+            :class="{ open: isOpen(row.path) }"
             name="arrow_down"
           />
           <uk-icon
             class="object_browser_folder_icon"
-            :name="group.folder ? 'folder' : 'object'"
+            name="folder"
           />
-          <span class="object_browser_folder_name">{{ group.name }}</span>
-          <span class="object_browser_count">{{ group.models.length }}</span>
+          <span class="object_browser_folder_name">{{ row.name }}</span>
+          <span class="object_browser_count">{{ row.count }}</span>
         </button>
 
         <div
-          v-if="isOpen(group.name)"
+          v-else
           class="object_browser_grid"
+          :style="{ paddingLeft: `${10 + row.depth * 14}px` }"
         >
           <button
-            v-for="model in group.models"
+            v-for="model in row.models"
             :key="model.key"
             type="button"
             class="object_browser_tile"
@@ -69,7 +75,7 @@
             <span class="object_browser_name">{{ model.name }}</span>
           </button>
         </div>
-      </div>
+      </template>
     </div>
   </uk-flex>
 </template>
@@ -84,6 +90,12 @@
  * different thing from a row -- teaching it both would put the risk on
  * everything rather than on this.
  *
+ * **Folders nest.** `Trusses/Circles/quarter` is three levels, and the tree is
+ * built from the whole path each catalogue entry carries -- see
+ * `objectstore.js`. Depth costs nothing but an indent, which is why the
+ * headings and their tiles are flattened into one list rather than drawn by a
+ * recursive component.
+ *
  * A thumbnail is `<name>.png` beside the model, the same convention the
  * metadata sidecar follows. Anything without one falls back to the object
  * icon, so the browser is useful before a single picture exists.
@@ -91,6 +103,17 @@
 
 /** Objects that live in no folder, gathered under one heading. */
 const UNSORTED = 'Unsorted';
+
+/**
+ * The open/closed key for the heading that is not a folder.
+ *
+ * A NUL-prefixed name, because Windows forbids NUL in a file name and
+ * `readdirSync` cannot return one -- so this cannot collide with the path of a
+ * folder the user actually made, however they spelled it.
+ *
+ * @constant {String}
+ */
+const UNSORTED_KEY = '\u0000unsorted';
 
 export default {
   name: 'ObjectBrowser',
@@ -112,7 +135,11 @@ export default {
   emits: ['select', 'confirm'],
   data() {
     return {
-      /** Folders the user has opened. Names, not indices. */
+      /**
+       * Folder paths the user has opened -- `Trusses`, `Trusses/Circles` -- and
+       * not names, because two folders may share a name at different depths and
+       * opening one must not open the other.
+       */
       opened: [],
       /** Whether anything has been opened yet, so the first can open itself. */
       touched: false,
@@ -120,61 +147,144 @@ export default {
   },
   computed: {
     /**
-     * The models grouped by folder, folders first and loose objects last.
+     * The library as a tree of folders, built from each entry's folder path.
      *
-     * Same order the list used: the unfoldered ones are the least likely to be
-     * what is being looked for, since they are the ones nobody has filed.
+     * A flat list cannot say which `Circles` belongs to `Trusses` and which to
+     * `Lighting`, so nothing is grouped by name here: every entry is filed
+     * under the path it was found at, and the paths themselves are the tree.
+     *
+     * @returns {Object} the root node, whose own `models` are the loose ones
+     */
+    tree() {
+      const root = {
+        name: '', path: '', folder: true, models: [], children: [],
+      };
+      this.models.forEach((model) => {
+        const segments = String(model.folder || '').split('/').filter(Boolean);
+        let node = root;
+        segments.forEach((segment) => {
+          const path = node.path ? `${node.path}/${segment}` : segment;
+          let child = node.children.find((candidate) => candidate.path === path);
+          if (!child) {
+            child = {
+              name: segment, path, folder: true, models: [], children: [], count: 0,
+            };
+            node.children.push(child);
+          }
+          node = child;
+        });
+        node.models.push(model);
+      });
+
+      // Counts are of everything beneath a folder, not just its own files --
+      // a number that changed as you opened a folder would say nothing about
+      // how much is in there.
+      const tally = (node) => {
+        node.children.sort((a, b) => a.name.localeCompare(b.name));
+        node.models.sort((a, b) => a.name.localeCompare(b.name));
+        node.count = node.models.length
+          + node.children.reduce((total, child) => total + tally(child), 0);
+        return node.count;
+      };
+      tally(root);
+      return root;
+    },
+    /**
+     * The tree, flattened into headings and tile grids in reading order.
+     *
+     * Each row carries its own depth, and a closed folder ends its own branch:
+     * nothing under it is in the list at all, which is what "closed" means.
+     *
+     * An opened folder contributes **two** things -- its own files, then the
+     * folders inside it -- and the second is what is easy to leave out: a walk
+     * that only follows `children` shows the folder and its count and then
+     * nothing, because the count is tallied from the node itself while the
+     * tiles would have come from its siblings.
      *
      * @returns {Array}
      */
-    groups() {
-      const byFolder = new Map();
-      const loose = [];
-      this.models.forEach((model) => {
-        if (!model.folder) {
-          loose.push(model);
-          return;
+    rows() {
+      const rows = [];
+      const emit = (node, depth) => {
+        // The root is the exception: its own models are the loose ones, which
+        // get a heading of their own below rather than reading as the tree's
+        // files. An empty path is what says "this is the root".
+        if (node.path && node.models.length) {
+          rows.push({
+            folder: false,
+            name: node.name,
+            models: node.models,
+            depth,
+            key: `grid:${node.path}`,
+          });
         }
-        if (!byFolder.has(model.folder)) byFolder.set(model.folder, []);
-        byFolder.get(model.folder).push(model);
-      });
+        node.children.forEach((child) => {
+          rows.push({
+            ...child, folder: true, depth, key: `folder:${child.path}`,
+          });
+          if (this.isOpen(child.path)) emit(child, depth + 1);
+        });
+      };
+      emit(this.tree, 0);
 
-      const folders = [...byFolder.entries()]
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([name, models]) => ({ name, folder: true, models }));
-
-      if (!loose.length) return folders;
+      const loose = this.tree.models;
+      if (!loose.length) return rows;
       // With nothing filed, the objects are the whole catalogue and a single
       // heading over all of them says nothing -- so they stand on their own.
-      if (!folders.length) return [{ name: UNSORTED, folder: false, models: loose }];
-      return [...folders, { name: UNSORTED, folder: false, models: loose }];
+      if (!rows.length) {
+        return [{
+          folder: false, name: UNSORTED, models: loose, depth: 0, key: 'grid:loose',
+        }];
+      }
+      // Otherwise the top level is folders and only folders. Six loose files
+      // above four folders is more clutter than catalogue, and the loose ones
+      // are the least likely to be what is being looked for -- they are the
+      // ones nobody has got round to filing.
+      //
+      // `Unsorted` is not a directory on disk, and saying so matters: renaming
+      // or moving it in Explorer will not do anything, because it is the
+      // absence of a folder rather than the presence of one.
+      const heading = {
+        folder: true,
+        name: UNSORTED,
+        path: UNSORTED_KEY,
+        count: loose.length,
+        depth: 0,
+        key: `folder:${UNSORTED_KEY}`,
+      };
+      if (!this.isOpen(UNSORTED_KEY)) return [...rows, heading];
+      return [...rows, heading, {
+        folder: false, name: UNSORTED, models: loose, depth: 1, key: 'grid:loose',
+      }];
     },
   },
   watch: {
-    groups: {
+    rows: {
       immediate: true,
-      handler(groups) {
+      handler(rows) {
         // The first folder opens itself, so the panel is never a column of
-        // closed headings with nothing to look at.
-        if (this.touched || !groups.length) return;
-        this.opened = [groups[0].name];
+        // closed headings with nothing to look at. Keyed by path, so it holds
+        // when the catalogue is re-read and the folders are the same ones.
+        if (this.touched || !rows.length) return;
+        const first = rows.find((row) => row.folder && row.path);
+        if (first) this.opened = [first.path];
       },
     },
   },
   methods: {
-    isOpen(name) {
-      return this.opened.includes(name);
+    isOpen(path) {
+      return this.opened.includes(path);
     },
     /**
      * Opens or closes a folder.
      *
-     * @param {String} name
+     * @param {String} path the folder's path from the library root
      */
-    toggle(name) {
+    toggle(path) {
       this.touched = true;
-      this.opened = this.isOpen(name)
-        ? this.opened.filter((entry) => entry !== name)
-        : [...this.opened, name];
+      this.opened = this.isOpen(path)
+        ? this.opened.filter((entry) => entry !== path)
+        : [...this.opened, path];
     },
     /**
      * Where a model's preview image can be fetched from, if it has one.

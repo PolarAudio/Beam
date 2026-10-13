@@ -60,7 +60,29 @@ console.log('\na structure is copied whole');
   const chunk = chunkFor([truss]);
   check('one structure', chunk.structures.length, 1);
   check('and its three members', names(chunk.fixtures), 'Head 1, Head 2, Head 3');
-  check('members named by the structure', chunk.structures[0].members.join(), '1,2,3');
+  // A reference rather than a bare id: ids are per-kind, and a structure may
+  // hold objects as well as fixtures. See `scene_item.readMemberRef`.
+  check(
+    'members named by the structure',
+    chunk.structures[0].members.map((ref) => `${ref.kind}:${ref.id}`).join(),
+    'fixture:1,fixture:2,fixture:3',
+  );
+}
+
+console.log('\na structure holding an object carries it too');
+{
+  const withObject = new Structure({ id: 2, name: 'Truss and weights' });
+  withObject.add(head(1, 'Head'));
+  withObject.add(object);
+  const chunk = chunkFor([withObject]);
+  check('one structure', chunk.structures.length, 1);
+  check('its fixture', names(chunk.fixtures), 'Head');
+  check('and its object', names(chunk.objects), 'Truss model');
+  check(
+    'named by kind, so the two ids cannot collide',
+    chunk.structures[0].members.map((ref) => `${ref.kind}:${ref.id}`).join(),
+    'fixture:1,object:1',
+  );
 }
 
 console.log('\na member selected beside its structure is not copied twice');

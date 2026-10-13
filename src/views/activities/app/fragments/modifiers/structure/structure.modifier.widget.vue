@@ -66,7 +66,7 @@
         <uk-button
           icon="save"
           :label="saveLabel"
-          :disabled="!structure.members.length || !named"
+          :disabled="!canSave"
           @click="saveToLibrary"
         />
         <uk-button
@@ -103,9 +103,12 @@ export default {
     },
     /**
      * Which member is currently showing its own widgets, if any.
+     *
+     * `[Number, String]` because a member may be an object, and an object's row
+     * id is namespaced -- `object:3`. See `scene_item.rowId`.
      */
     selectedMemberId: {
-      type: Number,
+      type: [Number, String],
       default: null,
     },
   },
@@ -163,6 +166,18 @@ export default {
     },
     byIsland() {
       return !!this.structure && this.structure.grouping === ISLAND_GROUPING.ISLAND;
+    },
+    /**
+     * Whether the library can hold what this structure holds.
+     *
+     * Both kinds now: a fixture is recorded as the profile it uses, and an
+     * object as either the library key it references or the parameters it is
+     * itself. Placing the stamp again rebuilds both.
+     *
+     * @returns {Boolean}
+     */
+    canSave() {
+      return !!this.structure && !!this.structure.members.length && this.named;
     },
   },
   methods: {

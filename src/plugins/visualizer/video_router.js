@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import VideoFeed from './video_feed';
 import Preferences from './preferences';
 
@@ -14,6 +15,10 @@ import Preferences from './preferences';
  * input they show with `use` and let go with `drop`, and the feed opens on the
  * first user and closes after the last. A feed is a network receiver or a
  * playing video, so an input nobody shows costs nothing.
+ *
+ * An NDI input with no source chosen on this machine hands its devices a
+ * still frame that says so, instead of nothing: a projector with no picture
+ * lights its whole frame white, which looks like a picture gone wrong.
  */
 
 /** Preference key: input uid to NDI sender name. */
@@ -28,6 +33,12 @@ let lister = () => [];
 const users = new Map();
 /** Input uid to `{ name, feed, pending }`. */
 const open = new Map();
+
+/** Notice size in pixels: 16:9, so it fills a common screen without bars. */
+const NOTICE_WIDTH = 1280;
+const NOTICE_HEIGHT = 720;
+/** Input uid to `{ name, feed }`, the notice drawn for that input's name. */
+const notices = new Map();
 
 let generation = 0;
 const listeners = new Set();
@@ -66,6 +77,54 @@ function binding(uid) {
 /** The feed name an input should have open now. */
 function feedNameOf(input) {
   return input.feedName(binding(input.uid));
+}
+
+/**
+ * The still frame an input with no source shows, drawn once per input name.
+ *
+ * @param {Object} input VideoInput
+ * @returns {Object} feed-like: `width`, `height`, `format`, `texture`,
+ *   `displayTexture`
+ */
+function noticeFor(input) {
+  const cached = notices.get(input.uid);
+  if (cached && cached.name === input.name) return cached.feed;
+  if (cached) cached.feed.texture.dispose();
+  const canvas = document.createElement('canvas');
+  canvas.width = NOTICE_WIDTH;
+  canvas.height = NOTICE_HEIGHT;
+  const g = canvas.getContext('2d');
+  g.fillStyle = '#1b1d22';
+  g.fillRect(0, 0, NOTICE_WIDTH, NOTICE_HEIGHT);
+  g.strokeStyle = '#e0a030';
+  g.lineWidth = 12;
+  g.strokeRect(6, 6, NOTICE_WIDTH - 12, NOTICE_HEIGHT - 12);
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillStyle = '#ffffff';
+  g.font = 'bold 76px Roboto-Medium, Arial, sans-serif';
+  g.fillText('No source for this input', NOTICE_WIDTH / 2, NOTICE_HEIGHT / 2 - 50);
+  g.fillStyle = '#c8ccd4';
+  g.font = '44px Roboto-Regular, Arial, sans-serif';
+  g.fillText(input.name || 'NDI input', NOTICE_WIDTH / 2, NOTICE_HEIGHT / 2 + 40);
+  g.font = '34px Roboto-Regular, Arial, sans-serif';
+  g.fillText('Choose a source in Video inputs, Ctrl+Shift+I', NOTICE_WIDTH / 2, NOTICE_HEIGHT / 2 + 110);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.generateMipmaps = true;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  const feed = {
+    name: '',
+    format: 'RGBA',
+    width: NOTICE_WIDTH,
+    height: NOTICE_HEIGHT,
+    texture,
+    displayTexture: texture,
+    frameCount: 1,
+    notice: true,
+  };
+  notices.set(input.uid, { name: input.name, feed });
+  return feed;
 }
 
 /** Closes an input's feed and forgets it. */
@@ -196,7 +255,10 @@ export default {
     const input = this.input(id);
     if (!input) return null;
     const entry = open.get(input.uid);
-    return entry ? entry.feed : null;
+    if (entry) return entry.feed;
+    // Only NDI can be left without a source: a file input always names its file.
+    if (input.kind === 'ndi' && !feedNameOf(input)) return noticeFor(input);
+    return null;
   },
 
   /**

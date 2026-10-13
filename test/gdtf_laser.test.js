@@ -13,7 +13,7 @@ import { DOMParser } from '@xmldom/xmldom';
 import readGdtf from '@/models/DMX/gdtf/gdtf_reader';
 import { fixtureCategory } from '@/models/DMX/gdtf/fixture_parts';
 import { laserParams } from '@/models/DMX/gdtf/laser_parts';
-import { apertureOrigin } from '@/models/DMX/generic/laser';
+import { apertureOrigin, laserChannelLumens } from '@/models/DMX/generic/laser';
 import movedProfile from '@/models/DMX/moved_profiles';
 
 let failures = 0;
@@ -40,6 +40,8 @@ const type = pro.fixtureType;
 check('a Laser geometry is a laser', fixtureCategory(type), 'Laser');
 const p = laserParams(type);
 check('power in watts', p.power, 2.5);
+const lumens = laserChannelLumens(p);
+check('lumens per colour, a third of the watts each', [lumens.red, lumens.green, lumens.blue].map(Math.round), [110, 404, 22]);
 check('scan angle', [p.scanAngleH, p.scanAngleV], [32, 32]);
 check('beam diameter in mm', r1(p.beamDiameter), 3);
 check('divergence in mrad', p.divergence, 1);
@@ -52,14 +54,30 @@ check('a fixed offset', p.controls.xPos, { mode: 'fixed', value: 0 });
 check('an adjustable switch starts off', p.controls.mirrorX, { mode: 'adjustable', value: false });
 check('no channel takes an address', type.modes[0].channels.every((c) => c.offsets === null), true);
 
-const wide = laserParams(read('Wicked_Lasers@LaserCube_Pro_2.5W_Wide_Angle@Beam_1').fixtureType);
-check('the wide angle scans wider', wide.scanAngleH, 70);
+const wideFile = read('Wicked_Lasers@LaserCube_Pro_2.5W_Wide_Angle@Beam_1');
+check(
+  'the wide angle carries its own body',
+  Object.keys(wideFile.files).sort(),
+  ['models/3ds/LaserCube Pro Wide Angle.3ds', 'models/gltf/LaserCube Pro Wide Angle.glb'],
+);
+const wide = laserParams(wideFile.fixtureType);
+check('the wide angle lens multiplies scan and divergence by 4.5', [wide.scanAngleH, wide.divergence], [144, 4.5]);
+check('its lens adds depth, mm', [wide.width, wide.depth, wide.height].map((m) => Math.round(m * 1000)), [100, 170, 151]);
 
 const ultra = read('Wicked_Lasers@LaserCube_Ultra_7.5W@Beam_1');
-check('the Ultra has no mesh', Object.keys(ultra.files), []);
+check(
+  'the Ultra carries its body',
+  Object.keys(ultra.files).sort(),
+  ['models/3ds/LaserCube Ultra.3ds', 'models/gltf/LaserCube Ultra.glb'],
+);
 const u = laserParams(ultra.fixtureType);
 check('the Ultra is 7.5 W', u.power, 7.5);
-check('its beam leaves the front face', apertureOrigin(u), { x: 0, y: -0.1, z: 0 });
+check('its body, mm', [u.width, u.depth, u.height].map((m) => Math.round(m * 1000)), [202, 196, 199]);
+check('its beam starts at the model origin', apertureOrigin(u), { x: 0, y: 0, z: 0 });
+const ultraWide = laserParams(read('Wicked_Lasers@LaserCube_Ultra_7.5W_Wide_Angle@Beam_1').fixtureType);
+check('the Ultra wide angle lens adds depth, mm', Math.round(ultraWide.depth * 1000), 225);
+check('and opens the Ultra to 166.5 degrees', [ultraWide.scanAngleH, ultraWide.divergence], [166.5, 4.5]);
+check('the Ultra: 37 degrees, 4 mm, 1 mrad', [u.scanAngleH, Math.round(u.beamDiameter * 10) / 10, u.divergence], [37, 4, 1]);
 
 check(
   'an old project finds the GDTF',

@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { Effect, EffectAttribute, BlendFunction } from 'postprocessing';
+import { SCENE_PER_NIT } from './light_field';
+import { FIGURE_CANDELA } from './laser_figure';
 
 /**
  * @file Puts every laser's figure onto whatever the camera can see.
@@ -28,6 +30,10 @@ import { Effect, EffectAttribute, BlendFunction } from 'postprocessing';
  * far** rather than window depth -- so the comparison is a subtraction in
  * metres instead of undoing a perspective divide. See `projector_depth.js` for
  * why the laser's tiles are packed that way.
+ *
+ * **Photometric, as the projector is.** The figure atlas holds luminous
+ * intensity, so a surface at distance d facing the aperture at angle a gets
+ * I cos a / d^2 lux and shows rho E / pi cd/m2 for its colour rho.
  */
 
 /** As many lasers as the atlases have tiles. */
@@ -36,22 +42,15 @@ const SLOTS = 16;
 /**
  * How far past the first surface a fragment may sit and still count as lit.
  *
- * In metres, because the laser atlas is linear. Generous enough to swallow the
- * quantisation of a 512 tile seen at a glancing angle, tight enough that the
- * figure does not bleed around a corner.
+ * In metres, because the laser atlas is linear: a floor of this, plus what one
+ * depth texel spans on the surface. A texel covers `texelTan` metres per metre
+ * of distance, and a surface turned away from the aperture by angle a changes
+ * depth by tan(a) times that across it -- at a glancing angle, more than any
+ * fixed allowance, which cut whole texels out of the figure. Capped where a
+ * surface is so nearly edge-on that it gets almost no light anyway.
  */
 const DEPTH_BIAS = 0.08;
-
-/**
- * Watts to something the tone curve can eat.
- *
- * The one number here set by looking rather than derived. Everything else --
- * the inverse square, the cosine, the colour -- is computed. A laser's figure
- * is not an illuminance a designer quotes in lux the way a projector's picture
- * is, so there is no external anchor to calibrate against; this is tuned
- * against a 7.5 W LaserCube on a facade and belongs on the debug panel.
- */
-const SURFACE_GAIN = 12.0;
+const DEPTH_SLOPE_MAX = 10.0;
 
 const FRAGMENT = /* glsl */`
   uniform mat4 projInverse;
@@ -64,8 +63,10 @@ const FRAGMENT = /* glsl */`
   uniform vec4 depthTile[SLOTS];
   uniform vec4 figureTile[SLOTS];
   uniform vec3 laserPos[SLOTS];
-  uniform float power[SLOTS];
+  uniform float texelTan[SLOTS];
   uniform float laserFar;
+  uniform sampler2D surfaceAlbedo;
+  uniform bool hasAlbedo;
   uniform int liveCount;
   uniform int hasAtlas;
 
@@ -108,33 +109,34 @@ const FRAGMENT = /* glsl */`
 
       vec2 frame = clamp(ndc.xy * 0.5 + 0.5, 0.0, 1.0);
 
+      vec3 toLaser = laserPos[i] - world;
+      float distance2 = max(dot(toLaser, toLaser), 0.0025);
+      float lambert = max(dot(surfaceNormal, normalize(toLaser)), 0.0);
+
       // Can this laser actually see the point, or is the building in the way?
       // Both sides in metres: lc.w is distance along the throw, and the tile
       // holds distance over far.
       vec4 dt = depthTile[i];
       float seen = unpackRGBAToDepth(texture2D(depthAtlas, dt.xy + frame * dt.zw)) * laserFar;
-      float visible = step(lc.w, seen + DEPTH_BIAS);
+      float slope = min(sqrt(max(1.0 - lambert * lambert, 0.0)) / max(lambert, 1e-3), DEPTH_SLOPE_MAX);
+      float bias = DEPTH_BIAS + lc.w * texelTan[i] * slope;
+      float visible = step(lc.w, seen + bias);
 
-      // What it is drawing in that direction. The colour already carries the
-      // dimmer, the shutter and the RGB balance -- it was written into the
-      // figure from the same points the beams were built from.
+      // The luminous intensity it sends that way, in kilocandela. It already
+      // carries the dimmer, the shutter and the RGB balance -- it was written
+      // from the same points the beams were built from.
       vec4 ft = figureTile[i];
-      vec3 figure = texture2D(figureAtlas, ft.xy + frame * ft.zw).rgb;
+      vec3 intensity = texture2D(figureAtlas, ft.xy + frame * ft.zw).rgb * FIGURE_CANDELA;
 
-      // An angular emitter spreads its field over the square of the distance,
-      // the same as the projector's throw maths.
-      float throwDistance = max(lc.w, 0.05);
-      float falloff = 1.0 / (throwDistance * throwDistance);
-
-      // Straight on is full value, edge on is nothing -- measured to the
-      // aperture, which is what lights this surface.
-      vec3 toLaser = normalize(laserPos[i] - world);
-      float lambert = max(dot(surfaceNormal, toLaser), 0.0);
-
-      total += figure * power[i] * falloff * lambert * inside * visible;
+      // Lux: intensity over the square of the distance from the aperture, by
+      // the cosine of the angle the surface turns from it.
+      total += intensity * lambert / distance2 * inside * visible;
     }
 
-    outputColor = vec4(total, inputColor.a);
+    // A matte surface shows rho E / pi: its colour times the lux, spread over
+    // the hemisphere.
+    vec3 albedo = hasAlbedo ? texture2D(surfaceAlbedo, uv).rgb : vec3(1.0);
+    outputColor = vec4(total * albedo * SCENE_PER_WHITE_LUX, inputColor.a);
   }
 `;
 
@@ -148,13 +150,13 @@ class LaserEffect extends Effect {
     const depthTile = [];
     const figureTile = [];
     const laserPos = [];
-    const power = [];
+    const texelTan = [];
     for (let i = 0; i < SLOTS; i += 1) {
+      texelTan.push(0);
       laserMatrix.push(new THREE.Matrix4());
       depthTile.push(new THREE.Vector4(0, 0, 1, 1));
       figureTile.push(new THREE.Vector4(0, 0, 1, 1));
       laserPos.push(new THREE.Vector3());
-      power.push(0);
     }
 
     super('LaserEffect', FRAGMENT, {
@@ -165,6 +167,10 @@ class LaserEffect extends Effect {
       defines: new Map([
         ['SLOTS', `${SLOTS}`],
         ['DEPTH_BIAS', DEPTH_BIAS.toFixed(4)],
+        ['DEPTH_SLOPE_MAX', DEPTH_SLOPE_MAX.toFixed(1)],
+        ['FIGURE_CANDELA', FIGURE_CANDELA.toFixed(1)],
+        // A white matte surface's scene value per lux: SCENE_PER_NIT / pi.
+        ['SCENE_PER_WHITE_LUX', (SCENE_PER_NIT / Math.PI).toFixed(8)],
       ]),
       uniforms: new Map([
         ['projInverse', new THREE.Uniform(new THREE.Matrix4())],
@@ -177,8 +183,10 @@ class LaserEffect extends Effect {
         ['depthTile', new THREE.Uniform(depthTile)],
         ['figureTile', new THREE.Uniform(figureTile)],
         ['laserPos', new THREE.Uniform(laserPos)],
-        ['power', new THREE.Uniform(power)],
+        ['texelTan', new THREE.Uniform(texelTan)],
         ['laserFar', new THREE.Uniform(120)],
+        ['surfaceAlbedo', new THREE.Uniform(null)],
+        ['hasAlbedo', new THREE.Uniform(false)],
         ['liveCount', new THREE.Uniform(0)],
         ['hasAtlas', new THREE.Uniform(0)],
       ]),
@@ -199,7 +207,8 @@ class LaserEffect extends Effect {
    * into it.
    *
    * @public
-   * @param {Array} lasers each `{ matrix, depthTile, figureTile, position, power }`
+   * @param {Array} lasers each `{ matrix, depthTile, figureTile, position,
+   *   texelTan }`, the last how wide a depth texel is per metre of distance
    * @param {Object} figureTexture the figure atlas
    * @param {Object} depthTexture the laser depth atlas
    * @param {Number} far the range the depth atlas was packed against
@@ -209,6 +218,18 @@ class LaserEffect extends Effect {
     this.figureTexture = figureTexture || null;
     this.depthTexture = depthTexture || null;
     if (far) this.far = far;
+  }
+
+  /**
+   * The surface colour for this frame, from `SurfaceAlbedo`, or null for
+   * white.
+   *
+   * @public
+   * @param {Object|null} texture
+   */
+  setAlbedo(texture) {
+    this.uniforms.get('surfaceAlbedo').value = texture || null;
+    this.uniforms.get('hasAlbedo').value = !!texture;
   }
 
   /**
@@ -238,7 +259,7 @@ class LaserEffect extends Effect {
     const depthTiles = uniforms.get('depthTile').value;
     const figureTiles = uniforms.get('figureTile').value;
     const positions = uniforms.get('laserPos').value;
-    const powers = uniforms.get('power').value;
+    const texelTans = uniforms.get('texelTan').value;
 
     live.forEach((laser, i) => {
       matrices[i].copy(laser.matrix);
@@ -247,7 +268,7 @@ class LaserEffect extends Effect {
       depthTiles[i].set(dt.x, dt.y, dt.width, dt.height);
       figureTiles[i].set(ft.x, ft.y, ft.width, ft.height);
       positions[i].copy(laser.position);
-      powers[i] = laser.power * SURFACE_GAIN;
+      texelTans[i] = laser.texelTan;
     });
   }
 }

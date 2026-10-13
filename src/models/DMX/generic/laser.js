@@ -216,6 +216,33 @@ export const DEFAULT_LASER_PARAMS = {
 };
 
 /**
+ * Lumens per optical watt of each colour's diodes: 683 lm/W times the eye's
+ * response V(λ) at 638, 520 and 450 nm, the usual RGB show-laser lines.
+ *
+ * @constant {Object}
+ */
+export const LASER_EFFICACY = Object.freeze({ red: 132, green: 485, blue: 26 });
+
+/**
+ * The luminous flux of each colour at full output, in lumens.
+ *
+ * Profiles give total optical power only, so it is split evenly over the three
+ * colours.
+ *
+ * @public
+ * @param {Object} params laser parameters
+ * @returns {Object} `{ red, green, blue }` in lumens
+ */
+export function laserChannelLumens(params) {
+  const watts = Math.max(Number(params.power) || 0, 0) / 3;
+  return {
+    red: watts * LASER_EFFICACY.red,
+    green: watts * LASER_EFFICACY.green,
+    blue: watts * LASER_EFFICACY.blue,
+  };
+}
+
+/**
  * Where the aperture sits, in the fixture's own space, in metres.
  *
  * The origin is the centre of the body -- that is what gets placed -- and the

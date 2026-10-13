@@ -137,6 +137,38 @@ export function dwellWeights(paths, pointRate, options = {}) {
 }
 
 /**
+ * Each path's share of the frame's time, and so of the laser's power.
+ *
+ * The same budget `dwellWeights` spends: a line is given `weight` times the
+ * reference density over its length, which is `weight * length / refLength`
+ * of the frame; a dot is given its point count of the budget. With no point
+ * rate there is no budget, and every path gets an equal part.
+ *
+ * @public
+ * @param {Array} paths each `{ count, xy, meta }`
+ * @param {Number} pointRate the fixture's points per second
+ * @param {Object} [options] overrides of `DWELL_DEFAULTS`
+ * @returns {Float32Array} one fraction of the frame per path
+ */
+export function dwellShares(paths, pointRate, options = {}) {
+  const o = { ...DWELL_DEFAULTS, ...options };
+  const shares = new Float32Array(paths.length);
+  if (!paths.length) return shares;
+  const budget = (Number(pointRate) || 0) / o.frameRate;
+  if (!(budget > 0)) return shares.fill(1 / paths.length);
+  const weights = dwellWeights(paths, pointRate, options);
+  paths.forEach((p, i) => {
+    const length = pathLength(p.xy, p.count);
+    if (p.count <= 1 || length < DOT_LENGTH) {
+      shares[i] = (weights[i] * o.dotRefPoints) / budget;
+    } else {
+      shares[i] = (weights[i] * length) / o.refLength;
+    }
+  });
+  return shares;
+}
+
+/**
  * One frame of paths as a DAC-shaped point run, plus a weight per point.
  *
  * The renderer's beam builder reads six unsigned 16-bit values a point --
@@ -146,6 +178,9 @@ export function dwellWeights(paths, pointRate, options = {}) {
  * the builder's stroke never bridges the end of one path to the start of the
  * next however close they sit (the scanner would have blanked that travel),
  * and a **weight per point** from `dwellWeights`, 1 when the model is off.
+ * `shares` is each point's fraction of the frame's time: its path's share
+ * from `dwellShares` split over the points kept for it, or an equal part of
+ * the run when the model is off.
  *
  * @public
  * @param {Array} paths each `{ count, xy: Float32Array, rgb: Uint8Array, meta }`
@@ -155,7 +190,8 @@ export function dwellWeights(paths, pointRate, options = {}) {
  * @param {Number} [options.maxPoints] capacity; the run is cut to fit
  * @param {Number} [options.minStep] thinning distance, `MIN_STEP` by default
  * @param {Object} [options.model] `dwellWeights` overrides
- * @returns {{ count: Number, points: Uint16Array, weights: Float32Array }}
+ * @returns {{ count: Number, points: Uint16Array, weights: Float32Array,
+ *   shares: Float32Array }}
  */
 export function flattenPaths(paths, {
   pointRate, dwell = true, maxPoints = 4096, minStep = MIN_STEP, model = {},
@@ -166,7 +202,9 @@ export function flattenPaths(paths, {
   const count = Math.min(raw, maxPoints);
   const points = new Uint16Array(count * POINT_STRIDE);
   const weights = new Float32Array(count);
+  const shares = new Float32Array(count);
   const perPath = dwell ? dwellWeights(list, pointRate, model) : null;
+  const perPathShare = dwell ? dwellShares(list, pointRate, model) : null;
 
   // The step is chosen so the whole frame fits, rather than the frame being
   // cut when it does not.
@@ -180,9 +218,10 @@ export function flattenPaths(paths, {
   // this step cannot overrun the buffer.
   let length = 0;
   list.forEach((p) => { length += pathLength(p.xy, p.count); });
-  // Two ends a path, and a blank between paths.
+  // Two ends a path, and a blank between paths. Measured against the room
+  // there is, not the points there are: a frame that fits is not thinned.
   const overhead = list.length * 3;
-  const available = Math.max(count - overhead, 1);
+  const available = Math.max(maxPoints - overhead, 1);
   const step = minStep > 0 ? Math.max(minStep, length / available) : 0;
   const minStep2 = step * step;
 
@@ -207,6 +246,7 @@ export function flattenPaths(paths, {
     const w = perPath ? perPath[i] : 1;
     // Blanked travel to this path's start, so the previous stroke ends.
     if (i > 0) put(p.xy[0], p.xy[1], 0, 0, 0, 0);
+    const first = at;
     // The first and last points always; between them, one per `minStep`.
     let lx = NaN;
     let ly = NaN;
@@ -221,8 +261,10 @@ export function flattenPaths(paths, {
         ly = y;
       }
     }
+    if (perPathShare && at > first) shares.fill(perPathShare[i] / (at - first), first, at);
   });
+  if (!perPathShare && at > 0) shares.fill(1 / at, 0, at);
   return {
-    count: at, points, weights, step,
+    count: at, points, weights, shares, step,
   };
 }

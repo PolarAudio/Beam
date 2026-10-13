@@ -20,7 +20,7 @@ import {
   FORMAT_XYRGB_U16, FORMAT_XY_F32_RGB_U8, HEADER_BYTES,
 } from '@/electron/ponk';
 import {
-  flattenPaths, dwellWeights, pathLength, DWELL_DEFAULTS, POINT_STRIDE,
+  flattenPaths, dwellWeights, dwellShares, pathLength, DWELL_DEFAULTS, POINT_STRIDE,
 } from '@/plugins/visualizer/laser_dwell';
 
 let failures = 0;
@@ -283,6 +283,27 @@ console.log('\n-- the dwell model --');
   const flat = flattenPaths([across, across], { pointRate: 30000 });
   near('weights on the points', flat.weights[0], 0.5);
   near('and on the second path', flat.weights[flat.count - 1], 0.5);
+
+  // Shares of the frame's time, which is the laser's power: one line across
+  // takes it all, two take half each, a dot its points of the budget.
+  near('one line across: the whole frame', dwellShares([across], 30000)[0], 1);
+  near('two lines: half each', dwellShares([across, across], 30000)[1], 0.5);
+  near('a dot: its points of 500', dwellShares([dot], 30000)[0], DWELL_DEFAULTS.dotPoints / 500);
+  near('no rate: equal parts', dwellShares([across, dot], 0)[1], 0.5);
+  // Through flatten, a path's share is split over its kept points.
+  const parts = flattenPaths([across], { pointRate: 30000 });
+  let total = 0;
+  for (let i = 0; i < parts.count; i += 1) total += parts.shares[i];
+  near('the points of a path sum to its share', total, 1);
+  check('the blank between paths has none', flat.shares[2], 0);
+
+  // A frame that fits is not thinned: a triangle drawn with 25 points a side
+  // keeps all of them, so its points stay a stroke apart.
+  const side = {
+    count: 25, xy: new Float32Array(50), rgb: red(25), meta: {},
+  };
+  for (let k = 0; k < 25; k += 1) side.xy[k * 2] = -0.5 + k * 0.04;
+  check('a frame that fits keeps every point', flattenPaths([side], { pointRate: 30000 }).count, 25);
 }
 
 console.log(`\n${failures ? `${failures} failed` : 'all passed'}`);

@@ -5,11 +5,11 @@
  * Each file has the body as a Model, a Laser geometry with the optics, and
  * one mode in which every control is a channel: Fixed and Adjustable ones
  * are virtual (no DMX offset), as a lens focused by hand is. The LaserCube
- * Pro's body is `LaserCube Pro 2.5W.glb`, measured off the unit and drawn in
- * millimetres, Y up, its origin on the aperture's optical axis 20 mm behind
- * the front face. It is written into each file in metres, in the chassis
- * colour, as both glTF and 3DS. The Ultra has no measured body yet and is a
- * 200 mm cube.
+ * bodies are `LaserCube Pro 2.5W.glb`, `LaserCube 7.5 Ultra.glb` and their
+ * wide-angle versions with the lens fitted. All are measured off the units and
+ * drawn in millimetres, Y up, the origin on the aperture's optical axis 20 mm
+ * behind the chassis front. Each is written into its file in metres, in the
+ * chassis colour, as both glTF and 3DS.
  *
  * Usage:
  *   node tools/gdtf/wicked-lasers.mjs
@@ -86,7 +86,13 @@ const ATTRIBUTES = {
   },
 };
 
-/** The four models. Optics as the earlier profiles had them. */
+/**
+ * Wicked Lasers' wide-angle lens: it multiplies the scan angle and the beam
+ * divergence. An estimate, not a published figure.
+ */
+const WIDE_LENS = 4.5;
+
+/** The four models. A Wide Angle is the laser behind the wide-angle lens. */
 const LASERS = [
   {
     name: 'LaserCube Pro 2.5W',
@@ -95,34 +101,35 @@ const LASERS = [
     scan: 32,
     beamDiameter: 0.003,
     divergence: 1,
-    body: 'model',
+    body: { source: 'LaserCube Pro 2.5W.glb', stem: 'LaserCube Pro' },
   },
   {
     name: 'LaserCube Pro 2.5W Wide Angle',
     id: '6E1B2A4C-3F5D-4B8E-9C21-7A0F4D3E2B12',
     power: 2.5,
-    scan: 70,
+    scan: 32 * WIDE_LENS,
     beamDiameter: 0.0015,
-    divergence: 2.5,
-    body: 'model',
+    divergence: 1 * WIDE_LENS,
+    body: { source: 'LaserCube Pro 2.5W Wide.glb', stem: 'LaserCube Pro Wide Angle' },
   },
   {
+    // Wicked Lasers' figures: 37 degree scan, 4 mm beam, 1 mrad.
     name: 'LaserCube Ultra 7.5W',
     id: '6E1B2A4C-3F5D-4B8E-9C21-7A0F4D3E2B13',
     power: 7.5,
-    scan: 50,
-    beamDiameter: 0.002,
+    scan: 37,
+    beamDiameter: 0.004,
     divergence: 1,
-    body: 'cube',
+    body: { source: 'LaserCube 7.5 Ultra.glb', stem: 'LaserCube Ultra' },
   },
   {
     name: 'LaserCube Ultra 7.5W Wide Angle',
     id: '6E1B2A4C-3F5D-4B8E-9C21-7A0F4D3E2B14',
     power: 7.5,
-    scan: 80,
-    beamDiameter: 0.002,
-    divergence: 3,
-    body: 'cube',
+    scan: 37 * WIDE_LENS,
+    beamDiameter: 0.004,
+    divergence: 1 * WIDE_LENS,
+    body: { source: 'LaserCube 7.5 Ultra wide.glb', stem: 'LaserCube Ultra Wide Angle' },
   },
 ];
 
@@ -313,9 +320,7 @@ function description(laser, body) {
     ShortName: laser.name,
     LongName: `Wicked Lasers ${laser.name}`,
     Manufacturer: 'Wicked Lasers',
-    Description: body.measured
-      ? 'Made by Beatline Beam. Body measured off the unit; its origin is the aperture\'s optical axis 20 mm behind the front face.'
-      : 'Made by Beatline Beam. The body is a 200 mm cube standing in for the unit, which has not been measured.',
+    Description: 'Made by Beatline Beam. Body measured off the unit; its origin is the aperture\'s optical axis 20 mm behind the front face.',
     FixtureTypeID: laser.id,
     RefFT: '',
     Thumbnail: '',
@@ -358,8 +363,8 @@ function description(laser, body) {
     Length: num(body.size[0]),
     Width: num(body.size[1]),
     Height: num(body.size[2]),
-    PrimitiveType: body.file ? 'Undefined' : 'Cube',
-    File: body.file || '',
+    PrimitiveType: 'Undefined',
+    File: body.file,
   })}/>`);
   x.push(`      <Model${attrs({
     Name: 'Aperture', Length: '0.02', Width: '0.02', Height: '0.002', PrimitiveType: 'Cylinder', File: '',
@@ -436,30 +441,22 @@ function description(laser, body) {
 
 /* ----------------------------------------------------------- the files */
 
-const pro = readGlb(path.join(here, 'LaserCube Pro 2.5W.glb'));
-const proBounds = bounds(pro.positions);
 const fileSafe = (s) => String(s).replace(/[<>:"/\\|?*@\s]+/g, '_');
 fs.mkdirSync(outDir, { recursive: true });
 
 LASERS.forEach((laser) => {
   const files = {};
-  let body;
-  if (laser.body === 'model') {
-    const stem = 'LaserCube Pro';
-    files[`models/gltf/${stem}.glb`] = new Uint8Array(glbOf(pro, BODY_COLOUR));
-    files[`models/3ds/${stem}.3ds`] = new Uint8Array(tdsOf(pro, BODY_COLOUR));
-    body = {
-      measured: true,
-      file: stem,
-      size: [0, 1, 2].map((a) => proBounds.max[a] - proBounds.min[a]),
-      // The model's origin is the optical axis, where the scan starts.
-      aperture: [0, 0, 0],
-    };
-  } else {
-    body = {
-      measured: false, file: null, size: [0.2, 0.2, 0.2], aperture: [0, -0.1, 0],
-    };
-  }
+  const { stem } = laser.body;
+  const mesh = readGlb(path.join(here, laser.body.source));
+  const box = bounds(mesh.positions);
+  files[`models/gltf/${stem}.glb`] = new Uint8Array(glbOf(mesh, BODY_COLOUR));
+  files[`models/3ds/${stem}.3ds`] = new Uint8Array(tdsOf(mesh, BODY_COLOUR));
+  const body = {
+    file: stem,
+    size: [0, 1, 2].map((a) => box.max[a] - box.min[a]),
+    // The model's origin is the optical axis, where the scan starts.
+    aperture: [0, 0, 0],
+  };
   files['description.xml'] = strToU8(description(laser, body));
   const name = `${fileSafe('Wicked Lasers')}@${fileSafe(laser.name)}@Beam_1.gdtf`;
   // A fixed date, so the file changes only when what is in it does.

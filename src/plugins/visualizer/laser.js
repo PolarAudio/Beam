@@ -7,11 +7,14 @@ import SceneEnv from './scene_env';
 import { hazeShaderPrelude, hazeUniforms } from './haze_noise';
 import { DepthAtlas } from './projector_depth';
 import { flattenPaths } from './laser_dwell';
-import FIGURE_ATLAS, { LaserFigure, setLineWidth, lineWidth } from './laser_figure';
+import FIGURE_ATLAS, { LaserFigure, FIGURE_PIXEL, FIGURE_MIN_PIXELS } from './laser_figure';
 import LaserStream, { POINT_STRIDE } from '../laser_stream';
 import {
-  DEFAULT_LASER_PARAMS, apertureOrigin, scanHalfAngles,
+  DEFAULT_LASER_PARAMS, apertureOrigin, scanHalfAngles, laserChannelLumens,
 } from '../../models/DMX/generic/laser';
+import { HAZE_SCATTER_AT_FULL } from './light';
+import { SCENE_PER_NIT } from './light_field';
+import { LASER_APPEARANCE } from './laser_appearance';
 import BodyFinish from './body_finish';
 import { castsContactShadow } from './contact_shadows';
 import { setOutlined } from './selection_outline';
@@ -28,34 +31,44 @@ const LASER_DEPTH = new DepthAtlas({
 });
 
 /**
- * Debug-panel knobs, applied to every laser's material each frame.
- *
- * The numbers are set by eye against a real venue with MadMapper running,
- * rather than round values -- a laser that looks right out of the box beats one
- * that needs six sliders moved before it does.
+ * Luminance of each sRGB primary at 1.0 (Rec. 709). A laser line is drawn as
+ * its primary at the luminance its lumens give, so a colour's flux divided by
+ * its primary's luminance is what goes in that channel.
  */
-let scatterGainValue = 0.55;
-let hazeBaseValue = 0.4;
-
-/** How hard the figure is painted onto geometry, over the pass's own gain. */
-let surfaceGainValue = 4.0;
+const PRIMARY_LUMINANCE = { red: 0.2126, green: 0.7152, blue: 0.0722 };
 
 /**
- * How much dimmer a beam gets as it turns away from the viewer, 0 to 1.
- *
- * One number rather than the three the maths wants. Haze scatters light
- * overwhelmingly forwards, so a beam coming at you is far brighter than the
- * same beam crossing your view, with a weaker lobe straight back the way it
- * came. Those shapes are fixed at values that match real haze; this says how
- * much of the difference to show. 0 is a beam that looks the same from every
- * angle; 1 lets a side-on beam fall to a small fraction of a head-on one.
- *
- * A beam aimed at the eye is the reference and never brightens, whatever this
- * is set to -- so turning it up costs no exposure.
+ * How much the haze texture modulates a beam, as the mover beam's
+ * `BEAM_FIELD_DEPTH`: the field varies the air by half either way.
  */
-let scatterAmountValue = 0.69;
+const HAZE_FIELD_DEPTH = 0.5;
 
-/** Scratch, reused each frame so `renderDepth` allocates nothing. */
+/**
+ * The widest half-angle the aperture camera covers, in radians: 85 degrees.
+ *
+ * The depth tile and the figure tile are one perspective view each, which
+ * cannot reach 90 degrees off the axis. A wider scanner -- a 37 degree laser
+ * behind a 5x lens fans out to 185 -- still draws its beams to the full angle;
+ * past this they are not stopped by surfaces and leave no figure on them.
+ */
+const FIELD_HALF_MAX = (85 * Math.PI) / 180;
+
+/**
+ * The tangents of the half-angles the aperture camera covers: the scan's,
+ * capped at `FIELD_HALF_MAX`.
+ *
+ * @param {Object} params laser parameters
+ * @returns {Object} `{ tanH, tanV }`
+ */
+function fieldTangents(params) {
+  const { h, v } = scanHalfAngles(params);
+  return {
+    tanH: Math.tan(Math.min(h, FIELD_HALF_MAX)),
+    tanV: Math.tan(Math.min(v, FIELD_HALF_MAX)),
+  };
+}
+
+/** Scratch, reused each frame so `update` allocates nothing. */
 const scratchResolution = new THREE.Vector2();
 
 /** Local space to the aperture camera's clip space, for placing the figure. */
@@ -165,17 +178,11 @@ const AIM_LENGTH = 6;
 const bodyBounds = new THREE.Box3();
 
 /**
- * How long a beam is drawn, in metres, before anything stops it.
- *
- * A real beam runs until it hits something; this is a first pass with no
- * per-fixture occlusion, so beams run to a fixed length and scatter in haze
- * along the way. Where a beam ends on geometry is a later step -- the same
- * depth-atlas question the projector and the mover beam-stop both have.
+ * How long a beam is drawn, in metres. The depth atlas stops it at the first
+ * surface; in open air extinction and distance dim it, and this matches the
+ * atlas's range.
  */
-let beamLengthValue = 120;
-
-/** How much of the shaft's end is given over to fading out. */
-let beamTailValue = 0.7;
+const BEAM_LENGTH = 120;
 
 /**
  * Most points a beam holds at once, matching the stream's ring.
@@ -233,54 +240,44 @@ const JUMP_LIMIT = 0.05;
 
 /** Per-point scratch, so a frame's rebuild allocates nothing. */
 const ptFar = new Float32Array(MAX_POINTS * 3);
-const ptCol = new Float32Array(MAX_POINTS * 3);
+const ptFlux = new Float32Array(MAX_POINTS * 3);
 const ptNorm = new Float32Array(MAX_POINTS * 2);
 const ptLit = new Uint8Array(MAX_POINTS);
 const ptLinked = new Uint8Array(MAX_POINTS);
+/** Whether point i and point i + 1 are one stroke. */
+const ptJoined = new Uint8Array(MAX_POINTS);
 
 /**
- * The beam's on-screen width, in pixels.
- *
- * Each point is drawn as its own thin beam from the aperture, so a stationary
- * dot or a lone hot point still shows -- the swept-triangle sheet the beam used
- * to be drew nothing at all for coincident points, which is why a paused figure
- * or a held dot vanished. A pixel width rather than a world one keeps a laser
- * pencil-thin at any distance, and never thinner than the raster can show.
+ * The narrowest a held dot's beam is drawn, in pixels. Its real width is
+ * usually under a pixel; the shader spreads the same light over this width
+ * rather than letting the beam alias away.
  */
 const BEAM_WIDTH_PIXELS = 2.5;
 
 /**
- * The beam material: additive, unlit, coloured per vertex from the stream and
- * textured by the shared haze field.
+ * A beam material for one laser: light scattered out of the beam by the haze,
+ * as the mover beam does it.
  *
- * A pencil beam has no surface to shade -- what the eye sees is light scattered
- * out of it by haze in the air, so a beam in still, even air is a flat streak
- * and a beam in real haze turns and mottles. This samples the **same baked
- * volume the mover beams and LED glows do** (`fogging()` from
- * `haze_noise.js`), at each fragment's world position, with the same
- * `worldPos / hazeScale` coordinate and `time * turbulence / 30` drift the
- * movers use -- so a laser sheet shows the identical turning noise, at the same
- * scale, and the one haze scale slider governs all of them.
+ * Single scattering in candela. A volume of air with scattering coefficient
+ * sigma (`HAZE_SCATTER_AT_FULL` times the haze amount), lit by a beam of flux
+ * F, sends sigma F p(theta) candela per metre of beam towards the eye, p being
+ * the haze's phase function per steradian (`hazeLobes`). What reaches the eye
+ * is that, dimmed by extinction over the beam's path from the aperture and the
+ * path to the eye, and textured by the haze field.
  *
- * The field always modulates, floored so a beam is faintly visible even with
- * the haze low; `hazeAmount` scales the overall level and `scatterGain` is the
- * debug ride over the top. Wired through `hazeShaderPrelude()`, which prepends
- * the HAZE_* defines, the volume sampler and `fogging` ahead of this body --
- * `sampler3D` needs GLSL ES 3.00, which three compiles a ShaderMaterial as
- * automatically; do not set `glslVersion`, see [[beam-haze-model]].
- *
- * `acolor`/`adist` rather than three's built-in `color`: vertex colours are not
- * enabled on this material, so the names are the fixture's own.
- */
-/**
- * A beam material for one laser.
+ * Two kinds of geometry carry it. A **sheet** triangle is the stroke the
+ * scanner sweeps between two points: its vertices carry the flux per radian of
+ * sweep, which at distance s from the aperture is spread over s metres, and a
+ * view ray crossing the sheet at |n.v| to its normal sees it over 1/|n.v| of
+ * that. A **dot** ribbon is a held point's beam: a line source, its flux over
+ * its width, brighter by 1/sin of the angle the view makes with it. The width
+ * is the beam's own (diameter plus divergence times distance) or the drawn
+ * width in pixels, whichever is wider, so the light is never more concentrated
+ * on screen than it is drawn.
  *
  * Per laser rather than shared, because each carries its own depth tile: the
  * fragment projects its world position into the laser's aperture-view depth
- * map and discards anything past the first surface, so the beam ends where the
- * light would actually stop rather than running through walls. Everything else
- * -- additive, double-sided, haze-textured -- is common; the shared knobs are
- * pushed onto every material each frame.
+ * map and discards anything past the first surface.
  *
  * `#include <packing>` brings in `unpackRGBAToDepth`, matching the RGBA depth
  * the atlas writes. `sampler3D` (the haze volume) needs GLSL ES 3.00, which
@@ -292,13 +289,15 @@ function makeBeamMaterial() {
   return new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
-    // Both sides: a swept triangle is a thin flat sheet with no inside, so
-    // drawing both faces is a uniform doubling (a brightness scale), not the
-    // 2:1 rim step DoubleSide gave the mover's open cone.
+    // Both sides: a sheet is flat and has no inside.
     side: THREE.DoubleSide,
     blending: THREE.AdditiveBlending,
     toneMapped: false,
     dithering: true,
+    defines: {
+      HAZE_FIELD_DEPTH: HAZE_FIELD_DEPTH.toFixed(3),
+      SCENE_PER_NIT: SCENE_PER_NIT.toFixed(6),
+    },
     uniforms: {
       // Named as the mover beam names them, fed from the same SceneEnv.
       fogState: { value: SceneEnv.hazeEnabled },
@@ -306,15 +305,17 @@ function makeBeamMaterial() {
       fogScale: { value: SceneEnv.hazeScale },
       fogTurbulence: { value: SceneEnv.hazeDriftRate },
       time: { value: 0.0 },
-      scatterGain: { value: scatterGainValue },
-      beamTail: { value: beamTailValue },
+      // Scattering per metre at full haze.
+      hazeScatter: { value: HAZE_SCATTER_AT_FULL },
       // Where the light starts, so a fragment knows which way its beam runs.
       beamOrigin: { value: new THREE.Vector3() },
-      scatterAmount: { value: scatterAmountValue },
-      hazeBase: { value: hazeBaseValue },
-      // The viewport, so a beam can be given a constant width in pixels.
+      // The viewport, so a dot's beam can be held to a minimum width in pixels.
       resolution: { value: new THREE.Vector2(1, 1) },
       beamWidth: { value: BEAM_WIDTH_PIXELS },
+      // The beam itself, in metres and radians.
+      beamDiameter: { value: 0.003 },
+      divergence: { value: 0.001 },
+      beamLength: { value: BEAM_LENGTH },
       // This laser's depth tile: the atlas, where its tile sits, and the
       // world-to-clip matrix of its aperture camera. `depthReady` gates it, so
       // a beam with no tile yet is simply not truncated rather than vanishing.
@@ -335,27 +336,38 @@ function makeBeamMaterial() {
       attribute float aSide;
       uniform vec2 resolution;
       uniform float beamWidth;
+      uniform float beamDiameter;
+      uniform float divergence;
+      uniform float beamLength;
       varying vec3 vColor;
-      varying float vDist;
       varying vec3 vWorld;
+      varying float vDot;
+      varying float vPerPixel;
       void main() {
         vColor = acolor;
-        vDist = adist;
+        // A sheet's vertices carry no side; a dot's ribbon is +-1 across.
+        vDot = abs(aSide);
         // The true world position, for the haze and depth reads: the pixel
         // offset below is far too small to matter to either.
         vWorld = (modelMatrix * vec4(position, 1.0)).xyz;
-        // Billboard the ribbon: expand this endpoint sideways from the beam's
-        // screen-space direction by a fixed pixel width, so a beam is a constant
-        // thin line however far away and never narrower than a pixel.
         mat4 mvp = projectionMatrix * viewMatrix * modelMatrix;
         vec4 here = mvp * vec4(position, 1.0);
         vec4 there = mvp * vec4(aOther, 1.0);
+        // Metres per pixel at unit view depth; times the depth in perspective.
+        vPerPixel = 2.0 / (projectionMatrix[1][1] * resolution.y);
+        // Billboard the ribbon: expand this endpoint sideways from the beam's
+        // screen direction, to the beam's own width at this end or the minimum
+        // in pixels, whichever is wider. A diverging beam's edges are straight
+        // lines, so the two ends place them.
         vec2 sHere = (here.xy / here.w) * resolution;
         vec2 sThere = (there.xy / there.w) * resolution;
         vec2 dir = sHere - sThere;
         float len = max(length(dir), 1e-4);
         vec2 perp = vec2(-dir.y, dir.x) / len;
-        vec2 offsetPx = perp * aSide * (beamWidth * 0.5);
+        float metresPerPixel = vPerPixel * (isOrthographic ? 1.0 : here.w);
+        float diameter = beamDiameter + divergence * adist * beamLength;
+        float halfPx = max(beamWidth, diameter / metresPerPixel) * 0.5;
+        vec2 offsetPx = perp * aSide * halfPx;
         here.xy += (offsetPx / resolution) * 2.0 * here.w;
         gl_Position = here;
       }
@@ -363,24 +375,19 @@ function makeBeamMaterial() {
     fragmentShader: `${hazeShaderPrelude()}
       #include <packing>
       varying vec3 vColor;
-      varying float vDist;
       varying vec3 vWorld;
+      varying float vDot;
+      varying float vPerPixel;
       uniform bool fogState;
       uniform float fogFactor;
       uniform float fogScale;
       uniform float fogTurbulence;
       uniform float time;
-      uniform float scatterGain;
-      uniform float beamTail;
+      uniform float hazeScatter;
       uniform vec3 beamOrigin;
-      uniform float scatterAmount;
-
-      // Real haze, measured rather than chosen: a tight forward lobe, a weak
-      // one straight back, and a ceiling because the true forward-to-side ratio
-      // runs past a hundred and would only clip to white.
-      // PHASE_* and hg() come from the haze prelude: the phase function is a
-      // property of the air and every renderer reads the same one.
-      uniform float hazeBase;
+      uniform float beamWidth;
+      uniform float beamDiameter;
+      uniform float divergence;
       uniform sampler2D depthAtlas;
       uniform mat4 depthMatrix;
       uniform vec4 depthTile;
@@ -389,10 +396,13 @@ function makeBeamMaterial() {
       uniform float depthFar;
       uniform float depthBias;
       void main() {
+        // No haze, nothing scatters: the beam is invisible in clean air.
+        float haze = fogState ? clamp(fogFactor, 0.0, 1.0) : 0.0;
+        if (haze <= 0.0) discard;
         // Stop at the first surface. The fragment's world position, projected
         // into the aperture camera, gives its place and depth in that view; the
         // atlas holds the nearest surface's depth along the same ray. Past it,
-        // the light never arrived -- discard. One texture read, no march.
+        // the light never arrived.
         if (depthReady) {
           vec4 clip = depthMatrix * vec4(vWorld, 1.0);
           if (clip.w > 0.0) {
@@ -403,65 +413,39 @@ function makeBeamMaterial() {
               // Both sides in metres: the atlas holds view distance over far.
               float surface = unpackRGBAToDepth(texture2D(depthAtlas, atlasUv)) * depthFar;
               float here = -(depthView * vec4(vWorld, 1.0)).z;
-              // Past the first surface the light never arrived. An empty scene
-              // reads far (1), so nothing is cut; a close floor reads its real
-              // depth, the near plane being small enough to resolve it.
               if (here > surface + depthBias) discard;
             }
           }
         }
-        // A gentle fade down the shaft, not a peak at the aperture: the apex is
-        // one fixed world point, so all the haze movement is out along the beam.
-        //
-        // The tail matters as much as the slope. A shaft that merely dims to
-        // some fraction and then stops has a visible cut across it where the
-        // geometry runs out -- an edge in mid-air that nothing in the scene
-        // explains. Taking it to nothing over the last stretch means a beam
-        // that meets no surface simply thins away.
-        float d = clamp(vDist, 0.0, 1.0);
-        float tail = clamp(beamTail, 0.01, 0.99);
-        float falloff = (1.0 - 0.5 * d) * (1.0 - smoothstep(1.0 - tail, 1.0, d));
-        // The mover beam's coordinate and drift, so the noise reads at one scale
-        // across the scene and a sweeping sheet cuts a live cross-section.
-        float drift = time * fogTurbulence;
-        float field = fogging(vWorld / max(fogScale, 0.01), drift);
-        // Base plus variation, never black-to-white.
-        float haze = mix(hazeBase, 1.0, clamp(field, 0.0, 1.0));
-        // Floored so the beam is faintly visible with the haze low.
-        float density = fogState ? max(clamp(fogFactor, 0.0, 1.0), 0.05) : 0.05;
-        // A beam is brightest when it is coming at you.
-        //
-        // Haze droplets are large next to the wavelength, so the light they
-        // scatter is thrown overwhelmingly *forwards*: look nearly into a beam
-        // and what reaches the eye has been deflected by only a few degrees,
-        // where the phase function is enormous. Side on is ninety degrees --
-        // its minimum -- and so the dimmest a beam ever looks. There is a
-        // second, weaker lobe straight back the way the light came, which is
-        // why a beam pointing away from you still reads brighter than the same
-        // beam crossing your view. Two Henyey-Greenstein lobes give all three.
-        vec3 travel = normalize(vWorld - beamOrigin);
+        vec3 fromAperture = vWorld - beamOrigin;
+        float s = max(length(fromAperture), 0.05);
+        vec3 travel = fromAperture / s;
+        vec3 toCamera = cameraPosition - vWorld;
         vec3 toEye = isOrthographic
           ? vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2])
-          : normalize(cameraPosition - vWorld);
+          : normalize(toCamera);
+        float eyeDistance = isOrthographic ? 0.0 : length(toCamera);
         float cosTheta = dot(travel, toEye);
-        float lobes = mix(hg(cosTheta, PHASE_FORWARD), hg(cosTheta, PHASE_BACKWARD),
-          PHASE_BACK_WEIGHT);
-        float sideOn = mix(hg(0.0, PHASE_FORWARD), hg(0.0, PHASE_BACKWARD),
-          PHASE_BACK_WEIGHT);
-        // Anchored at the head-on peak, not at side-on.
-        //
-        // Both put the same shape on the beam, but normalising to side-on
-        // makes every angle except exactly perpendicular *brighter* -- at
-        // forty-five degrees already five times -- so the whole scene lifts
-        // and turning the gain down cannot fix it. Dividing by the peak leaves
-        // a beam aimed at the eye exactly where the brightness was tuned and
-        // lets every other angle fall away below it. The control is then how
-        // far they fall, and it can only ever darken.
-        float ratio = mix(1.0, PHASE_CEILING, clamp(scatterAmount, 0.0, 1.0));
-        float phase = min(lobes / max(sideOn, 1e-6), ratio) / ratio;
 
-        vec3 c = vColor * falloff * haze * density * scatterGain * phase;
-        gl_FragColor = vec4(c, 1.0);
+        float sigma = hazeScatter * haze;
+        float transmission = exp(-sigma * (s + eyeDistance));
+        float field = mix(1.0,
+          fogging(vWorld / max(fogScale, 0.01), time * fogTurbulence), HAZE_FIELD_DEPTH);
+
+        // Metres the light is spread across, as the view ray meets it.
+        float across;
+        if (vDot > 0.5) {
+          float viewDepth = isOrthographic ? 1.0 : -(viewMatrix * vec4(vWorld, 1.0)).z;
+          float width = max(beamDiameter + divergence * s, beamWidth * vPerPixel * viewDepth);
+          float sinTheta = sqrt(max(1.0 - cosTheta * cosTheta, 0.0));
+          across = width * max(sinTheta, 0.01);
+        } else {
+          vec3 normal = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
+          across = s * max(abs(dot(normal, toEye)), 0.02);
+        }
+
+        vec3 nits = vColor * sigma * hazeLobes(cosTheta) * field * transmission / across;
+        gl_FragColor = vec4(nits * SCENE_PER_NIT, 1.0);
       }
     `,
   });
@@ -655,11 +639,16 @@ class Laser {
   /**
    * Rebuilds the beam from the current point stream and output stage.
    *
-   * Each consecutive pair of points is a triangle from the aperture out to the
-   * two rays' far ends; blanked travel (both ends dark) draws nothing. The
-   * output stage -- scale and offset the geometry, balance the colours, dim and
-   * blank -- is applied here, on the way in, so the shader stays a plain
-   * additive draw.
+   * **Each point carries its share of the laser's light.** The laser puts out
+   * its lumens all the time; a point gets the fraction of the frame the scanner
+   * spends on it -- one over the points in a DAC's window, or its path's share
+   * of the scan budget for Ponk -- times its colour and the output stage. A
+   * line spreads that thin, a held dot (one point many times) concentrates it.
+   *
+   * Each consecutive pair of lit points is a sheet triangle from the aperture
+   * out to the two rays' far ends, carrying the first point's flux per radian
+   * of sweep. A point no sheet takes is a dot, drawn as a ribbon carrying its
+   * flux. Blanked travel draws nothing.
    *
    * @public
    */
@@ -671,11 +660,21 @@ class Laser {
     const settings = this._settingsAt();
     const params = this._params || {};
     const source = this.resolveSource(settings);
+    const { h, v: v0 } = scanHalfAngles(params);
+    const { tanH, tanV } = fieldTangents(params);
+    const divergence = Math.max(Number(params.divergence) || 0, 0) / 1000;
+    const u = this._beamMaterial.uniforms;
+    u.beamDiameter.value = Math.max(Number(params.beamDiameter) || 0, 0) / 1000;
+    u.divergence.value = divergence;
+    // A stroke on a surface is the beam's divergence wide, in tile units at the
+    // axis, and never under the atlas's minimum.
+    const minWidth = FIGURE_MIN_PIXELS * FIGURE_PIXEL;
+    const figureWidth = Math.max(divergence / Math.min(tanH, tanV), minWidth);
     // A Ponk frame is paths, laid out as a DAC run with a blank between paths
-    // and a dwell weight per point; a DAC's is the persistence window of what
-    // it played. From here down the two are the same points.
+    // and a share of the frame per point; a DAC's is the persistence window of
+    // what it played. From here down the two are the same points.
     let frame = null;
-    let weights = null;
+    let shares = null;
     if (source && source.protocol === 'ponk') {
       const ponk = LaserStream.ponkFrame(source.service);
       if (ponk) {
@@ -684,28 +683,45 @@ class Laser {
           dwell: dwellModelValue,
           maxPoints: MAX_POINTS,
         });
-        ({ weights } = frame);
+        ({ shares } = frame);
       }
     } else if (source) {
       frame = LaserStream.frame(source.protocol, 50, source.service, source.address);
     }
     const n = Math.min(frame ? frame.count : 0, MAX_POINTS);
+    const figure = {
+      n: 0,
+      far: ptFar,
+      flux: ptFlux,
+      lit: ptLit,
+      linked: ptLinked,
+      joined: ptJoined,
+      clip: scratchClip,
+      tanH,
+      tanV,
+      width: figureWidth,
+    };
     if (n < 1) {
       this._beamGeo.setDrawRange(0, 0);
-      this._figure.build({
-        n: 0, far: ptFar, col: ptCol, lit: ptLit, linked: ptLinked, clip: scratchClip,
-      });
+      this._figure.build(figure);
       return;
     }
 
     const pts = frame.points;
-    const { h, v: v0 } = scanHalfAngles(params);
     const ap = apertureOrigin(params);
     const val = (key, fallback) => (settings ? Number(settings.value(key)) : fallback);
     const gain = settings ? settings.gain : 1;
     const red = (val('red', 100) / 100) * gain;
     const green = (val('green', 100) / 100) * gain;
     const blue = (val('blue', 100) / 100) * gain;
+    // Lumens at full, as scene colour: each primary at the luminance its
+    // flux gives, times how much brighter the line looks than the primary it
+    // is drawn with (see `laser_appearance.js`).
+    const lumens = laserChannelLumens(params);
+    const kRed = (lumens.red / PRIMARY_LUMINANCE.red) * LASER_APPEARANCE.red;
+    const kGreen = (lumens.green / PRIMARY_LUMINANCE.green) * LASER_APPEARANCE.green;
+    const kBlue = (lumens.blue / PRIMARY_LUMINANCE.blue) * LASER_APPEARANCE.blue;
+    const evenShare = 1 / Math.max(frame.count, 1);
     const xScale = val('xScale', 100) / 100;
     const yScale = val('yScale', 100) / 100;
     const xPos = val('xPos', 0) / 100;
@@ -724,27 +740,25 @@ class Laser {
     const capacity = MAX_POINTS * 6;
     let v = 0;
 
-    const putR = (x, y, z, ox, oy, oz, c3, d, sd) => {
+    const putR = (x, y, z, ox, oy, oz, r, g, b, d, sd) => {
       if (v >= capacity) return;
       const p3 = v * 3;
       pos[p3] = x; pos[p3 + 1] = y; pos[p3 + 2] = z;
       other[p3] = ox; other[p3 + 1] = oy; other[p3 + 2] = oz;
-      colour[p3] = ptCol[c3]; colour[p3 + 1] = ptCol[c3 + 1]; colour[p3 + 2] = ptCol[c3 + 2];
+      colour[p3] = r; colour[p3 + 1] = g; colour[p3 + 2] = b;
       dist[v] = d; side[v] = sd;
       v += 1;
     };
     // Sheet vertices carry no billboard: `aSide` 0 leaves the offset at zero.
-    const putS = (x, y, z, c3, d) => putR(x, y, z, x, y, z, c3, d, 0);
+    const putS = (x, y, z, r, g, b, d) => putR(x, y, z, x, y, z, r, g, b, d, 0);
 
-    // Every point resolved once: is it lit, where does its ray end, what colour.
+    // Every point resolved once: is it lit, where does its ray end, its flux.
     for (let i = 0; i < n; i += 1) {
       const b = i * POINT_STRIDE;
-      // Dwell: how long the scanner would have lingered here, relative to a
-      // line across the field. 1 for a DAC stream, whose points carry it.
-      const w = weights ? weights[i] : 1;
-      const cr = (pts[b + 2] / 65535) * red * w;
-      const cg = (pts[b + 3] / 65535) * green * w;
-      const cb = (pts[b + 4] / 65535) * blue * w;
+      const lr = (pts[b + 2] / 65535) * red;
+      const lg = (pts[b + 3] / 65535) * green;
+      const lb = (pts[b + 4] / 65535) * blue;
+      const share = shares ? shares[i] : evenShare;
       // Signed galvo positions carried as their 16-bit bit pattern, to -1..1.
       const rawX = ((pts[b] << 16) >> 16) / 32768;
       const rawY = ((pts[b + 1] << 16) >> 16) / 32768;
@@ -764,54 +778,72 @@ class Laser {
       // -X. Sending it to +X drew every figure mirrored, which reads as
       // nothing much until there is text in the content.
       const i3 = i * 3;
-      ptFar[i3] = ap.x - Math.sin(ax) * cosAy * beamLengthValue;
-      ptFar[i3 + 1] = ap.y - cosAx * cosAy * beamLengthValue;
-      ptFar[i3 + 2] = ap.z + cosAx * Math.sin(ay) * beamLengthValue;
-      ptCol[i3] = cr; ptCol[i3 + 1] = cg; ptCol[i3 + 2] = cb;
+      ptFar[i3] = ap.x - Math.sin(ax) * cosAy * BEAM_LENGTH;
+      ptFar[i3 + 1] = ap.y - cosAx * cosAy * BEAM_LENGTH;
+      ptFar[i3 + 2] = ap.z + cosAx * Math.sin(ay) * BEAM_LENGTH;
+      ptFlux[i3] = lr * kRed * share;
+      ptFlux[i3 + 1] = lg * kGreen * share;
+      ptFlux[i3 + 2] = lb * kBlue * share;
       ptNorm[i * 2] = nx; ptNorm[i * 2 + 1] = ny;
-      ptLit[i] = cr + cg + cb > LIT_EPSILON ? 1 : 0;
+      ptLit[i] = lr + lg + lb > LIT_EPSILON ? 1 : 0;
       ptLinked[i] = 0;
+      ptJoined[i] = 0;
     }
 
     // The stroke itself: the surface a moving beam sweeps between one point and
     // the next. A straight line drawn by the scanner is one continuous sheet,
-    // not a row of separate blades -- which is what per-point ribbons alone
-    // produced. Two rays from a single aperture span a triangle, so each
-    // consecutive pair contributes one and a run of points becomes a fan.
+    // not a row of separate blades. Two rays from a single aperture span a
+    // triangle, so each consecutive pair contributes one and a run of points
+    // becomes a fan.
     for (let i = 0; i + 1 < n; i += 1) {
       const dx = ptNorm[(i + 1) * 2] - ptNorm[i * 2];
       const dy = ptNorm[(i + 1) * 2 + 1] - ptNorm[i * 2 + 1];
       // Blanked travel between figures must not be bridged, and a repeated
       // point spans no area: a held dot is the same point many times, and
-      // left linked it would never get the ribbon below.
+      // left linked it would never get the ribbon below. A Ponk path is one
+      // stroke by definition, with a blank between paths, so only a DAC
+      // stream's travel has to be guessed from the distance.
       const step = dx * dx + dy * dy;
-      const joined = step > 0 && step <= JUMP_LIMIT * JUMP_LIMIT;
+      const joined = step > 0 && (shares !== null || step <= JUMP_LIMIT * JUMP_LIMIT);
       if (ptLit[i] && ptLit[i + 1] && joined) {
         ptLinked[i] = 1;
         ptLinked[i + 1] = 1;
+        ptJoined[i] = 1;
         const a3 = i * 3;
         const b3 = (i + 1) * 3;
-        putS(ap.x, ap.y, ap.z, a3, 0);
-        putS(ptFar[a3], ptFar[a3 + 1], ptFar[a3 + 2], a3, 1);
-        putS(ptFar[b3], ptFar[b3 + 1], ptFar[b3 + 2], b3, 1);
+        // The angle swept between the two rays: the chord of their unit
+        // directions, as an angle.
+        const cx = (ptFar[b3] - ptFar[a3]) / BEAM_LENGTH;
+        const cy = (ptFar[b3 + 1] - ptFar[a3 + 1]) / BEAM_LENGTH;
+        const cz = (ptFar[b3 + 2] - ptFar[a3 + 2]) / BEAM_LENGTH;
+        const swept = 2 * Math.asin(Math.min(Math.sqrt(cx * cx + cy * cy + cz * cz) / 2, 1));
+        const perRadian = 1 / Math.max(swept, 1e-6);
+        const r = ptFlux[a3] * perRadian;
+        const g = ptFlux[a3 + 1] * perRadian;
+        const b = ptFlux[a3 + 2] * perRadian;
+        putS(ap.x, ap.y, ap.z, r, g, b, 0);
+        putS(ptFar[a3], ptFar[a3 + 1], ptFar[a3 + 2], r, g, b, 1);
+        putS(ptFar[b3], ptFar[b3 + 1], ptFar[b3 + 2], r, g, b, 1);
       }
     }
 
     // What the sheet cannot show: a held dot, or a hot point standing alone
-    // between blanked travel. Those keep a billboarded ribbon so they never
-    // fall below a pixel and vanish.
+    // between blanked travel. Each is a beam of its own, its flux on a ribbon.
     for (let i = 0; i < n; i += 1) {
       if (ptLit[i] && !ptLinked[i]) {
         const i3 = i * 3;
         const fx = ptFar[i3];
         const fy = ptFar[i3 + 1];
         const fz = ptFar[i3 + 2];
-        putR(ap.x, ap.y, ap.z, fx, fy, fz, i3, 0, -1);
-        putR(ap.x, ap.y, ap.z, fx, fy, fz, i3, 0, 1);
-        putR(fx, fy, fz, ap.x, ap.y, ap.z, i3, 1, 1);
-        putR(ap.x, ap.y, ap.z, fx, fy, fz, i3, 0, -1);
-        putR(fx, fy, fz, ap.x, ap.y, ap.z, i3, 1, 1);
-        putR(fx, fy, fz, ap.x, ap.y, ap.z, i3, 1, -1);
+        const r = ptFlux[i3];
+        const g = ptFlux[i3 + 1];
+        const b = ptFlux[i3 + 2];
+        putR(ap.x, ap.y, ap.z, fx, fy, fz, r, g, b, 0, -1);
+        putR(ap.x, ap.y, ap.z, fx, fy, fz, r, g, b, 0, 1);
+        putR(fx, fy, fz, ap.x, ap.y, ap.z, r, g, b, 1, 1);
+        putR(ap.x, ap.y, ap.z, fx, fy, fz, r, g, b, 0, -1);
+        putR(fx, fy, fz, ap.x, ap.y, ap.z, r, g, b, 1, 1);
+        putR(fx, fy, fz, ap.x, ap.y, ap.z, r, g, b, 1, -1);
       }
     }
 
@@ -820,12 +852,10 @@ class Laser {
     // The picture, from the same points, the same lit test and the same jump
     // guard the sheet above was built from -- so the figure on the wall and the
     // beams in the air are the same figure, not two that have to be kept in step.
-    this._beamMaterial.uniforms.beamOrigin.value
-      .setFromMatrixPosition(this._depthCam.matrixWorld);
+    u.beamOrigin.value.setFromMatrixPosition(this._depthCam.matrixWorld);
     scratchClip.copy(this._depthMatrix).multiply(this._dummy.matrixWorld);
-    this._figure.build({
-      n, far: ptFar, col: ptCol, lit: ptLit, linked: ptLinked, clip: scratchClip,
-    });
+    figure.n = n;
+    this._figure.build(figure);
     this._beamGeo.attributes.position.needsUpdate = true;
     this._beamGeo.attributes.aOther.needsUpdate = true;
     this._beamGeo.attributes.acolor.needsUpdate = true;
@@ -834,29 +864,43 @@ class Laser {
   }
 
   /**
+   * How wide one depth texel is, in metres per metre of distance along the
+   * axis: the wider half of the scan field's tangent across half a tile. A
+   * perspective tile is even in the tangent, so this holds across all of it.
+   *
+   * @public
+   * @returns {Number}
+   */
+  depthTexelTan() {
+    const { tanH, tanV } = fieldTangents(this._params || {});
+    return (2 * Math.max(tanH, tanV)) / LASER_DEPTH.tile;
+  }
+
+  /**
    * Aims the aperture depth camera and rebuilds its world-to-clip matrix.
    *
    * A perspective camera at the aperture, looking down the throw with the fixed
-   * basis, its frustum covering the full scan: vertical fov is the whole scan
-   * height and the aspect the ratio of the two half-angle tangents, so an
-   * asymmetric scanner still maps square. Matrices are set by hand and the
-   * automatic pass is off, for the same reason the projector's are -- three
-   * would otherwise rebuild them from an untouched position.
+   * basis, its frustum covering the scan up to `FIELD_HALF_MAX` either side:
+   * vertical fov is the scan height and the aspect the ratio of the two
+   * half-angle tangents, so an asymmetric scanner still maps square. Matrices
+   * are set by hand and the automatic pass is off, for the same reason the
+   * projector's are -- three would otherwise rebuild them from an untouched
+   * position.
    *
    * @public
    */
   updateDepthCamera() {
     const params = this._params || {};
     const ap = apertureOrigin(params);
-    const { h, v } = scanHalfAngles(params);
+    const { tanH, tanV } = fieldTangents(params);
     this._dummy.updateMatrixWorld();
     this._depthCam.matrixWorld
       .makeTranslation(ap.x, ap.y, ap.z)
       .multiply(this._basis)
       .premultiply(this._dummy.matrixWorld);
     this._depthCam.matrixWorldInverse.copy(this._depthCam.matrixWorld).invert();
-    this._depthCam.fov = Math.max(1, 2 * v * (180 / Math.PI));
-    this._depthCam.aspect = Math.tan(Math.max(h, 1e-3)) / Math.tan(Math.max(v, 1e-3));
+    this._depthCam.fov = Math.max(1, 2 * Math.atan(tanV) * (180 / Math.PI));
+    this._depthCam.aspect = Math.max(tanH, 1e-3) / Math.max(tanV, 1e-3);
     this._depthCam.near = LASER_DEPTH.near;
     this._depthCam.far = LASER_DEPTH.far;
     this._depthCam.updateProjectionMatrix();
@@ -1060,9 +1104,11 @@ class Laser {
    *
    * @static
    */
-  static update(t) {
+  static update(t, renderer) {
     if (!LaserStream.enabled) LaserStream.enable();
     Laser.publishInputs();
+    // The viewport, so a dot's beam keeps its minimum width in pixels.
+    if (renderer) renderer.getSize(scratchResolution);
     instances.forEach((laser) => {
       const u = laser._beamMaterial.uniforms;
       u.time.value = t || 0;
@@ -1072,10 +1118,7 @@ class Laser {
       u.fogFactor.value = SceneEnv.hazeAmount;
       u.fogScale.value = SceneEnv.hazeScale;
       u.fogTurbulence.value = SceneEnv.hazeDriftRate;
-      u.scatterGain.value = scatterGainValue;
-      u.beamTail.value = beamTailValue;
-      u.scatterAmount.value = scatterAmountValue;
-      u.hazeBase.value = hazeBaseValue;
+      if (renderer) u.resolution.value.copy(scratchResolution);
       laser.buildBeam();
     });
   }
@@ -1089,7 +1132,8 @@ class Laser {
    * way to know what is in the way.
    *
    * @public
-   * @returns {Array} each `{ matrix, depthTile, figureTile, position, power }`
+   * @returns {Array} each `{ matrix, depthTile, figureTile, position,
+   *   texelTan }`, the last how wide one depth texel is per metre of distance
    */
   static projections() {
     const out = [];
@@ -1101,7 +1145,7 @@ class Laser {
         depthTile: LASER_DEPTH.tileUv(laser._depthSlot),
         figureTile: FIGURE_ATLAS.tileUv(laser._figureSlot),
         position: laser._aperturePos.setFromMatrixPosition(laser._depthCam.matrixWorld),
-        power: Math.max(Number((laser._params || {}).power) || 0, 0) * surfaceGainValue,
+        texelTan: laser.depthTexelTan(),
       });
     });
     return out;
@@ -1330,12 +1374,6 @@ class Laser {
       list.forEach((laser) => { laser._beamMaterial.uniforms.depthReady.value = false; });
       return;
     }
-    // The viewport, so the beam ribbons keep a constant pixel width. Set here
-    // because this is the per-frame call that has the renderer to hand.
-    renderer.getSize(scratchResolution);
-    list.forEach((laser) => {
-      laser._beamMaterial.uniforms.resolution.value.copy(scratchResolution);
-    });
     scene.updateMatrixWorld();
     const projections = [];
     list.forEach((laser, i) => {
@@ -1478,48 +1516,33 @@ class Laser {
   }
 
   /**
-   * Scatter gain, for the debug panel: how brightly a beam scatters out of the
-   * air per unit haze. A single knob over every laser at once.
-   *
-   * @static
-   * @param {Number} gain
-   */
-  /**
-   * How hard the figure is painted onto geometry.
-   *
-   * Rides on top of the surface pass's own calibration, so this is a multiplier
-   * a designer moves rather than the constant that anchors it.
+   * Retired controls the debug panel still lists. Brightness, width and reach
+   * come from the fixture's watts and optics and the haze; these change
+   * nothing and report the fixed values.
    *
    * @public
-   * @param {Number} gain
    */
-  static setSurfaceGain(gain) {
-    surfaceGainValue = Math.max(Number(gain) || 0, 0);
-  }
+  static setSurfaceGain() {}
 
-  /** @public @returns {Number} the figure's brightness multiplier */
+  /** @public @returns {Number} */
   static surfaceGain() {
-    return surfaceGainValue;
+    return 1;
   }
 
-  /** @public @param {Number} metres how far a beam reaches when it hits nothing */
-  static setBeamLength(metres) {
-    beamLengthValue = Math.min(Math.max(Number(metres) || 1, 1), 120);
-  }
+  /** @public */
+  static setBeamLength() {}
 
-  /** @public @returns {Number} how far a beam reaches when it hits nothing */
+  /** @public @returns {Number} how far a beam is drawn, in metres */
   static beamLength() {
-    return beamLengthValue;
+    return BEAM_LENGTH;
   }
 
-  /** @public @param {Number} fraction how much of the end fades out */
-  static setBeamTail(fraction) {
-    beamTailValue = Math.min(Math.max(Number(fraction) || 0, 0.01), 0.99);
-  }
+  /** @public */
+  static setBeamTail() {}
 
-  /** @public @returns {Number} the fraction of the shaft given to fading */
+  /** @public @returns {Number} */
   static beamTail() {
-    return beamTailValue;
+    return 0;
   }
 
   /**
@@ -1537,50 +1560,32 @@ class Laser {
     return dwellModelValue;
   }
 
-  /**
-   * How much a beam brightens when it is aimed at the viewer.
-   *
-   * @public
-   * @param {Number} amount 0 flat, 1 the full forward spike
-   */
-  static setScatterAmount(amount) {
-    scatterAmountValue = Math.min(Math.max(Number(amount) || 0, 0), 1);
-  }
+  /** @public Retired with the others above. */
+  static setScatterAmount() {}
 
-  /** @public @returns {Number} how much of the forward spike is shown */
+  /** @public @returns {Number} */
   static scatterAmount() {
-    return scatterAmountValue;
+    return 1;
   }
 
-  /** @public @returns {Number} the beam-in-air brightness multiplier */
+  /** @public @returns {Number} */
   static scatterGain() {
-    return scatterGainValue;
+    return 1;
   }
 
-  /** @public @param {Number} px how wide a drawn stroke is, in tile pixels */
-  static setFigureWidth(px) {
-    setLineWidth(px);
-  }
+  /** @public */
+  static setFigureWidth() {}
 
-  /** @public @returns {Number} the drawn stroke width in tile pixels */
+  /** @public @returns {Number} the narrowest stroke on a surface, in atlas pixels */
   static figureWidth() {
-    return lineWidth();
+    return FIGURE_MIN_PIXELS;
   }
 
-  static setScatterGain(gain) {
-    scatterGainValue = Number(gain) || 0;
-  }
+  /** @public */
+  static setScatterGain() {}
 
-  /**
-   * Haze base, for the debug panel: how much of a beam is a flat base level
-   * versus haze variation on top. 0 is pure variation, 1 a flat beam.
-   *
-   * @static
-   * @param {Number} base 0..1
-   */
-  static setHazeBase(base) {
-    hazeBaseValue = Math.min(Math.max(Number(base) || 0, 0), 1);
-  }
+  /** @public */
+  static setHazeBase() {}
 
   /**
    * Drops every laser's highlight.

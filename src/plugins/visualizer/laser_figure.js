@@ -24,6 +24,11 @@ import * as THREE from 'three';
  * written down anywhere to be got wrong -- which is exactly how the first
  * attempt ended up painting the figure mirrored against its own beams.
  *
+ * **A texel holds luminous intensity**, in kilocandela: each stroke spreads
+ * its point's flux over the solid angle the stroke covers, so the surface pass
+ * only has to divide by the distance squared to get lux. Half-float, since a
+ * held dot runs to millions of candela.
+ *
  * Unlike the depth atlas this is redrawn every frame and never cached: the
  * whole point of it is content that changes.
  */
@@ -41,34 +46,27 @@ const COLUMNS = 4;
 const ROWS = 4;
 const TILE = 1024;
 
-/**
- * How wide a stroke is drawn, in tile pixels.
- *
- * A real beam is a fraction of a degree across, which at this tile size is well
- * under a pixel -- drawn honestly it would alias into dashes and disappear at
- * distance. Drawn several pixels wide with a soft edge it survives being
- * magnified across a wall, which is what this texture is for. Seven is what
- * reads right on a facade at twenty-odd metres.
- */
-let linePixels = 7;
-
-/**
- * How wide a stroke is drawn, in tile pixels. Tunable from the debug panel.
- *
- * @public
- * @param {Number} px
- */
-export function setLineWidth(px) {
-  linePixels = Math.min(Math.max(Number(px) || 0, 0.5), 16);
-}
-
-/** @public @returns {Number} the current stroke width in tile pixels */
-export function lineWidth() {
-  return linePixels;
-}
-
 /** Tile pixels to the -1..1 the tile spans. */
-const PIXEL = 2 / TILE;
+export const FIGURE_PIXEL = 2 / TILE;
+
+/**
+ * The narrowest stroke, in tile pixels. A beam's divergence is often under a
+ * texel; narrower than four a line rasterises unevenly and beads when
+ * magnified on a wall. The flux is the same whatever the width.
+ */
+export const FIGURE_MIN_PIXELS = 4;
+
+/** Candela per stored unit: the atlas holds kilocandela, to stay in half-float range. */
+export const FIGURE_CANDELA = 1000;
+
+/**
+ * The mean of the stroke profile `exp(-3 u^2)` over its width, -1..1:
+ * sqrt(pi / 3) erf(sqrt 3) / 2. A dot's profile is the same in both
+ * directions, so its mean is the square. Dividing by these keeps a stroke's
+ * total equal to its point's flux.
+ */
+const STROKE_MEAN = 0.50434;
+const DOT_MEAN = STROKE_MEAN * STROKE_MEAN;
 
 /** Scratch for placing a point, so a frame's rebuild allocates nothing. */
 const projected = new THREE.Vector3();
@@ -147,6 +145,13 @@ export class LaserFigure {
     this._seen = new Uint8Array(maxPoints);
     this._px = new Float32Array(maxPoints);
     this._py = new Float32Array(maxPoints);
+    // A strip's anchors: position, the flux of the stroke that starts there,
+    // and the mitred half-width offset.
+    this._ax = new Float32Array(maxPoints);
+    this._ay = new Float32Array(maxPoints);
+    this._af = new Float32Array(maxPoints * 3);
+    this._mx = new Float32Array(maxPoints);
+    this._my = new Float32Array(maxPoints);
   }
 
   /**
@@ -154,19 +159,33 @@ export class LaserFigure {
    *
    * Takes the arrays the beam was built from rather than the raw stream, so the
    * two are the same figure by construction: the same lit test, the same jump
-   * guard, the same colours, the same normalised positions.
+   * guard, the same flux, the same normalised positions.
+   *
+   * Each stroke carries its point's flux over the solid angle it covers. A
+   * tile is a perspective view, so an area in it is `tanH tanV cos^3` steradians
+   * per unit, the cosine taken off the axis at the stroke.
    *
    * @public
-   * @param {Object} f the frame: counts, the per-point arrays, and the angles
+   * @param {Object} f the frame: `n`, `far`, `flux` (lumens per point, as
+   *   scene colour), `lit`, `linked` (the point is part of a stroke),
+   *   `joined` (point i and i + 1 are one stroke), `clip`, `tanH` and `tanV`
+   *   of the scan half-angles, and `width`, the stroke width in tile units
+   *   (-1..1 across)
    */
   build(f) {
     const {
-      n, far, col, lit, linked, clip,
+      n, far, flux, lit, linked, joined, clip, tanH, tanV, width,
     } = f;
     const pos = this._pos;
     const colour = this._col;
     const uv = this._uv;
-    const half = linePixels * PIXEL * 0.5;
+    const half = width * 0.5;
+    /** Kilocandela per lumen for a patch of tile area `area` centred at (x, y). */
+    const perLumen = (x, y, area, mean) => {
+      const c2 = 1 / (1 + (x * tanH) ** 2 + (y * tanV) ** 2);
+      const steradians = area * tanH * tanV * c2 * Math.sqrt(c2);
+      return 1 / (Math.max(steradians, 1e-12) * mean * FIGURE_CANDELA);
+    };
     let v = 0;
 
     // Where each point's own beam lands, in this tile's coordinates. Projected
@@ -179,8 +198,12 @@ export class LaserFigure {
       seen[i] = 0;
       if (lit[i]) {
         const i3 = i * 3;
+        // A ray past the camera's field can point behind it, where the divide
+        // by a negative w would mirror it into the tile.
+        const e = clip.elements;
+        const w = e[3] * far[i3] + e[7] * far[i3 + 1] + e[11] * far[i3 + 2] + e[15];
         projected.set(far[i3], far[i3 + 1], far[i3 + 2]).applyMatrix4(clip);
-        if (Number.isFinite(projected.x) && Number.isFinite(projected.y)) {
+        if (w > 0 && Number.isFinite(projected.x) && Number.isFinite(projected.y)) {
           seen[i] = 1;
           px[i] = projected.x;
           py[i] = projected.y;
@@ -199,8 +222,9 @@ export class LaserFigure {
 
     // A held point, or one standing alone between blanked travel: a round dot,
     // which is what a stationary beam actually leaves on a surface.
-    const dot = (x, y, c3) => {
-      const r = col[c3]; const g = col[c3 + 1]; const b = col[c3 + 2];
+    const dot = (x, y, fr, fg, fb) => {
+      const k = perLumen(x, y, width * width, DOT_MEAN);
+      const r = fr * k; const g = fg * k; const b = fb * k;
       put(x - half, y - half, r, g, b, -1, -1);
       put(x + half, y - half, r, g, b, 1, -1);
       put(x + half, y + half, r, g, b, 1, 1);
@@ -209,46 +233,81 @@ export class LaserFigure {
       put(x - half, y + half, r, g, b, -1, 1);
     };
 
-    // A stroke: the quad swept between two points that belong to one line.
-    const stroke = (ax, ay, bx, by, c3) => {
-      const dx = bx - ax;
-      const dy = by - ay;
-      const len = Math.hypot(dx, dy);
-      // Two points a scanner's sample apart land almost on top of each other,
-      // and a direction taken from that difference is mostly rounding error,
-      // turning every little quad a slightly different way and breaking the
-      // line into beads. Too short to have a direction, draw the dot.
-      if (len < half * 0.25) {
-        dot(ax, ay, c3);
+    // A run of joined points as one mitred strip. Neighbouring strokes share
+    // their corners, so a curve has no wedge open on the outside of each bend
+    // and no overlap on the inside: every texel along it gets its light once.
+    // Points closer than half a width are gathered into the next anchor, with
+    // their flux: a direction taken across a scanner's sample step is mostly
+    // rounding error and would twist the strip.
+    const ax = this._ax; const ay = this._ay; const af = this._af;
+    const mx = this._mx; const my = this._my;
+    const strip = (from, to) => {
+      let m = 1;
+      ax[0] = px[from]; ay[0] = py[from];
+      af[0] = 0; af[1] = 0; af[2] = 0;
+      for (let i = from; i < to; i += 1) {
+        // A point's flux belongs to the stroke it starts.
+        const s3 = (m - 1) * 3;
+        af[s3] += flux[i * 3]; af[s3 + 1] += flux[i * 3 + 1]; af[s3 + 2] += flux[i * 3 + 2];
+        const j = i + 1;
+        if (j === to || Math.hypot(px[j] - ax[m - 1], py[j] - ay[m - 1]) >= half) {
+          ax[m] = px[j]; ay[m] = py[j];
+          af[m * 3] = 0; af[m * 3 + 1] = 0; af[m * 3 + 2] = 0;
+          m += 1;
+        }
+      }
+      // The last point ends the strip; its flux goes to the last stroke.
+      const e3 = (m - 2) * 3;
+      af[e3] += flux[to * 3]; af[e3 + 1] += flux[to * 3 + 1]; af[e3 + 2] += flux[to * 3 + 2];
+      if (m === 2 && Math.hypot(ax[1] - ax[0], ay[1] - ay[0]) < half * 0.25) {
+        dot(ax[0], ay[0], af[0], af[1], af[2]);
         return;
       }
-      const ux = dx / len;
-      const uy = dy / len;
-      const nx = -uy * half;
-      const ny = ux * half;
-      // Capped by half a width at each end, so consecutive strokes overlap at
-      // the joins instead of leaving a gap between them.
-      const sx = ax - ux * half;
-      const sy = ay - uy * half;
-      const ex = bx + ux * half;
-      const ey = by + uy * half;
-      const r = col[c3]; const g = col[c3 + 1]; const b = col[c3 + 2];
-      put(sx + nx, sy + ny, r, g, b, 1, 0);
-      put(sx - nx, sy - ny, r, g, b, -1, 0);
-      put(ex - nx, ey - ny, r, g, b, -1, 0);
-      put(sx + nx, sy + ny, r, g, b, 1, 0);
-      put(ex - nx, ey - ny, r, g, b, -1, 0);
-      put(ex + nx, ey + ny, r, g, b, 1, 0);
+      // Each anchor's offset: the average of its two strokes' normals,
+      // lengthened so the strip keeps its width round the bend, within reason.
+      let pnx = 0; let pny = 0;
+      for (let k = 0; k < m; k += 1) {
+        let nx = pnx; let ny = pny;
+        if (k < m - 1) {
+          const dx = ax[k + 1] - ax[k]; const dy = ay[k + 1] - ay[k];
+          const len = Math.max(Math.hypot(dx, dy), 1e-9);
+          nx = -dy / len; ny = dx / len;
+        }
+        if (k === 0) { pnx = nx; pny = ny; }
+        let sx = pnx + nx; let sy = pny + ny;
+        const sl = Math.hypot(sx, sy);
+        if (sl < 1e-6) { sx = nx; sy = ny; } else { sx /= sl; sy /= sl; }
+        const scale = half / Math.max(sx * nx + sy * ny, 0.5);
+        mx[k] = sx * scale; my[k] = sy * scale;
+        pnx = nx; pny = ny;
+      }
+      for (let k = 0; k + 1 < m; k += 1) {
+        const len = Math.hypot(ax[k + 1] - ax[k], ay[k + 1] - ay[k]);
+        const area = Math.max(len, half * 0.25) * width;
+        const kk = perLumen((ax[k] + ax[k + 1]) / 2, (ay[k] + ay[k + 1]) / 2, area, STROKE_MEAN);
+        const r = af[k * 3] * kk; const g = af[k * 3 + 1] * kk; const b = af[k * 3 + 2] * kk;
+        put(ax[k] + mx[k], ay[k] + my[k], r, g, b, 1, 0);
+        put(ax[k] - mx[k], ay[k] - my[k], r, g, b, -1, 0);
+        put(ax[k + 1] - mx[k + 1], ay[k + 1] - my[k + 1], r, g, b, -1, 0);
+        put(ax[k] + mx[k], ay[k] + my[k], r, g, b, 1, 0);
+        put(ax[k + 1] - mx[k + 1], ay[k + 1] - my[k + 1], r, g, b, -1, 0);
+        put(ax[k + 1] + mx[k + 1], ay[k + 1] + my[k + 1], r, g, b, 1, 0);
+      }
     };
 
+    // Runs of joined, placed pairs, each one strip.
+    const pair = (i) => joined[i] && seen[i] && seen[i + 1];
     for (let i = 0; i + 1 < n; i += 1) {
-      if (seen[i] && seen[i + 1] && linked[i] && linked[i + 1]) {
-        stroke(px[i], py[i], px[i + 1], py[i + 1], i * 3);
+      if (pair(i)) {
+        let end = i + 1;
+        while (end + 1 < n && pair(end)) end += 1;
+        strip(i, end);
+        i = end - 1;
       }
     }
     for (let i = 0; i < n; i += 1) {
       if (seen[i] && !linked[i]) {
-        dot(px[i], py[i], i * 3);
+        dot(px[i], py[i], flux[i * 3], flux[i * 3 + 1], flux[i * 3 + 2]);
       }
     }
 
@@ -294,6 +353,7 @@ class FigureAtlas {
     this.target = new THREE.WebGLRenderTarget(COLUMNS * TILE, ROWS * TILE, {
       // Filtered, unlike depth: this one is a picture, and it gets magnified
       // across a wall.
+      type: THREE.HalfFloatType,
       minFilter: THREE.LinearFilter,
       magFilter: THREE.LinearFilter,
       generateMipmaps: false,

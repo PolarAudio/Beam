@@ -1188,7 +1188,7 @@ class Visualizer {
       // Rebuild each laser's beam from the points its DAC has played since the
       // last frame. Stream-fed like the video devices, not DMX-driven, so it
       // updates here rather than through setChannel.
-      Laser.update(t);
+      Laser.update(t, this.renderer);
       // Each laser's depth from its aperture, so the beam stops at the first
       // surface rather than running through it. Drawn before the frame, like the
       // projectors' depth pass above.
@@ -1197,25 +1197,28 @@ class Visualizer {
       // per-frame tile budget; see `Light.renderDepth`.
       Light.renderDepth(this.renderer, SceneManager);
       Laser.renderFigures(this.renderer);
+      const laserProjections = laserEffect ? Laser.projections() : [];
+      const projections = projectorEffect ? Projector.collect() : [];
+      // The surface colours, once, for whichever passes put light on surfaces.
+      const albedo = projections.length || laserProjections.length
+        ? SurfaceAlbedo.render(this.renderer, SceneManager, this.camera) : null;
       if (laserEffect) {
         laserEffect.setLasers(
-          Laser.projections(), Laser.figureTexture(), Laser.depthTexture(), Laser.depthFar(),
+          laserProjections, Laser.figureTexture(), Laser.depthTexture(), Laser.depthFar(),
         );
+        laserEffect.setAlbedo(albedo);
       }
       // Each projector's own view of the scene, drawn before the frame is, so
       // the pass can ask whether a surface is actually visible from the lens.
       // Nothing to do at all when no projector is throwing anything.
       if (projectorEffect) {
-        const projections = Projector.collect();
         if (projections.length) {
           // Redraws only the tiles that would come out different -- a still
           // machine in a still room costs nothing. The atlas works that out
           // itself, per tile; see `DepthAtlas.render`.
           ProjectorDepth.render(this.renderer, SceneManager, projections);
-          projectorEffect.setAlbedo(SurfaceAlbedo.render(this.renderer, SceneManager, this.camera));
-        } else {
-          projectorEffect.setAlbedo(null);
         }
+        projectorEffect.setAlbedo(projections.length ? albedo : null);
         // Each projector its own input's picture.
         projections.forEach((projection) => {
           const feed = VideoRouter.feedFor(projection.inputId);

@@ -15,6 +15,7 @@ import Display from './display';
 import Laser from './laser';
 import Strobe from './strobe';
 import SceneObjects from './scene_objects';
+import MeasureTool from './measure_tool';
 import GroupHandle from './group_handle';
 
 /**
@@ -607,6 +608,19 @@ class Controls {
     SceneManager.add(this.scaleProxy);
     this.controlHandle = orbitcontrolsControlsHandle;
     this.cameraHandle = camera;
+    // While measuring, clicks place points and the gizmo is out of the way.
+    MeasureTool.attach({
+      camera: () => this.cameraHandle,
+      element: el,
+      pickTargets: () => SCENE_RENDERERS
+        .flatMap((renderer) => renderer.pickObjects()).filter(Boolean),
+      ownerOfHit,
+      shown,
+      onActive: (on) => {
+        this.handle.enabled = !on;
+        el.style.cursor = on ? 'crosshair' : '';
+      },
+    });
 
     const helper = this.handle.getHelper();
 
@@ -722,6 +736,12 @@ class Controls {
       return;
     }
 
+    if (e.key.toLowerCase() === 'm') {
+      MeasureTool.toggle();
+      return;
+    }
+    if (MeasureTool.handleKey(e)) return;
+
     if (e.key === 'Escape') {
       // Deselects and nothing else, as a click on empty scene does: the view
       // stays where it is, so a crowded scene with no empty space to click
@@ -816,6 +836,10 @@ class Controls {
    * @param {Object} e pointermove event
    */
   handlePointerMove(e) {
+    if (MeasureTool.state.active) {
+      MeasureTool.pointerMove(e);
+      return;
+    }
     const down = this.pointerDownAt;
     if (!down) return;
     const travelled = Math.hypot(e.clientX - down.x, e.clientY - down.y);
@@ -999,6 +1023,10 @@ class Controls {
       e.currentTarget.releasePointerCapture(e.pointerId);
     }
     if (!down || e.button !== 0) return;
+    if (MeasureTool.state.active) {
+      if (Math.hypot(e.clientX - down.x, e.clientY - down.y) <= CLICK_SLOP_PX) MeasureTool.click(e);
+      return;
+    }
     if (this.handle && (this.handle.dragging || this.handle.axis)) return;
     // Ctrl/Shift/Cmd extend the selection, matching the fixture list.
     const additive = e.shiftKey || e.ctrlKey || e.metaKey;

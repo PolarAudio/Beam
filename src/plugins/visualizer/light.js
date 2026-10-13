@@ -3128,6 +3128,21 @@ class Light {
     return occlusionEnabled;
   }
 
+  /**
+   * Where the drawn beam starts, in world space: the lens face, as
+   * `updateDirectionVector` places it.
+   *
+   * @public
+   * @param {THREE.Vector3} out
+   * @returns {THREE.Vector3} `out`
+   */
+  lensWorldPosition(out) {
+    this._beamDummy.updateMatrixWorld(true);
+    const dir = this._beamDummy.getWorldDirection(new THREE.Vector3());
+    return this._beamDummy.getWorldPosition(out)
+      .addScaledVector(dir, this.beamOriginShift + BEAM_START);
+  }
+
   updateDirectionVector() {
     this._beamDummy.getWorldDirection(vector_beam.normalize());
     direction_buffer_attribute.setXYZ(this._id, vector_beam.x, vector_beam.y, vector_beam.z);

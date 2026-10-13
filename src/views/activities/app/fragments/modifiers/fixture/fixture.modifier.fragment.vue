@@ -1,5 +1,7 @@
 <template>
   <uk-flex class="fixture_modifier">
+    <!-- Shown while measuring, and after, until the measurements are cleared. -->
+    <measure-widget v-if="showsMeasure" />
     <structure-widget
       v-if="selectedStructure"
       :structure="selectedStructure"
@@ -55,7 +57,7 @@
       :items="selectedItems"
     />
     <h3
-      v-if="!selectedItem && !showsManyItems && !selectedGroup"
+      v-if="!selectedItem && !showsManyItems && !selectedGroup && !showsMeasure"
       class="empty_text"
     >
       Nothing Selected
@@ -68,6 +70,7 @@ import { toRaw } from 'vue';
 import EventBus from '@/plugins/eventbus';
 import Selection from '@/models/DMX/selection';
 import SelectionTransform from '@/models/DMX/selection_transform';
+import MeasureTool from '@/plugins/visualizer/measure_tool';
 import { SCENE_ITEM_KINDS, kindOf } from '@/models/DMX/scene_item';
 
 import FixtureSettingsWidget from './_widgets/fixture.modifier.widget.settings.vue';
@@ -77,6 +80,7 @@ import ArrangeWidget from './_widgets/fixture.modifier.widget.arrange.vue';
 import GroupWidget from '../group/group.modifier.widget.vue';
 import StructureWidget from '../structure/structure.modifier.widget.vue';
 import ObjectWidget from '../object/object.modifier.widget.vue';
+import MeasureWidget from '../measure/measure.widget.vue';
 
 export default {
   name: 'FixtureModifierFragment',
@@ -92,6 +96,7 @@ export default {
     GroupWidget,
     StructureWidget,
     ObjectWidget,
+    MeasureWidget,
   },
   data() {
     return {
@@ -116,6 +121,8 @@ export default {
        * become the selected one: `{ structure, rowId }`.
        */
       memberPick: null,
+      /** The measure tool's state, for whether its widget shows. */
+      measure: MeasureTool.state,
     };
   },
   computed: {
@@ -269,6 +276,15 @@ export default {
      */
     showsManyItems() {
       return !this.selectedGroup && this.selectedItems.length > 1;
+    },
+    /**
+     * Whether the Measure widget shows: while measuring, and while any
+     * measurement is kept.
+     *
+     * @returns {Boolean}
+     */
+    showsMeasure() {
+      return this.measure.active || this.measure.measurements.length > 0;
     },
   },
   watch: {

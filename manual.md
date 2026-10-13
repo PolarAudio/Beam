@@ -503,6 +503,22 @@ Fields are **colour-coded by axis**, consistently, so you can see which is which
 
 **Editing a structure's members.** Clicking a fixture that belongs to a structure selects the whole structure, which is what you want for moving it. The structure widget lists its members, all highlighted to start with, and the fixture widgets edit the highlighted ones: with every member the same fixture in the same mode, their channels are set together, the same way as several loose fixtures. Narrow the set in the member list with click, Ctrl+click, Shift+click or a band dragged from beside the rows; click the only highlighted member again, or beside the rows, to go back to all of them. **Alt+click** a fixture in the 3D view to highlight just that member. Only highlighted members are outlined, and the structure keeps the handle, because it is still the thing you move.
 
+## Measuring
+
+The ruler button in the viewport toolbar, or **M**, turns the measure tool on. While it is on, clicks in the 3D view place points instead of selecting, and the move handle is out of the way. **M** or **Escape** turns it off again. Measurements stay on screen until you clear them, also with the tool off, and are not saved with the project.
+
+The **Measure** widget chooses what a click measures:
+
+- **Distance**: two clicks. The label shows the distance; the widget adds horizontal, vertical and Δx Δy Δz. Two parallel faces give their gap, two faces at an angle their angle, two edges the angle between them, and an end on a face also gives the perpendicular distance from that face's plane.
+- **Angle**: three clicks, the corner second. **A** switches between distance and angle.
+- **Throw**: click a fixture. Measured from its lens along the beam as it points now, to the first object or the floor, with the lens height and the angle the beam meets the surface at.
+
+Under the pointer the tool snaps to, in this order: a **vertex** (green square), a fixture's **lens, tilt axis, body base or centre** (yellow ring), an edge's **midpoint** (cyan triangle), the **perpendicular** foot on the face or edge under the pointer (pink ⊥), an **axis** through the first point (red x, green y, blue z), anywhere on an **edge** (red diamond), a **face**, and the **floor**. Only real edges count: a flat face split into triangles has no edge across it. A tooltip names what it snapped to. Hold **Shift** to place a point without snapping.
+
+After the first point, the arrow keys lock an axis: **right** x, **left** y, **up** z. The second point then stays on that axis through the first, level with whatever it snaps to, so the readout is one component. Press the key again, or **Escape**, to release it. **Escape** with a point placed drops it.
+
+Each measurement is numbered on screen and in the widget. Hovering a row or clicking a label highlights it; **Delete** removes the highlighted one, and each row has a copy button that puts its values on the clipboard as a line of text.
+
 ## Arranging a selection
 
 Select two or more fixtures or structures and press **arrange** in the patch bay. The panel lays the whole selection out at once; a new selection closes it. The shape shows as you type; nothing is changed until you press **Apply**, and **Cancel** puts everything back. One Ctrl+Z undoes a whole Apply.

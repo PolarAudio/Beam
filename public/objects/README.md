@@ -1,7 +1,7 @@
 # Shipped object library
 
 Models that ship with Beatline Beam, mirroring the shape of the user's own
-library at `Documents/Beatline/Beam/Library/Objects`: **one level of folders**,
+library at `Documents/Beatline/Beam/Library/Objects`: **folders, which may nest**,
 a `.glb` or `.gltf` per model, and an optional `<name>.json` sidecar beside it
 giving the scale, up axis and origin offset.
 

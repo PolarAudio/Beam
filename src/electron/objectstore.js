@@ -19,6 +19,10 @@ import paths from './paths';
  * library makes -- see `library.js` on why a file name is not an identity --
  * except that here the name really is all there is, because a `.glb` carries
  * nowhere for us to put a key.
+ *
+ * Folders nest, and the whole path is the identity: `Trusses/Circles/quarter`.
+ * Always forward slash whatever the platform, because this is an identifier
+ * that goes in a showfile, not a path to open.
  */
 
 /** Where the user's models live, under the library root. */
@@ -27,13 +31,28 @@ const OBJECTS_DIR = 'Objects';
 /**
  * Where the models that ship with the app live, under the renderer's assets.
  *
- * The same bargain the user's folder makes -- one level of folders, no index,
+ * The same bargain the user's folder makes -- folders to any depth, no index,
  * the directory *is* the catalogue -- so a model is added to the product by
  * putting a file in it, exactly as a user adds one to theirs.
  *
  * @constant {String}
  */
 const SHIPPED_DIR = 'objects';
+
+/**
+ * How many folders may sit inside one another.
+ *
+ * Nesting is what makes a truss library usable -- Bases, Weights, Circles and
+ * Straights under Trusses rather than beside it -- but it is bounded because
+ * the walk is synchronous and the browser is a scroller rather than a file
+ * explorer. Four is two levels deeper than anybody has asked for, and a
+ * directory cycle (a junction pointing at an ancestor, which Windows allows
+ * and does not warn about) is caught by the same bound as well as by the
+ * realpath check in `catalogue`.
+ *
+ * @constant {Number}
+ */
+const MAX_FOLDER_DEPTH = 4;
 
 /** Where the user's radiance images live, under the library root. */
 const ENVIRONMENTS_DIR = 'Environments';
@@ -286,6 +305,31 @@ const DEFAULT_METADATA = {
   offset: { x: 0, y: 0, z: 0 },
 };
 
+/**
+ * The segments a catalogue folder path is made of.
+ *
+ * Forward slash always, so a path built on one machine and read on another
+ * still names the same folders.
+ *
+ * @param {String|null} folder `Trusses/Circles`, or null for the root
+ * @returns {Array<String>}
+ */
+function folderSegments(folder) {
+  return folder ? String(folder).split('/').filter(Boolean) : [];
+}
+
+/**
+ * The directory a folder path names, under a catalogue root.
+ *
+ * @param {String} root absolute path of the catalogue
+ * @param {String|null} folder `Trusses/Circles`, or null for the root
+ * @returns {String}
+ */
+function folderDir(root, folder) {
+  const segments = folderSegments(folder);
+  return segments.length ? path.join(root, ...segments) : root;
+}
+
 /** @returns {String} absolute path of the user's objects folder */
 function objectsRoot() {
   return path.join(library.libraryRoot(), OBJECTS_DIR);
@@ -317,8 +361,7 @@ function shippedRoot() {
  */
 function metadataFor(file, folder = null, root = null) {
   const base = root || objectsRoot();
-  const dir = folder ? path.join(base, folder) : base;
-  const sidecar = path.join(dir, `${path.basename(file, path.extname(file))}.json`);
+  const sidecar = path.join(folderDir(base, folder), `${path.basename(file, path.extname(file))}.json`);
   let stored = null;
   try {
     stored = JSON.parse(fs.readFileSync(sidecar, 'utf8'));
@@ -352,10 +395,10 @@ function primitiveFor(file, modelBaseNames, folder = null, root = null) {
   const base = path.basename(file, path.extname(file));
   // A sidecar sits beside its model and shares its name, so a taken base name
   // settles it without reading anything. Names are only compared within one
-  // folder, which is the only place a sidecar can sit.
+  // directory, which is the only place a sidecar can sit.
   if (modelBaseNames.has(base.toLowerCase())) return null;
   const from = root || objectsRoot();
-  const dir = folder ? path.join(from, folder) : from;
+  const dir = folderDir(from, folder);
   let stored = null;
   try {
     stored = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
@@ -370,15 +413,16 @@ function primitiveFor(file, modelBaseNames, folder = null, root = null) {
 /**
  * The key an object is referenced by, and stored under in a showfile.
  *
- * A path when the object sits in a folder, a bare name when it does not. It has
- * to be the path: two folders may each hold a `truss.glb`, and the show would
- * have no way to say which it meant. A bare name for a root object keeps every
- * show written before folders existed resolving unchanged.
+ * The path, when the object sits in a folder: a bare name when it does not. It
+ * has to be the path, all of it -- two folders may each hold a `truss.glb`, and
+ * `Trusses/Circles` may hold one just as `Trusses/Straights` does, so a show
+ * that stored only a name could not say which it meant. A bare name for a root
+ * object keeps every show written before folders existed resolving unchanged.
  *
  * Forward slash whatever the platform, because this is an identifier that goes
  * in a file, not a path to open.
  *
- * @param {String|null} folder
+ * @param {String|null} folder `Trusses/Circles`, or null for the root
  * @param {String} name
  * @returns {String}
  */
@@ -390,23 +434,28 @@ function keyFor(folder, name) {
  * Everything in one directory, as catalogue entries.
  *
  * @param {String} root the catalogue root this belongs to
- * @param {String|null} folder the folder under it, or null for the root itself
+ * @param {String|null} folder the folder path under it, or null for the root
  * @param {String} [origin] `shipped`, `library`, or `project` for the models an
  *   opened export carries
+ * @param {Array} [listing] an already-read listing of `folder`, so the walker
+ *   that read it does not read it twice
  * @returns {Array<Object>}
  */
-function entriesIn(root, folder, origin = 'library') {
+function entriesIn(root, folder, origin = 'library', listing = null) {
   const shipped = origin === 'shipped';
   const collected = origin === 'project';
   // Served under the host that names the folder: a collected model is not in
   // the library, and `resolve` finds it through the open document instead.
   const host = collected ? 'project' : 'objects';
-  const dir = folder ? path.join(root, folder) : root;
-  let entries = [];
-  try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch (err) {
-    return [];
+  const dir = folderDir(root, folder);
+  const folderPath = folderSegments(folder);
+  let entries = listing;
+  if (!entries) {
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (err) {
+      return [];
+    }
   }
 
   const files = entries.filter((entry) => entry.isFile());
@@ -416,8 +465,9 @@ function entriesIn(root, folder, origin = 'library') {
 
   // The url's path segments are encoded separately: a folder called "Stage
   // Props" has to survive as two segments rather than becoming one escaped
-  // blob, and `resolve` splits on `/` before touching the filesystem.
-  const segmentsFor = (file) => (folder ? [folder, file] : [file]);
+  // blob, and `resolve` splits on `/` before touching the filesystem. Every
+  // level of the folder path is its own segment, so nesting costs nothing here.
+  const segmentsFor = (file) => [...folderPath, file];
 
   /**
    * A preview image sitting beside the model, if there is one.
@@ -521,32 +571,62 @@ function entriesIn(root, folder, origin = 'library') {
 /**
  * Every object in the library: models the user imported, and shapes they made.
  *
- * **One level of folders**, and deliberately no more. A folder is a category --
- * Trusses, Speakers -- which is all anybody has wanted, and the item list this
- * feeds nests exactly one level too. Arbitrary depth would mean a recursive
- * list component for no gain anyone has asked for.
+ * **Folders nest**, and the walk follows them all the way down. A folder is a
+ * category, and a truss library has more than one axis of it -- Bases,
+ * Weights, Circles and Straights under Trusses rather than beside it -- which
+ * is what the depth bound in `MAX_FOLDER_DEPTH` is there to keep finite. The
+ * browser builds a tree from the `folder` path each entry carries, so depth
+ * costs it nothing beyond the scrollbar.
  *
  * A model entry carries a `url` for `GLTFLoader`; a primitive carries its
  * `primitive` description instead and no url, because there is no file for a
  * loader to fetch -- the renderer builds it. `kind` says which. Both carry a
- * `folder` and the `key` they are referenced by.
+ * `folder` -- the whole path, forward-slashed, or null at the root -- and the
+ * `key` they are referenced by.
  *
- * @public
- * @returns {Array<Object>} sorted by folder, then name
+ * @private
+ * @param {String} root absolute path of a catalogue
+ * @param {String} origin `shipped`, `library`, or `project`
+ * @returns {Array<Object>}
  */
 function catalogue(root, origin) {
-  let top = [];
-  try {
-    top = fs.readdirSync(root, { withFileTypes: true });
-  } catch (err) {
-    // No folder is an empty catalogue, not a failure: the user has simply not
-    // put anything there yet, and a build may ship none at all.
-    return [];
-  }
-  const all = entriesIn(root, null, origin);
-  top
-    .filter((entry) => entry.isDirectory())
-    .forEach((entry) => all.push(...entriesIn(root, entry.name, origin)));
+  const all = [];
+  // Windows lets a directory be a junction to its own ancestor, and a naive
+  // walk would descend forever. Every directory is resolved once and only the
+  // first time it is reached, so a cycle is simply not re-entered.
+  const visited = new Set();
+  const walk = (folder, depth) => {
+    const dir = folderDir(root, folder);
+    let real;
+    try {
+      real = fs.realpathSync(dir);
+    } catch (err) {
+      // No folder of that name yet, or something unreadable in the way of it.
+      return;
+    }
+    if (visited.has(real)) return;
+    visited.add(real);
+
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (err) {
+      // No folder is an empty catalogue, not a failure: the user has simply not
+      // put anything there yet, and a build may ship none at all.
+      return;
+    }
+    all.push(...entriesIn(root, folder, origin, entries));
+    if (depth >= MAX_FOLDER_DEPTH) return;
+    const segments = folderSegments(folder);
+    entries
+      .filter((entry) => entry.isDirectory())
+      // Sorted so the listing is the same on every machine: a filesystem
+      // returns its own order, and the browser would otherwise reshuffle itself
+      // as the user opens folders.
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .forEach((entry) => walk([...segments, entry.name].join('/'), depth + 1));
+  };
+  walk(null, 0);
   return all;
 }
 
@@ -583,7 +663,10 @@ function list({ project = true } = {}) {
 
   return [...merged.values()].sort((a, b) => {
     // Root objects first, then folders alphabetically, then by name -- so the
-    // listing reads the way the folder does in Explorer.
+    // listing reads the way the folder does in Explorer. Nesting comes out of
+    // comparing whole paths: `Trusses` sorts before `Trusses/Bases`, which
+    // sorts before `Trusses/Bases/Plate`, and a file at one level sorts with
+    // the folders beside it rather than after all of their contents.
     if ((a.folder || '') !== (b.folder || '')) {
       return (a.folder || '').localeCompare(b.folder || '');
     }
@@ -604,7 +687,8 @@ function list({ project = true } = {}) {
  * @public
  * @param {String} name what the user called it
  * @param {Object} primitive `{ type, size, color, ... }`
- * @param {String} [folder] a category under Objects, or null for the root
+ * @param {String} [folder] a folder path under Objects, `Trusses/Circles`, or
+ *   null for the root
  * @returns {Object} `{ ok, name, file, key }` or `{ ok: false, reason }`
  */
 function writePrimitive(name, primitive, folder = null, { overwrite = false } = {}) {
@@ -614,23 +698,31 @@ function writePrimitive(name, primitive, folder = null, { overwrite = false } = 
     return { ok: false, reason: 'Unknown object type.' };
   }
 
-  // One level, and the folder is a name rather than a path: anything with a
-  // separator in it would be a way to write outside the catalogue.
+  // The folder is a path of names under the catalogue, and every level of it is
+  // checked: `safeName` alone would strip the separators out of `../../evil`
+  // and hand back a folder nobody typed under a name nobody chose -- safe, in
+  // that it cannot escape, but a directory appearing where the user did not ask
+  // for one is worse than being told no. A `.` or `..` segment is the same
+  // thing with more pretence, and is refused by name.
   let safeFolder = null;
   if (folder) {
-    // Refused outright rather than sanitised. `safeName` would strip the
-    // separators out of `../../evil` and hand back `....evil` -- safe, in that
-    // it cannot escape, but a folder silently appearing under a name nobody
-    // typed is worse than being told no. A folder name with a separator in it
-    // means the caller is confused or hostile, and neither wants a rename.
-    if (/[\\/]/.test(folder) || /^\.+$/.test(String(folder).trim())) {
-      return { ok: false, reason: 'A folder is a name, not a path.' };
+    const checked = folderSegments(folder).map((segment) => {
+      if (/^\.+$/.test(segment.trim())) {
+        return { ok: false, reason: 'A folder is a path under the object library.' };
+      }
+      return { ok: true, name: safeName(segment) };
+    });
+    const refused = checked.find((segment) => !segment.ok || !segment.name);
+    if (refused) {
+      return {
+        ok: false,
+        reason: refused.reason || 'That folder name cannot be used.',
+      };
     }
-    safeFolder = safeName(folder);
-    if (!safeFolder) return { ok: false, reason: 'That folder name cannot be used.' };
+    safeFolder = checked.map((segment) => segment.name).join('/') || null;
   }
 
-  const dir = safeFolder ? path.join(objectsRoot(), safeFolder) : objectsRoot();
+  const dir = folderDir(objectsRoot(), safeFolder);
   try {
     fs.mkdirSync(dir, { recursive: true });
   } catch (err) {
@@ -730,7 +822,7 @@ function writeThumbnail(key, dataUrl) {
   // runtime. Those are rendered once during development, where `public/` is an
   // ordinary writable folder, and committed with the build.
   const root = entry.shipped ? shippedRoot() : objectsRoot();
-  const dir = entry.folder ? path.join(root, entry.folder) : root;
+  const dir = folderDir(root, entry.folder);
   const base = path.basename(entry.file, path.extname(entry.file));
   const target = path.join(dir, `${base}.png`);
   if (fs.existsSync(target)) return { ok: false, reason: 'A preview already exists.' };
@@ -993,6 +1085,7 @@ export default {
   metadataFor,
   objectsRoot,
   shippedRoot,
+  folderDir,
   writePrimitive,
   writeThumbnail,
   importModel,
@@ -1003,6 +1096,7 @@ export default {
   MODEL_EXTENSIONS,
   IMPORTABLE_EXTENSIONS,
   OBJECTS_DIR,
+  MAX_FOLDER_DEPTH,
   ENVIRONMENTS_DIR,
   ENVIRONMENT_EXTENSIONS,
   MEDIA_DIR,

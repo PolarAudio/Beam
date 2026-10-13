@@ -187,7 +187,10 @@ function collectObject(entry, entries) {
     if (!mounted) return false;
     root = path.join(mounted, objectstore.OBJECTS_DIR);
   }
-  const dir = entry.folder ? path.join(root, entry.folder) : root;
+  // Folders nest, so the path is a list of levels rather than one name. The
+  // container mirrors it, so an export reopened elsewhere finds the object
+  // under the same folders it was made in.
+  const dir = objectstore.folderDir(root, entry.folder);
   const base = path.basename(entry.file, path.extname(entry.file));
   const relativeDir = [objectstore.OBJECTS_DIR, ...(entry.folder ? [entry.folder] : [])];
 

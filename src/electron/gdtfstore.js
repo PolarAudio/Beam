@@ -6,6 +6,7 @@ import { DOMParser } from '@xmldom/xmldom';
 import readGdtf from '@/models/DMX/gdtf/gdtf_reader';
 import { fixtureCategory } from '@/models/DMX/gdtf/fixture_parts';
 import library from './library';
+import paths from './paths';
 
 /**
  * GDTF fixture files in the user's library (main process).
@@ -242,6 +243,41 @@ function list(base) {
   return listUnder(profilesRoot(base));
 }
 
+/** Where the GDTF fixtures that ship with Beam are, one folder per maker. */
+function shippedRoot() {
+  return paths.rendererAssets('profiles');
+}
+
+/**
+ * Every GDTF fixture the user's library has, then every one Beam ships that
+ * the library does not: a file of the same key in the library is the one
+ * used, so a user can replace a shipped fixture with their own.
+ *
+ * @returns {Array<Object>} as `list` gives them; a shipped one has
+ *   `shipped: true` and `file` relative to the shipped folder
+ */
+function listAll() {
+  const own = list();
+  const keys = new Set(own.map((e) => e.key));
+  const shipped = listUnder(shippedRoot())
+    .filter((e) => !keys.has(e.key))
+    .map((e) => ({ ...e, shipped: true }));
+  return own.concat(shipped);
+}
+
+/**
+ * Absolute path of a GDTF fixture Beam ships, by key, or null.
+ *
+ * @param {String} key
+ * @returns {String|null}
+ */
+function shippedPathFor(key) {
+  const segments = String(key || '').split('/');
+  if (segments.length !== 2 || segments.some((s) => !s || s === '.' || s === '..')) return null;
+  const file = path.join(shippedRoot(), segments[0], `${segments[1]}${EXTENSION}`);
+  return fs.existsSync(file) ? file : null;
+}
+
 /**
  * The GDTF fixtures removed from the user's library, which shows still
  * resolve.
@@ -386,8 +422,10 @@ function removeFile(key) {
 export default {
   peek,
   list,
+  listAll,
   listRemoved,
   pathFor,
+  shippedPathFor,
   removedPathFor,
   importFile,
   removeFile,

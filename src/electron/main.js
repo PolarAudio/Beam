@@ -613,7 +613,7 @@ function setupLibrary() {
 
   // GDTF fixtures, kept as downloaded. The list is metadata only; the bytes
   // are served as `library://profiles/<file>`.
-  ipcMain.handle('library:gdtfList', () => gdtfstore.list());
+  ipcMain.handle('library:gdtfList', () => gdtfstore.listAll());
   ipcMain.handle('library:gdtfRemoved', () => gdtfstore.listRemoved());
   ipcMain.handle('library:pickGdtf', async () => {
     const result = await dialog.showOpenDialog(mainWindow, {

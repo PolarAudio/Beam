@@ -134,10 +134,11 @@ function libraryFile(kind, key, fromMount = true) {
  */
 function collectProfile(key, entries, fromMount = true) {
   // A GDTF fixture travels as the file it is, untouched, from the open
-  // document, else the user's library, else what was removed from it.
+  // document, else the user's library, else what was removed from it, else
+  // the ones Beam ships, so the export opens with an older Beam too.
   const mounted = fromMount ? documentstore.mountRoot() : null;
   const gdtf = (mounted && gdtfstore.pathFor(key, mounted)) || gdtfstore.pathFor(key)
-    || gdtfstore.removedPathFor(key);
+    || gdtfstore.removedPathFor(key) || gdtfstore.shippedPathFor(key);
   const gdtfBytes = gdtf ? bytesOf(gdtf) : null;
   if (gdtfBytes) {
     entries[`${PREFIX}Profiles/${key}${gdtfstore.EXTENSION}`] = gdtfBytes;

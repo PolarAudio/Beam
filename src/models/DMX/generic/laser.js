@@ -198,6 +198,13 @@ export const DEFAULT_LASER_PARAMS = {
   /** The aperture opening, in metres, drawn on the front panel. */
   apertureDiameter: 0.03,
   /**
+   * Where the beam starts, `{ x, y, z }` in metres in the body's frame, for a
+   * laser whose body is a model rather than the box: a GDTF file says where
+   * its Laser geometry sits. Null for the box, whose aperture is on its front
+   * panel at `apertureX` / `apertureY`.
+   */
+  aperture: null,
+  /**
    * How each controllable parameter is decided, keyed as the attributes are.
    *
    * `{ key: { mode, value, channel, bits } }` -- mode 'fixed' | 'adjustable' |
@@ -222,6 +229,8 @@ export const DEFAULT_LASER_PARAMS = {
  * @returns {Object} `{ x, y, z }` -- x across, y forward (negative), z up
  */
 export function apertureOrigin(params) {
+  const at = params.aperture;
+  if (at && [at.x, at.y, at.z].every(Number.isFinite)) return { x: at.x, y: at.y, z: at.z };
   const depth = Number(params.depth) || DEFAULT_LASER_PARAMS.depth;
   return {
     x: Number(params.apertureX) || 0,

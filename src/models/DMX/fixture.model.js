@@ -12,6 +12,8 @@ import Projector from '../../plugins/visualizer/projector';
 import Display from '../../plugins/visualizer/display';
 import VideoRouter from '../../plugins/visualizer/video_router';
 import Laser from '../../plugins/visualizer/laser';
+import { buildLaserProfile } from './generic/laser';
+import { laserParams } from './gdtf/laser_parts';
 import Strobe from '../../plugins/visualizer/strobe';
 import { kindOf } from './generic/fixture_kind';
 import withBeamSection from './generic/beam_section';
@@ -61,6 +63,17 @@ function roleOf(attribute, label) {
  * the fixture.
  */
 function listingFor(type) {
+  // A laser is listed as Beam's own laser, its parameters read from the file,
+  // so the laser renderer and its settings take it as they take one made here.
+  const laser = laserParams(type);
+  if (laser) {
+    const colour = type.laserBody && type.laserBody.colour;
+    return {
+      ...buildLaserProfile(colour ? { ...laser, bodyColor: colour } : laser),
+      name: type.name,
+      categories: ['Laser'],
+    };
+  }
   const availableChannels = {};
   const modes = type.modes.map((mode) => {
     const rows = channelRows(new DmxEngine(type, mode));
@@ -576,7 +589,7 @@ class Fixture extends withTransform(Proxify) {
     this.channels = [];
     this.quickChannelsAccessors = {};
     this.modeName = this.modeNames[modeIndex];
-    if (this.fixtureType) {
+    if (this.fixtureType && !this.isGdtfLaser) {
       const inputs = this.applyGdtfMode();
       if (this._dispatch) {
         // A static light's lenses are its mode's: built again for this one.
@@ -1155,6 +1168,18 @@ class Fixture extends withTransform(Proxify) {
   /* eslint-disable max-len */
 
   /**
+   * Whether this is a laser read from a GDTF file. It keeps its fixture type,
+   * for what the file says about it, and is drawn and driven as Beam's own
+   * laser, from the parameters `listingFor` read out of the file.
+   *
+   * @readonly
+   * @type {Boolean}
+   */
+  get isGdtfLaser() {
+    return !!(this.fixtureType && this.OFLData && this.OFLData.beam && this.OFLData.beam.laser);
+  }
+
+  /**
    * Parses OFL data and rpepares fixture parameters and channels
    *
    * @public
@@ -1162,7 +1187,7 @@ class Fixture extends withTransform(Proxify) {
    * @todo Implement other fixure categories
    */
   parseFromOFLData() {
-    if (this.fixtureType) {
+    if (this.fixtureType && !this.isGdtfLaser) {
       this.parseFromGdtf();
       return;
     }
@@ -1461,6 +1486,8 @@ class Fixture extends withTransform(Proxify) {
       this._3DModel = markRaw(new Laser({
         params: this.OFLData.beam.laser,
         settingsAt: () => this.device,
+        // A GDTF laser's own model, in place of the box.
+        body: this.fixtureType ? this.fixtureType.laserBody : null,
       }));
       this._3DModel.fixtureHandle = this;
       this._3DModel.position = this._position;

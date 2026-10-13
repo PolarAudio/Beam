@@ -1377,6 +1377,10 @@ export default {
     async removeFromLibrary() {
       const item = this.selectedItem;
       if (!item || !item.gdtf) return;
+      if (item.shipped) {
+        this.share.error = `${item.name} ships with Beam and is not in your library to remove.`;
+        return;
+      }
       const used = this.selectedInUse;
       let inShow = '';
       if (used === 1) inShow = '1 fixture in this project uses it. ';

@@ -648,6 +648,8 @@ A laser fixture in Beam is a laser projector with no laser in it. Something else
 
 **Beam pretends to be the hardware.** It advertises itself on the network as laser hardware the sending software already knows, so there is nothing to install at the other end. Point your laser software at it as though it were a DAC.
 
+**Lasers from GDTF.** A GDTF file with a Laser geometry is a laser in Beam. Its output in watts, beam diameter, divergence and scan angle come from the Laser geometry, the body from the file's model, drawn in the model's colour, and the beam starts where the Laser geometry sits. Each control is a channel: one with a DMX offset is driven over DMX; a virtual one, with no offset, is set by hand, Fixed when its range is a single value and Adjustable otherwise. Beam ships the Wicked Lasers LaserCube Pro 2.5W and Ultra 7.5W, each also as Wide Angle, as GDTF files; the Pro has its measured body, the Ultra a 200 mm cube until it is measured. Projects that used the earlier LaserCube profiles open with these. A file of the same name in your own library is used instead of a shipped one.
+
 ### Choosing how a laser is fed
 
 Select a laser and its **settings** widget has an **Input** section:

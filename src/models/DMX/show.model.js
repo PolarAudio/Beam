@@ -29,8 +29,10 @@ import SceneObjects from '../../plugins/visualizer/scene_objects';
 import Studio from './studio';
 import { normaliseMatrixProfile } from './ofl_matrix';
 import withBeamSection from './generic/beam_section';
+import movedProfile from './moved_profiles';
 import readGdtf, { wheelImages } from './gdtf/gdtf_reader';
-import buildBody from '../../plugins/visualizer/gdtf_body';
+import buildBody, { laserBody } from '../../plugins/visualizer/gdtf_body';
+import { laserGeometry } from './gdtf/laser_parts';
 import { headInputs } from './gdtf/fixture_parts';
 import { MAX_SHADOW_CASTERS } from '../../plugins/visualizer/light';
 import MeasureTool from '../../plugins/visualizer/measure_tool';
@@ -960,6 +962,9 @@ class Show extends EventEmitter {
     this.missingProfiles = [];
     for (let i = 0; i < showData.fixtures.length; i++) {
       const fixtureData = showData.fixtures[i];
+      // A profile replaced by another file is looked for under its new name,
+      // and the project saves that name from here on.
+      Object.assign(fixtureData, movedProfile(fixtureData.manufacturer, fixtureData.model));
       const profileKey = `${fixtureData.manufacturer}/${fixtureData.model}`;
       if (this.gdtfEntry(profileKey)) {
         // eslint-disable-next-line no-await-in-loop
@@ -1430,7 +1435,8 @@ class Show extends EventEmitter {
    *   with one of the two set, or null when neither is found
    */
   async resolveFixture(manufacturer, model) {
-    const key = `${manufacturer}/${model}`;
+    const moved = movedProfile(manufacturer, model);
+    const key = `${moved.manufacturer}/${moved.model}`;
     if (this.gdtfEntry(key)) {
       const fixtureType = await this.loadGdtfType(key);
       if (!fixtureType) return null;
@@ -1483,6 +1489,7 @@ class Show extends EventEmitter {
     let host = 'profiles';
     if (found.carried) host = 'projectprofiles';
     else if (found.removed) host = 'removedprofiles';
+    else if (found.entry.shipped) host = 'shippedprofiles';
     const path = found.entry.file.split('/').map(encodeURIComponent).join('/');
     try {
       const response = await fetch(`library://${host}/${path}`);
@@ -1500,7 +1507,13 @@ class Show extends EventEmitter {
       // The body its meshes make, shared by every fixture of the type. A file
       // whose meshes cannot be read keeps the shipped body.
       try {
-        fixtureType.body = await buildBody(fixtureType, files);
+        // A laser is drawn by the laser renderer, standing; a light by the head.
+        if (laserGeometry(fixtureType)) {
+          fixtureType.body = null;
+          fixtureType.laserBody = await laserBody(fixtureType, files);
+        } else {
+          fixtureType.body = await buildBody(fixtureType, files);
+        }
       } catch (err) {
         // eslint-disable-next-line no-console
         console.warn(`[gdtf] ${key}: body not built: ${err.message}`);
@@ -2319,15 +2332,16 @@ class Show extends EventEmitter {
     all.forEach((entry) => {
       const maker = fold(entry.manufacturer);
       const match = named.find(({ name }) => name && (maker === name || maker.startsWith(`${name} `)));
-      // Typed and marked as an OFL profile is: GDTF draws moving heads and
-      // static lights so far, and the rest patch and draw nothing.
+      // Typed and marked as an OFL profile is: GDTF draws moving heads, static
+      // lights and lasers so far, and the rest patch and draw nothing.
       const row = {
         file: entry.key,
         name: entry.name,
         manufacturer: entry.key.split('/')[0],
         category: entry.category || 'unreadable file',
-        supported: entry.category === 'Moving Head' || entry.category === 'Static',
+        supported: ['Moving Head', 'Static', 'Laser'].includes(entry.category),
         gdtf: true,
+        shipped: !!entry.shipped,
         fixtureTypeId: entry.fixtureTypeId || null,
         revision: entry.revision || null,
       };

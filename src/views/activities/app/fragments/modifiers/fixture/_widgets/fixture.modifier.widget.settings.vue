@@ -522,21 +522,25 @@
 
         <!-- A laser's output stage: what it lays over the DAC's stream, grouped
              and laid out across so it is not one tall column. A fixed parameter
-             is baked in the profile and dropped from the panel; a driven one is
-             greyed and holds the live DMX value; an adjustable one is yours to
-             set here. -->
+             is baked in the profile and dropped from the panel, and a group with
+             nothing left is dropped whole; a driven one is greyed and holds the
+             live DMX value; an adjustable one is yours to set here. -->
         <template v-if="isLaser">
           <template
             v-for="group in laserGroups"
             :key="group.label"
           >
-            <span class="section_label">{{ group.label }}</span>
+            <span
+              v-if="groupShown(group)"
+              class="section_label"
+            >{{ group.label }}</span>
             <!-- Lines are declared, not left to wrap: which fields sit together
                  is a statement about what they are -- the two scales, then the
                  two positions -- and letting flex decide put them wherever the
                  widget's width happened to break. -->
             <uk-flex
               v-for="(line, at) in group.lines"
+              v-show="line.some((row) => byHand(row.key))"
               :key="`${group.label}-${at}`"
               :gap="6"
               class="control_wrap"
@@ -556,7 +560,8 @@
               />
             </uk-flex>
             <uk-flex
-              v-if="group.shutter || (group.toggles || []).length"
+              v-if="(group.shutter && byHand('shutter'))
+                || (group.toggles || []).some((toggle) => byHand(toggle.key))"
               :gap="6"
               class="control_wrap"
             >
@@ -1519,6 +1524,20 @@ export default {
     byHand(key) {
       if (!this.device) return false;
       return !this.device.isFixed(key) && !this.device.isDriven(key);
+    },
+    /**
+     * Whether a laser control group has anything set by hand, so a group whose
+     * every control is fixed or driven shows no heading.
+     *
+     * @public
+     * @param {Object} group one of `laserGroups`
+     * @returns {Boolean}
+     */
+    groupShown(group) {
+      const keys = group.lines.flat().map((row) => row.key)
+        .concat((group.toggles || []).map((toggle) => toggle.key))
+        .concat(group.shutter ? ['shutter'] : []);
+      return keys.some((key) => this.byHand(key));
     },
     /**
      * The name of the range a channel's byte falls in, from the profile.

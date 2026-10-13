@@ -307,6 +307,15 @@ export function moves(type) {
     .some((l) => l.functions.some((f) => f.attribute === 'Pan' || f.attribute === 'Tilt'))));
 }
 
+/** Whether a fixture type carries a Laser geometry anywhere. */
+function hasLaser(type) {
+  let found = false;
+  (type.geometries || []).forEach((root) => walkGeometry(root, (g) => {
+    if (g.type === 'Laser') found = true;
+  }));
+  return found;
+}
+
 /**
  * The moving head's inputs from a fixture type in one mode.
  *
@@ -400,6 +409,7 @@ export function headInputs(type, mode) {
   // A light that pans or tilts is a moving head in every mode, including one
   // that leaves pan and tilt out; a light that does neither is static.
   if (beams.length) category = moves(type) ? 'Moving Head' : 'Static';
+  else if (hasLaser(type)) category = 'Laser';
   return {
     category,
     minAngle: zoom ? zoom[0] : fixed,
@@ -426,8 +436,8 @@ export function headInputs(type, mode) {
  * fixture list shows and the one a placed fixture takes.
  *
  * @param {Object} type a fixture type
- * @returns {String} 'Moving Head', 'Static', or 'Other' for a type that
- *   gives no light
+ * @returns {String} 'Moving Head', 'Static', 'Laser', or 'Other' for a type
+ *   that gives no light
  */
 export function fixtureCategory(type) {
   return headInputs(type, type.modes[0] || { channels: [] }).category;

@@ -109,6 +109,8 @@ const SERVED_DIRS = {
   profiles: { dir: 'Profiles', extensions: ['.gdtf'] },
   // GDTF fixtures removed from the library, which shows still open with.
   removedprofiles: { dir: 'Removed/Profiles', extensions: ['.gdtf'] },
+  // GDTF fixtures that ship with Beam.
+  shippedprofiles: { base: () => paths.rendererAssets('profiles'), extensions: ['.gdtf'] },
   projectprofiles: {
     base: () => {
       const mounted = documentstore.mountRoot();

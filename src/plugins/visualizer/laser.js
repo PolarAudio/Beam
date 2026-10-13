@@ -472,6 +472,8 @@ class Laser {
    * @param {Object} data
    * @param {Object} data.params laser parameters, see `generic/laser.js`
    * @param {Function} [data.settingsAt] () => the placement's LaserSettings
+   * @param {Object} [data.body] `{ geometry }`, a model drawn in place of the
+   *   box, in the fixture's frame and size; shared, so never disposed here
    */
   constructor(data = {}) {
     this._params = data.params || {};
@@ -489,7 +491,8 @@ class Laser {
     this._dummy = new THREE.Object3D();
     SceneManager.add(this._dummy);
 
-    this._body = new THREE.Mesh(BOX_GEOMETRY, BODY.material(this._params.bodyColor));
+    this._model = data.body && data.body.geometry ? data.body.geometry : null;
+    this._body = new THREE.Mesh(this._model || BOX_GEOMETRY, BODY.material(this._params.bodyColor));
     this._body.userData.pickOwner = this;
     this._dummy.add(this._body);
     castsContactShadow(this._body);
@@ -574,8 +577,11 @@ class Laser {
     const aperture = Math.max(Number(params.apertureDiameter) || 0, 0.001);
 
     // Width across, depth front-to-back, height up -- the box stands the way
-    // the machine does.
-    this._body.scale.set(width, depth, height);
+    // the machine does. A model is drawn at its own size, and its aperture is
+    // part of it.
+    if (this._model) this._body.scale.set(1, 1, 1);
+    else this._body.scale.set(width, depth, height);
+    this._aperture.visible = !this._model;
 
     // The model measures the aperture from the centre of the front panel, seen
     // by someone facing it; same unnegated -Y/+Z convention as the projector's
@@ -775,8 +781,11 @@ class Laser {
     for (let i = 0; i + 1 < n; i += 1) {
       const dx = ptNorm[(i + 1) * 2] - ptNorm[i * 2];
       const dy = ptNorm[(i + 1) * 2 + 1] - ptNorm[i * 2 + 1];
-      // Blanked travel between figures must not be bridged.
-      const joined = dx * dx + dy * dy <= JUMP_LIMIT * JUMP_LIMIT;
+      // Blanked travel between figures must not be bridged, and a repeated
+      // point spans no area: a held dot is the same point many times, and
+      // left linked it would never get the ribbon below.
+      const step = dx * dx + dy * dy;
+      const joined = step > 0 && step <= JUMP_LIMIT * JUMP_LIMIT;
       if (ptLit[i] && ptLit[i + 1] && joined) {
         ptLinked[i] = 1;
         ptLinked[i + 1] = 1;
@@ -909,8 +918,14 @@ class Laser {
     const height = Math.max(Number(params.height) || 0, 0.001);
     const depth = Math.max(Number(params.depth) || 0, 0.001);
     this._dummy.updateMatrixWorld();
-    bodyBounds.min.set(-width / 2, -depth / 2, -height / 2);
-    bodyBounds.max.set(width / 2, depth / 2, height / 2);
+    // A model is drawn about its file's origin, which need not be its centre.
+    if (this._model) {
+      if (!this._model.boundingBox) this._model.computeBoundingBox();
+      bodyBounds.copy(this._model.boundingBox);
+    } else {
+      bodyBounds.min.set(-width / 2, -depth / 2, -height / 2);
+      bodyBounds.max.set(width / 2, depth / 2, height / 2);
+    }
     bodyBounds.applyMatrix4(this._dummy.matrixWorld);
     box.union(bodyBounds);
   }
@@ -927,12 +942,16 @@ class Laser {
 
   /**
    * How far the body reaches below the fixture's origin: half its height,
-   * since local +Z is up.
+   * since local +Z is up, or a model's lowest point below its origin.
    *
    * @readonly
    * @type {Number}
    */
   get floorOffset() {
+    if (this._model) {
+      if (!this._model.boundingBox) this._model.computeBoundingBox();
+      return -this._model.boundingBox.min.z;
+    }
     return (Number((this._params || {}).height) || 0) / 2;
   }
 

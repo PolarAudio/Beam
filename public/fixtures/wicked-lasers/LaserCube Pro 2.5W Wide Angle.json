@@ -9,8 +9,8 @@
   "physical": {
     "dimensions": [
       100,
-      100,
-      160
+      145,
+      100
     ],
     "bulb": {
       "type": "Laser"

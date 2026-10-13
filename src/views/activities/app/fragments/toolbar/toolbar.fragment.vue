@@ -26,6 +26,10 @@
     <credits-popup v-model="creditsPopupState" />
     <newshow-popup v-model="newProjectPopupState" />
     <project-popup v-model="projectPopupState" />
+    <patch-sheet-popup
+      v-model="patchSheetPopupState"
+      @export="exportPatchSheet"
+    />
     <video-popup
       v-model="videoPopupState"
       :focus-id="videoFocusId"
@@ -47,6 +51,7 @@ import LicensePopup from './_popups/popup.license.vue';
 import CreditsPopup from './_popups/popup.credits.vue';
 import NewshowPopup from './_popups/popup.newshow.vue';
 import ProjectPopup from './_popups/popup.project.vue';
+import PatchSheetPopup from './_popups/popup.patchsheet.vue';
 import VideoPopup from './_popups/popup.video.vue';
 
 export default {
@@ -61,6 +66,7 @@ export default {
     CreditsPopup,
     NewshowPopup,
     ProjectPopup,
+    PatchSheetPopup,
     VideoPopup,
   },
   data() {
@@ -88,6 +94,7 @@ export default {
       newProjectPopupState: false,
       /** Project Details: the project's notes. */
       projectPopupState: false,
+      patchSheetPopupState: false,
       /** Full window, full screen and stay on top. */
       view: ViewMode.state,
       /** Whether the Preferences window is open, and the tab it opens on. */
@@ -169,7 +176,7 @@ export default {
               name: 'Export Patch Sheet (PDF)...',
               icon: 'export',
               callback: () => {
-                this.exportPatchSheet();
+                this.patchSheetPopupState = true;
               },
             },
             {
@@ -502,14 +509,15 @@ export default {
       await this.$show.exportDocument();
     },
     /**
-     * Writes the patch sheet as a PDF, with the project's notes on it.
+     * Writes the patch sheet as a PDF.
      *
      * @public
      * @async
+     * @param {Object} options what to print, from the export dialog
      */
-    async exportPatchSheet() {
+    async exportPatchSheet(options) {
       try {
-        await exportPatchSheet(this.$show);
+        await exportPatchSheet(this.$show, options);
       } catch (err) {
         EventBus.emit('app_error', new Error(`Could not export the patch sheet: ${err.message}`));
       }

@@ -1028,6 +1028,8 @@ class Controls {
       return;
     }
     if (this.handle && (this.handle.dragging || this.handle.axis)) return;
+    // A click in the scene moves the selection there, away from a measurement.
+    MeasureTool.select(null);
     // Ctrl/Shift/Cmd extend the selection, matching the fixture list.
     const additive = e.shiftKey || e.ctrlKey || e.metaKey;
 

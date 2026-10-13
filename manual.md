@@ -505,7 +505,7 @@ Fields are **colour-coded by axis**, consistently, so you can see which is which
 
 ## Measuring
 
-The ruler button in the viewport toolbar, or **M**, turns the measure tool on. While it is on, clicks in the 3D view place points instead of selecting, and the move handle is out of the way. **M** or **Escape** turns it off again. Measurements stay on screen until you clear them, also with the tool off, and are not saved with the project.
+The ruler button in the viewport toolbar, or **M**, turns the measure tool on. While it is on, clicks in the 3D view place points instead of selecting, and the move handle is out of the way. **M** or **Escape** turns it off again. Measurements and the **Measure** widget are shown while the tool is on and hidden while it is off. They stay until you delete them, are saved with the project, and are drawn on the patch sheet's plan.
 
 The **Measure** widget chooses what a click measures:
 
@@ -513,11 +513,11 @@ The **Measure** widget chooses what a click measures:
 - **Angle**: three clicks, the corner second. **A** switches between distance and angle.
 - **Throw**: click a fixture. Measured from its lens along the beam as it points now, to the first object or the floor, with the lens height and the angle the beam meets the surface at.
 
-Under the pointer the tool snaps to, in this order: a **vertex** (green square), a fixture's **lens, tilt axis, body base or centre** (yellow ring), an edge's **midpoint** (cyan triangle), the **perpendicular** foot on the face or edge under the pointer (pink ⊥), an **axis** through the first point (red x, green y, blue z), anywhere on an **edge** (red diamond), a **face**, and the **floor**. Only real edges count: a flat face split into triangles has no edge across it. A tooltip names what it snapped to. Hold **Shift** to place a point without snapping.
+Under the pointer the tool snaps to, in this order: an end of a **measurement** already made, or a point already placed in the one under way (cyan dot in a white ring), a **vertex** (green square), a fixture's **lens, tilt axis, body base or centre** (yellow ring), an edge's **midpoint** (cyan triangle), the **perpendicular** foot on the face or edge under the pointer (pink ⊥), an **axis** through the first point (red x, green y, blue z), anywhere on an **edge** (red diamond), a **face**, and the **floor**. Only real edges count: a flat face split into triangles has no edge across it. A tooltip names what it snapped to. Hold **Ctrl** to place a point without snapping.
 
-After the first point, the arrow keys lock an axis: **right** x, **left** y, **up** z. The second point then stays on that axis through the first, level with whatever it snaps to, so the readout is one component. Press the key again, or **Escape**, to release it. **Escape** with a point placed drops it.
+After the first point, when the pointer snaps to an axis, hold **Shift** to lock it. The second point then stays on that axis through the first, level with whatever it snaps to, so the readout is one component. The locked line turns purple, and the snap the value comes from keeps its marker, joined to the axis by a dotted purple line: lock z on a lens, move to a deck or a vertex, and the reading is the height above it. Plain floor is not taken as a source, so over empty floor the point slides freely along the axis. Let go of Shift to release it. The arrow keys lock an axis without holding anything: **right** x, **left** y, **up** z; press the key again, or **Escape**, to release it. **Escape** with a point placed drops it.
 
-Each measurement is numbered on screen and in the widget. Hovering a row or clicking a label highlights it; **Delete** removes the highlighted one, and each row has a copy button that puts its values on the clipboard as a line of text.
+Each measurement is numbered in the widget. Click its label in the view or its row in the widget to select it; **Delete** removes the selected one. Each row also has a delete button, and a copy button that puts its values on the clipboard as a line of text.
 
 ## Arranging a selection
 
@@ -691,12 +691,20 @@ The picture comes from the stream; the fixture only corrects it. Each of these i
 
 ## The patch sheet
 
-**File → Export Patch Sheet (PDF)...** writes a PDF for whoever sets up the fixtures. **File → Project Details...** holds the project's author, version and notes, saved with the project. Author and version are printed under the title; the notes (venue, contact, power, anything the crew needs) go in a box at the top of the first page. A patch table that would start in the lower half of a page starts on the next one.
+**File → Export Patch Sheet (PDF)...** writes a PDF for whoever sets up the fixtures. It first asks what to print:
+
+- **Print**: project notes, the instructions for the crew, the patch list, the fixture types, and the measurements. Without a view, measurements are printed as a table only.
+- **Views, one page each**: the plan from above, the front from the audience, the back from upstage, and the sides from stage left and stage right. Mover arrows go on the plan; the grid on every view.
+- **Fixtures**: whether fixtures that are not patched are listed and drawn. Left out, they are still counted under the title.
+- **Paper**: A4 or Letter, landscape.
+
+The choices are remembered on this computer for the next export. **File → Project Details...** holds the project's author, version and notes, saved with the project. Author and version are printed under the title; the notes (venue, contact, power, anything the crew needs) go in a box at the top of the first page. A patch table that would start in the lower half of a page starts on the next one.
 
 - **The table** has one row per fixture, grouped by universe: number, name, type, mode, channel count, Art-Net universe, sACN universe, start and end channel, position, and whether it is hung, standing or sideways. Art-Net counts universes from 0 and sACN from 1, so both are given. Fixtures that are not patched are listed at the end.
 - **Fixture types** lists each type once, with its channel count and how many there are.
-- **The plan** is the scene seen from above, the audience at the bottom (-y). Each fixture is a circle numbered to match the table. Objects are grey outlines.
+- **The views** are line drawings of the objects with hidden lines removed: only what can be seen from that side is drawn, in black on white. The plan has the audience at the bottom (-y); each view names the stage sides at its edges, and an elevation draws the floor as a line. Each fixture is a circle numbered to match the table, drawn over the objects; fixtures that cover each other in a view share one marker, such as **1–8** for a row of movers seen end on. In an elevation, a fixture behind something is drawn grey and dashed. Fixture bodies are outlined on the plan only.
 - **Mover arrows.** A red arrow shows where the beam moves when tilt is raised above its centre with pan at its centre. The arrow does not show which way the display or controls on the base face, because a profile does not say. To place a mover on site, set pan to centre and tilt a little above centre, then turn the base until the beam follows the arrow.
+- **Measurements** are drawn on each view in blue as seen from that side, labelled M1, M2 and so on, and listed after the last view with all their values. A measurement pointing straight at the viewer is a dot; its label and the list give the length.
 
 ## The MadMapper export in detail
 

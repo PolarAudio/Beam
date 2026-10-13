@@ -2,6 +2,7 @@
 /* eslint-disable import/no-extraneous-dependencies */
 import { app, BrowserWindow, dialog } from 'electron';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import saveFolders from './savefolders';
 
@@ -114,8 +115,9 @@ function writeWaiting(target, contents) {
 }
 
 /**
- * Prints an HTML page to PDF in a hidden window with scripts off. Page size
- * and margins come from the page's own `@page` rule.
+ * Prints an HTML page to PDF in a hidden window. Page size and margins come
+ * from the page's own `@page` rule. The page is loaded from a temporary file:
+ * a data URL is capped at 2 MB, which the drawings of a few views can pass.
  *
  * @param {String} html a complete document
  * @param {String} [footer] plain text printed at the foot of every page
@@ -128,8 +130,10 @@ async function renderPdf(html, footer) {
     // window is sandboxed with no preload, and the page is one Beam built.
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
   });
+  const file = path.join(os.tmpdir(), `beam-print-${process.pid}-${Date.now()}.html`);
   try {
-    await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+    fs.writeFileSync(file, html, 'utf8');
+    await win.loadFile(file);
     return await win.webContents.printToPDF({
       printBackground: true,
       preferCSSPageSize: true,
@@ -142,6 +146,7 @@ async function renderPdf(html, footer) {
     });
   } finally {
     win.destroy();
+    fs.rm(file, { force: true }, () => {});
   }
 }
 

@@ -36,9 +36,10 @@
           v-for="m in measure.measurements"
           :key="m.id"
           class="measure_row"
-          :class="{ lit: m.id === measure.highlightId }"
-          @mouseenter="highlight(m.id)"
-          @click="highlight(m.id)"
+          :class="{ lit: m.id === measure.selectedId }"
+          @mouseenter="hover(m.id)"
+          @mouseleave="hover(null)"
+          @click="select(m.id)"
         >
           <div class="measure_row_head">
             <span class="measure_number">{{ m.number }}</span>
@@ -124,8 +125,8 @@ export default {
         return ['Click the first arm.', 'Click the corner.', 'Click the second arm.'][pending.length];
       }
       return pending.length
-        ? 'Click the second point. Arrow keys lock an axis: right x, left y, up z.'
-        : 'Click the first point. Shift turns snapping off.';
+        ? 'Click the second point. On an axis, hold Shift to lock it; or the arrow keys: right x, left y, up z.'
+        : 'Click the first point. Hold Ctrl to place it without snapping.';
     },
   },
   methods: {
@@ -139,8 +140,11 @@ export default {
     toggle() {
       MeasureTool.toggle();
     },
-    highlight(id) {
-      MeasureTool.highlight(id);
+    select(id) {
+      MeasureTool.select(id);
+    },
+    hover(id) {
+      MeasureTool.hoverRow(id);
     },
     remove(id) {
       MeasureTool.remove(id);
@@ -200,6 +204,9 @@ export default {
   font-size: 11px;
   color: var(--secondary-lighter);
   cursor: default;
+}
+.measure_row:hover {
+  background: var(--primary-light, #2a2a2e);
 }
 .measure_row.lit {
   border-left-color: #1ca6bd;

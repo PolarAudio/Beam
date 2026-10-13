@@ -32,6 +32,7 @@ import readGdtf, { wheelImages } from './gdtf/gdtf_reader';
 import buildBody from '../../plugins/visualizer/gdtf_body';
 import { headInputs } from './gdtf/fixture_parts';
 import { MAX_SHADOW_CASTERS } from '../../plugins/visualizer/light';
+import MeasureTool from '../../plugins/visualizer/measure_tool';
 
 const fixtureDataCache = {};
 
@@ -263,6 +264,8 @@ class Show extends EventEmitter {
       this.isSaved = false;
       this.emit('saveState', this.isSaved);
     });
+    // Measurements are kept by the measure tool, outside the proxied data.
+    MeasureTool.onChange(() => this.touch());
     this.preloadManufacturers();
     this.preloadFixtureList();
   }
@@ -396,6 +399,7 @@ class Show extends EventEmitter {
       cameras: Studio.showData,
       studio: Studio.showSettings,
       details: Object.values(this.details).some(Boolean) ? { ...this.details } : undefined,
+      measurements: MeasureTool.toJSON(),
     };
   }
 
@@ -585,6 +589,7 @@ class Show extends EventEmitter {
     // resource, only numbers.
     this.videoInputs = withTestCard([]);
     this.definitions = new DefinitionStore();
+    MeasureTool.load([]);
     this.isSaved = true;
   }
 
@@ -904,6 +909,7 @@ class Show extends EventEmitter {
     const storedView = Studio.loadCameras(showData.cameras);
     Studio.loadSettings(showData.studio);
     this.details = Show.detailsFrom(showData);
+    MeasureTool.load(showData.measurements);
 
     this.loading.message = 'Patching fixtures';
     this.loading.percentage = 80;

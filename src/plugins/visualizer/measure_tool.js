@@ -11,8 +11,9 @@ import {
  * the 3D view with snapping to vertices, edges, faces and fixture points.
  *
  * Drawn as an HTML overlay over the canvas, so measurements are never in a
- * recording or a copied view. Measurements are kept until cleared, and are
- * not part of the project.
+ * recording or a copied view. Measurements are drawn only while the tool is
+ * on. They are kept until deleted, saved with the project, and drawn on the
+ * patch sheet's plan.
  *
  * The viewport hands its camera, canvas and pick targets over in `attach`;
  * this module does not import the controls, which import it.
@@ -26,6 +27,7 @@ export const MEASURE_MODES = {
 
 /** How close, in screen pixels, the pointer must be for each snap. */
 const SNAP_PX = {
+  measure: 10,
   vertex: 10,
   midpoint: 9,
   perpendicular: 14,
@@ -34,7 +36,7 @@ const SNAP_PX = {
 };
 
 /** Snaps in the order they win, when several are within reach. */
-const SNAP_ORDER = ['vertex', 'fixture', 'midpoint', 'perpendicular', 'axis', 'edge', 'face', 'floor'];
+const SNAP_ORDER = ['measure', 'vertex', 'fixture', 'midpoint', 'perpendicular', 'axis', 'edge', 'face', 'floor'];
 
 /** The axis colours: x red, y green, z blue, as the gizmo draws them. */
 const AXES = {
@@ -47,6 +49,8 @@ const AXES = {
 const AXIS_KEYS = { ArrowRight: 'x', ArrowLeft: 'y', ArrowUp: 'z' };
 
 const LINE_COLOUR = '#ffffff';
+/** A locked axis, and the line to the snap its value is taken from. */
+const LOCK_COLOUR = '#a855f7';
 const HIGHLIGHT_COLOUR = '#1ca6bd';
 const LABEL_HEIGHT = 18;
 
@@ -59,8 +63,10 @@ const state = reactive({
   mode: MEASURE_MODES.DISTANCE,
   /** Finished measurements, in the order they were made. */
   measurements: [],
-  /** The measurement shown highlighted in the view and the widget. */
-  highlightId: null,
+  /** The selected measurement, which Delete removes. */
+  selectedId: null,
+  /** The measurement under the pointer in the widget, drawn lit. */
+  hoverId: null,
   /** Ends placed so far for the measurement under way. */
   pending: [],
   /** The axis an arrow key has locked, or null. */
@@ -76,6 +82,15 @@ let pointerDirty = false;
 let hover = null;
 let overlay = null;
 let frame = 0;
+let changed = null;
+/** The axis Shift locked, released when Shift is let go; null otherwise. */
+let shiftLock = null;
+let keysBound = false;
+
+/** Tells the owner of the measurements, the show, that they changed. */
+function notifyChanged() {
+  if (changed) changed();
+}
 
 const raycaster = new THREE.Raycaster();
 const ndc = new THREE.Vector2();
@@ -96,7 +111,7 @@ function makeEnd(fields) {
     normal: fields.normal ? fields.normal.clone() : null,
     dir: fields.dir ? fields.dir.clone() : null,
     kind: fields.kind,
-    label: fields.label,
+    label: fields.keepLabel || fields.label,
     axis: fields.axis || null,
   });
 }
@@ -250,7 +265,7 @@ function fixturePoints(fixture) {
 /**
  * What the pointer would place: the best snap within reach.
  *
- * @param {Object} event `{ clientX, clientY, shiftKey }`
+ * @param {Object} event `{ clientX, clientY, ctrlKey }`
  * @returns {Object|null} a candidate, or null at the sky
  */
 function snapAt(event) {
@@ -259,7 +274,7 @@ function snapAt(event) {
   const cursor = { x: event.clientX - rect.left, y: event.clientY - rect.top };
   ndc.set((cursor.x / rect.width) * 2 - 1, -(cursor.y / rect.height) * 2 + 1);
   raycaster.setFromCamera(ndc, camera);
-  const free = !!event.shiftKey;
+  const free = !!event.ctrlKey;
   const candidates = [];
 
   const hit = raycaster.intersectObjects(context.pickTargets(), false)
@@ -277,6 +292,10 @@ function snapAt(event) {
       kind: 'face', point: hit.point.clone(), normal, label: `face, ${name}`, d: 0,
     };
     if (!free) candidates.push(...edgeCandidates(hit, matrix, cursor, name));
+  } else if (hit && owner && free) {
+    surface = {
+      kind: 'face', point: hit.point.clone(), normal: null, label: `free, ${nameOf(owner)}`, d: 0,
+    };
   } else if (hit && owner) {
     // Fixtures are picked by an invisible box; their own points are what is
     // worth measuring to.
@@ -294,6 +313,26 @@ function snapAt(event) {
     }
   }
   if (surface) candidates.push(surface);
+
+  if (!free) {
+    // The ends of the measurements made, and the earlier ends of the one
+    // under way; the last one placed is where this measurement starts.
+    const ends = [];
+    state.measurements.forEach((m) => m.ends.forEach((end) => ends.push({ end, of: `end of ${m.number}` })));
+    state.pending.slice(0, -1).forEach((end) => ends.push({ end, of: 'placed point' }));
+    ends.forEach(({ end, of }) => {
+      candidates.push({
+        kind: 'measure',
+        point: end.point.clone(),
+        normal: end.normal,
+        dir: end.dir,
+        label: `${of}, ${end.label}`,
+        // Stored as the point it was, so a chain of snaps does not grow the name.
+        keepLabel: end.label,
+        d: screenDistance(end.point, cursor),
+      });
+    });
+  }
 
   const from = state.mode === MEASURE_MODES.THROW ? null : state.pending[state.pending.length - 1];
   if (from && !free) {
@@ -337,9 +376,10 @@ function snapAt(event) {
       ? from.point.clone()
         .addScaledVector(axis.dir, best.point.clone().sub(from.point).dot(axis.dir))
       : closestOnLineToRay(raycaster.ray, from.point, axis.dir, new THREE.Vector3());
-    const label = best && best.kind !== 'floor' ? `on ${state.axisLock} axis, level with ${best.label}` : `on ${state.axisLock} axis`;
+    const source = best && best.kind !== 'floor' ? best : null;
+    const label = source ? `on ${state.axisLock} axis, level with ${source.label}` : `on ${state.axisLock} axis`;
     best = {
-      kind: 'axis', axis: state.axisLock, point, label, d: 0,
+      kind: 'axis', axis: state.axisLock, locked: true, source, point, label, d: 0,
     };
   }
   if (best) best.cursor = cursor;
@@ -421,7 +461,8 @@ function addMeasurement(kind, ends, values) {
   nextId += 1;
   measurement.headline = headline(measurement);
   state.measurements.push(measurement);
-  state.highlightId = measurement.id;
+  state.selectedId = measurement.id;
+  notifyChanged();
   ensureLoop(); // eslint-disable-line no-use-before-define
 }
 
@@ -504,6 +545,7 @@ function click(event) {
   state.message = '';
   state.pending.push(makeEnd(snap));
   state.axisLock = null;
+  shiftLock = null;
   const needed = state.mode === MEASURE_MODES.ANGLE ? 3 : 2;
   if (state.pending.length < needed) return;
   const ends = state.pending.splice(0);
@@ -527,7 +569,9 @@ function click(event) {
  */
 function pointerMove(event) {
   if (!state.active) return;
-  pointer = { clientX: event.clientX, clientY: event.clientY, shiftKey: event.shiftKey };
+  pointer = {
+    clientX: event.clientX, clientY: event.clientY, ctrlKey: event.ctrlKey || event.metaKey,
+  };
   pointerDirty = true;
   ensureLoop(); // eslint-disable-line no-use-before-define
 }
@@ -535,6 +579,31 @@ function pointerMove(event) {
 function pointerLeave() {
   pointer = null;
   hover = null;
+}
+
+/**
+ * Shift held while the pointer is on an axis through the last point locks
+ * that axis until Shift is released, as SketchUp does. Ctrl turns snapping
+ * off; it is read here as well so pressing it without moving takes effect.
+ *
+ * @param {KeyboardEvent} e keydown or keyup
+ */
+function modifierKey(e) {
+  if (!state.active) return;
+  const down = e.type === 'keydown';
+  if (e.key === 'Shift') {
+    if (down && !state.axisLock && hover && hover.kind === 'axis' && state.pending.length) {
+      state.axisLock = hover.axis;
+      shiftLock = hover.axis;
+    } else if (!down && shiftLock) {
+      if (state.axisLock === shiftLock) state.axisLock = null;
+      shiftLock = null;
+    }
+    pointerDirty = true;
+  } else if ((e.key === 'Control' || e.key === 'Meta') && pointer) {
+    pointer.ctrlKey = down;
+    pointerDirty = true;
+  }
 }
 
 /* ---------------------------------------------------------------- drawing */
@@ -555,7 +624,7 @@ function ensureOverlay() {
   labels.addEventListener('pointerdown', (e) => {
     const id = Number(e.target.closest('[data-id]') && e.target.closest('[data-id]').dataset.id);
     if (id) {
-      state.highlightId = id;
+      state.selectedId = id;
       e.stopPropagation();
     }
   });
@@ -589,6 +658,8 @@ function marker(snap, p) {
       return `<path d="M${(p.x - 6).toFixed(1)} ${(p.y + 6).toFixed(1)}h12M${x} ${(p.y + 6).toFixed(1)}v-12" stroke="#f472b6" stroke-width="2.5" fill="none"/>`;
     case 'axis':
       return dot(p, AXES[snap.axis].colour, 5);
+    case 'measure':
+      return `<circle cx="${x}" cy="${y}" r="6" fill="${HIGHLIGHT_COLOUR}" stroke="#fff" stroke-width="2"/>`;
     case 'fixture':
       return `<circle cx="${x}" cy="${y}" r="6" fill="none" stroke="#facc15" stroke-width="2"/>${dot(p, '#facc15', 2)}`;
     default:
@@ -596,13 +667,12 @@ function marker(snap, p) {
   }
 }
 
-function labelHtml(text, p, id, highlighted, number) {
+function labelHtml(text, p, id, highlighted) {
   const background = highlighted ? HIGHLIGHT_COLOUR : 'rgba(18,18,20,0.88)';
-  const badge = number ? `<b style="opacity:.7;margin-right:5px">${number}</b>` : '';
   return `<div data-id="${id || ''}" style="position:absolute;left:${p.x.toFixed(1)}px;top:${p.y.toFixed(1)}px;`
     + 'transform:translate(-50%,-50%);padding:1px 6px;border-radius:3px;white-space:nowrap;color:#fff;'
     + `background:${background};pointer-events:${id ? 'auto' : 'none'};cursor:${id ? 'pointer' : 'default'};`
-    + `line-height:${LABEL_HEIGHT - 2}px">${badge}${text}</div>`;
+    + `line-height:${LABEL_HEIGHT - 2}px">${text}</div>`;
 }
 
 /**
@@ -636,16 +706,17 @@ function draw() {
   Object.assign(o.root.style, {
     left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.width}px`, height: `${rect.height}px`,
   });
-  if (pointer && pointerDirty && state.mode !== MEASURE_MODES.THROW) {
+  const snapping = state.active && state.mode !== MEASURE_MODES.THROW;
+  if (snapping && pointer && pointerDirty) {
     hover = snapAt(pointer);
     pointerDirty = false;
   }
-  if (!pointer || state.mode === MEASURE_MODES.THROW) hover = null;
+  if (!snapping || !pointer) hover = null;
 
   let svg = '';
   const labels = [];
   state.measurements.forEach((m) => {
-    const lit = m.id === state.highlightId;
+    const lit = m.id === state.selectedId || m.id === state.hoverId;
     const colour = lit ? HIGHLIGHT_COLOUR : LINE_COLOUR;
     const width = lit ? 2.5 : 1.5;
     const screens = m.ends.map((end) => toScreen(end.point));
@@ -662,7 +733,6 @@ function draw() {
       text: m.headline,
       id: m.id,
       lit,
-      number: m.number,
     });
   });
 
@@ -679,10 +749,19 @@ function draw() {
     if (p) {
       if (last) {
         const from = toScreen(last.point);
-        const colour = hover.kind === 'axis' ? AXES[hover.axis].colour : HIGHLIGHT_COLOUR;
-        if (from) svg += line(from, p, colour, 1.5, '5 3');
+        if (from && hover.locked) svg += line(from, p, LOCK_COLOUR, 2.5);
+        else if (from) {
+          const colour = hover.kind === 'axis' ? AXES[hover.axis].colour : HIGHLIGHT_COLOUR;
+          svg += line(from, p, colour, 1.5, '5 3');
+        }
       }
-      svg += marker(hover, p);
+      // A locked axis shows the snap its value comes from, joined to the axis.
+      const source = hover.source && toScreen(hover.source.point);
+      if (source) {
+        svg += line(source, p, LOCK_COLOUR, 1, '2 3');
+        svg += marker(hover.source, source);
+      }
+      svg += hover.locked ? dot(p, LOCK_COLOUR, 5) : marker(hover, p);
       let live = hover.label;
       if (last && state.mode === MEASURE_MODES.DISTANCE) {
         live = `${formatLength(last.point.distanceTo(hover.point))} · ${hover.label}`;
@@ -695,12 +774,12 @@ function draw() {
 
   spreadLabels(labels);
   o.svg.innerHTML = svg;
-  o.labels.innerHTML = labels.map((l) => labelHtml(l.text, l.p, l.id, l.lit, l.number)).join('');
+  o.labels.innerHTML = labels.map((l) => labelHtml(l.text, l.p, l.id, l.lit)).join('');
 }
 
 function loop() {
   frame = 0;
-  if (!state.active && !state.measurements.length) {
+  if (!state.active) {
     if (overlay) {
       overlay.svg.innerHTML = '';
       overlay.labels.innerHTML = '';
@@ -737,6 +816,11 @@ function attach(options) {
     },
   };
   options.element.addEventListener('pointerleave', pointerLeave);
+  if (!keysBound) {
+    keysBound = true;
+    window.addEventListener('keydown', modifierKey);
+    window.addEventListener('keyup', modifierKey);
+  }
 }
 
 /**
@@ -772,10 +856,13 @@ function setMode(mode) {
 
 /** @public */
 function clear() {
+  const had = state.measurements.length;
   state.measurements.splice(0);
   state.pending.splice(0);
-  state.highlightId = null;
+  state.selectedId = null;
+  state.hoverId = null;
   state.message = '';
+  if (had) notifyChanged();
 }
 
 /**
@@ -784,29 +871,128 @@ function clear() {
  */
 function remove(id) {
   const at = state.measurements.findIndex((m) => m.id === id);
-  if (at > -1) state.measurements.splice(at, 1);
-  if (state.highlightId === id) state.highlightId = null;
+  if (at > -1) {
+    state.measurements.splice(at, 1);
+    notifyChanged();
+  }
+  if (state.selectedId === id) state.selectedId = null;
+  if (state.hoverId === id) state.hoverId = null;
 }
 
 /**
  * @public
- * @param {Number|null} id
+ * @param {Number|null} id the measurement to select, or null for none
  */
-function highlight(id) {
-  state.highlightId = id;
+function select(id) {
+  state.selectedId = id;
 }
 
 /**
- * The tool's keys while it is on: Escape steps back out, Delete removes the
- * highlighted measurement, A switches between distance and angle, and the
- * arrow keys lock an axis.
+ * @public
+ * @param {Number|null} id the measurement under the pointer in the widget
+ */
+function hoverRow(id) {
+  state.hoverId = id;
+}
+
+/**
+ * Measurements as a project file holds them: numbers only.
+ *
+ * @public
+ * @returns {Array|undefined} undefined when there are none
+ */
+function toJSON() {
+  if (!state.measurements.length) return undefined;
+  const vector = (v) => (v ? [v.x, v.y, v.z] : undefined);
+  return state.measurements.map((m) => ({
+    number: m.number,
+    kind: m.kind,
+    values: { ...m.values },
+    ends: m.ends.map((end) => ({
+      point: vector(end.point),
+      normal: vector(end.normal),
+      dir: vector(end.dir),
+      kind: end.kind,
+      label: end.label,
+      axis: end.axis || undefined,
+    })),
+  }));
+}
+
+/**
+ * Replaces the measurements with a project's. Entries that do not read as a
+ * measurement are skipped.
+ *
+ * @public
+ * @param {Array} [list] as `toJSON` writes it
+ */
+function load(list) {
+  state.measurements.splice(0);
+  state.pending.splice(0);
+  state.selectedId = null;
+  state.hoverId = null;
+  state.message = '';
+  const vector = (a) => (Array.isArray(a) && a.length === 3 && a.every(Number.isFinite)
+    ? new THREE.Vector3(a[0], a[1], a[2]) : null);
+  (Array.isArray(list) ? list : []).forEach((stored) => {
+    if (!stored || !Object.values(MEASURE_MODES).includes(stored.kind)) return;
+    const ends = (stored.ends || []).map((end) => end && vector(end.point) && makeEnd({
+      point: vector(end.point),
+      normal: vector(end.normal),
+      dir: vector(end.dir),
+      kind: String(end.kind || ''),
+      label: String(end.label || ''),
+      axis: end.axis,
+    }));
+    const needed = stored.kind === MEASURE_MODES.ANGLE ? 3 : 2;
+    if (ends.length !== needed || ends.some((end) => !end)) return;
+    const values = {};
+    Object.entries(stored.values || {}).forEach(([key, value]) => {
+      if (Number.isFinite(value)) values[key] = value;
+    });
+    const measurement = {
+      id: nextId,
+      number: Number.isFinite(stored.number) ? stored.number : state.measurements.length + 1,
+      kind: stored.kind,
+      ends: markRaw(ends),
+      values,
+    };
+    nextId += 1;
+    measurement.headline = headline(measurement);
+    state.measurements.push(measurement);
+  });
+  ensureLoop(); // eslint-disable-line no-use-before-define
+}
+
+/**
+ * @public
+ * @param {Function} fn called whenever a measurement is added or removed
+ */
+function onChange(fn) {
+  changed = fn;
+}
+
+/**
+ * The tool's keys. While it is on: Escape steps back out, Delete removes the
+ * selected measurement, A switches between distance and angle, and the arrow
+ * keys lock an axis. While it is off, Delete removes a selected measurement
+ * and Escape deselects it.
  *
  * @public
  * @param {KeyboardEvent} e
  * @returns {Boolean} whether the key was the tool's
  */
 function handleKey(e) {
-  if (!state.active) return false;
+  if (!state.active) {
+    if (state.selectedId === null) return false;
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      remove(state.selectedId);
+      return true;
+    }
+    // Not consumed: Escape also clears the scene selection.
+    if (e.key === 'Escape') state.selectedId = null;
+    return false;
+  }
   if (e.key === 'Escape') {
     if (state.axisLock) state.axisLock = null;
     else if (state.pending.length) state.pending.splice(0);
@@ -814,7 +1000,7 @@ function handleKey(e) {
     return true;
   }
   if (e.key === 'Delete' || e.key === 'Backspace') {
-    if (state.highlightId !== null) remove(state.highlightId);
+    if (state.selectedId !== null) remove(state.selectedId);
     return true;
   }
   if (e.key.toLowerCase() === 'a') {
@@ -838,7 +1024,11 @@ export default {
   setMode,
   clear,
   remove,
-  highlight,
+  select,
+  hoverRow,
+  toJSON,
+  load,
+  onChange,
   click,
   pointerMove,
   handleKey,

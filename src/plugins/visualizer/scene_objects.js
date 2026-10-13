@@ -11,6 +11,7 @@ import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import SceneManager from './scene_manager';
 import primitiveGeometry from './primitive_geometry';
 import { castsContactShadow, standsUp } from './contact_shadows';
+import { addInstancedSource } from './selection_outline';
 
 /**
  * @file Library models placed in the scene, drawn instanced.
@@ -37,8 +38,16 @@ import { castsContactShadow, standsUp } from './contact_shadows';
 /** Placements one model can hold before it needs a bigger buffer. */
 const INITIAL_CAPACITY = 64;
 
+/**
+ * Where the Draco decoder is served from. A packaged build's document is a
+ * file:// page and its assets come over static://, so the decoder takes the
+ * same VITE_STATIC_URL prefix as every other asset; a bare relative path is
+ * refused there as cross-origin.
+ */
+const DRACO_DECODER_PATH = `${import.meta.env.VITE_STATIC_URL}libs/gltf/`;
+
 const dracoLoader = new DRACOLoader();
-dracoLoader.setDecoderPath('libs/gltf/');
+dracoLoader.setDecoderPath(DRACO_DECODER_PATH);
 
 const loader = new GLTFLoader()
   .setCrossOrigin('anonymous')
@@ -337,10 +346,14 @@ function flatten(gltf, fix) {
  *
  * @param {Array} primitives from `flatten`
  * @param {Number} capacity how many placements to make room for
+ * @param {String} key the model's key
+ * @param {THREE.InstancedBufferAttribute} highlight 1 for a selected slot
  * @returns {Array} THREE.InstancedMesh, one per primitive
  */
-function buildMeshes(primitives, capacity, key) {
+function buildMeshes(primitives, capacity, key, highlight) {
   return primitives.map(({ geometry, material }) => {
+    // The geometry belongs to this model alone, so the attribute does too.
+    geometry.setAttribute('highlight', highlight);
     const mesh = new THREE.InstancedMesh(geometry, material, capacity);
     mesh.count = 0;
     // So a raycast hit can be traced back: the hit gives a mesh and an
@@ -489,13 +502,16 @@ async function load(descriptor) {
     primitives.forEach(({ geometry }) => {
       if (geometry.boundingBox) bounds.union(geometry.boundingBox);
     });
+    const highlight = new THREE.InstancedBufferAttribute(new Float32Array(INITIAL_CAPACITY), 1);
     const model = {
       key,
       descriptor,
       primitives,
       /** Local-space extent, for whatever wants to draw a box round one. */
       bounds,
-      meshes: buildMeshes(primitives, INITIAL_CAPACITY, key),
+      /** 1 per selected placement, read by the selection outline. */
+      highlight,
+      meshes: buildMeshes(primitives, INITIAL_CAPACITY, key, highlight),
       capacity: INITIAL_CAPACITY,
       /** One entry per placement, in instance order. */
       placements: [],
@@ -520,7 +536,8 @@ async function load(descriptor) {
 function grow(model) {
   const capacity = model.capacity * 2;
   const previous = model.meshes;
-  model.meshes = buildMeshes(model.primitives, capacity, model.key);
+  model.highlight = new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1);
+  model.meshes = buildMeshes(model.primitives, capacity, model.key, model.highlight);
   model.capacity = capacity;
   previous.forEach((mesh) => {
     SceneManager.remove(mesh);
@@ -542,8 +559,10 @@ function writeInstance(model, index, placement) {
   scratch.position.set(placement.position.x, placement.position.y, placement.position.z);
   scratch.euler.set(placement.rotation.x, placement.rotation.y, placement.rotation.z);
   scratch.quaternion.setFromEuler(scratch.euler);
-  scratch.scale.setScalar(drawnScale(placement));
+  drawnScale(placement);
   scratch.matrix.compose(scratch.position, scratch.quaternion, scratch.scale);
+  model.highlight.setX(index, placement.highlighted ? 1 : 0);
+  model.highlight.needsUpdate = true;
   model.meshes.forEach((mesh) => {
     mesh.setMatrixAt(index, scratch.matrix);
     mesh.count = Math.max(mesh.count, index + 1);
@@ -572,12 +591,29 @@ function writeInstance(model, index, placement) {
  * again is one matrix write. A collapsed instance draws nothing, casts
  * nothing and blocks no light.
  *
+ * Written into `scratch.scale`, which is returned.
+ *
  * @param {Object} placement
- * @returns {Number}
+ * @returns {THREE.Vector3}
  */
 function drawnScale(placement) {
-  if (placement.owner && placement.owner.isHidden) return 0;
-  return placement.scale === undefined ? 1 : placement.scale;
+  if (placement.owner && placement.owner.isHidden) return scratch.scale.setScalar(0);
+  const { scale } = placement;
+  return scratch.scale.set(scale.x, scale.y, scale.z);
+}
+
+/**
+ * A placement's scale as `{ x, y, z }`, from a number or an object.
+ *
+ * @param {Object|Number} [scale]
+ * @returns {Object}
+ */
+function scaleVector(scale) {
+  if (scale !== null && typeof scale === 'object') {
+    return { x: scale.x ?? 1, y: scale.y ?? 1, z: scale.z ?? 1 };
+  }
+  const all = scale === undefined ? 1 : Number(scale) || 1;
+  return { x: all, y: all, z: all };
 }
 
 /**
@@ -595,7 +631,7 @@ async function place(descriptor, transform = {}) {
     index: model.placements.length,
     position: { x: 0, y: 0, z: 0, ...(transform.position || {}) },
     rotation: { x: 0, y: 0, z: 0, ...(transform.rotation || {}) },
-    scale: transform.scale === undefined ? 1 : transform.scale,
+    scale: scaleVector(transform.scale),
   };
   if (placement.index >= model.capacity) grow(model);
   model.placements.push(placement);
@@ -615,7 +651,7 @@ function move(placement, transform = {}) {
   if (!model) return;
   Object.assign(placement.position, transform.position || {});
   Object.assign(placement.rotation, transform.rotation || {});
-  if (transform.scale !== undefined) placement.scale = transform.scale;
+  if (transform.scale !== undefined) placement.scale = scaleVector(transform.scale);
   writeInstance(model, placement.index, placement);
 }
 
@@ -702,18 +738,39 @@ function eachSelectable(visit) {
 }
 
 /**
- * Clears any highlight this renderer draws.
+ * Marks a placement selected or not, for the selection outline.
  *
- * A no-op today: an object's selection is the shared outline box and the
- * gizmo, neither of which belongs to this module, so there is no per-instance
- * state to reset. It exists so the renderer registry can call it without
- * checking, and so that the day an object gets a highlight material nobody has
- * to remember to add it to a list -- which is exactly how this renderer came
- * to be missing from band selection and from `sceneBounds`.
+ * @public
+ * @param {Object} placement returned by `place`
+ * @param {Boolean} state
+ */
+function setHighlighted(placement, state) {
+  const model = placement && models.get(placement.model);
+  placement.highlighted = !!state; // eslint-disable-line no-param-reassign
+  if (!model || placement.index < 0) return;
+  model.highlight.setX(placement.index, state ? 1 : 0);
+  model.highlight.needsUpdate = true;
+}
+
+/**
+ * Clears every placement's highlight.
  *
  * @public
  */
-function clearHighlighting() {}
+function clearHighlighting() {
+  models.forEach((model) => {
+    model.placements.forEach((placement) => setHighlighted(placement, false));
+  });
+}
+
+// The outline draws the meshes of every model with a placement selected.
+addInstancedSource(() => {
+  const out = [];
+  models.forEach((model) => {
+    if (model.placements.some((placement) => placement.highlighted)) out.push(...model.meshes);
+  });
+  return out;
+});
 
 function pickObjects() {
   const out = [];
@@ -767,7 +824,7 @@ function syncFromOwners() {
       dummy.updateMatrixWorld();
       dummy.getWorldPosition(scratch.position);
       dummy.getWorldQuaternion(scratch.quaternion);
-      scratch.scale.setScalar(drawnScale(placement));
+      drawnScale(placement);
       scratch.matrix.compose(scratch.position, scratch.quaternion, scratch.scale);
       model.meshes.forEach((mesh) => {
         mesh.setMatrixAt(index, scratch.matrix);
@@ -851,6 +908,7 @@ export default {
   buildPreview,
   eachSelectable,
   clearHighlighting,
+  setHighlighted,
   load,
   place,
   move,

@@ -658,6 +658,23 @@ function ownerOf(fixture) {
 }
 
 /**
+ * The mode a fixture exports, as its profile lists it: channels by name.
+ *
+ * A GDTF fixture's own mode holds channel objects; its listing holds the same
+ * mode with the names. An OFL fixture's own mode already is the listed one.
+ *
+ * @public
+ * @param {Object} fixture
+ * @returns {Object} `{ name, channels }`
+ */
+export function exportMode(fixture) {
+  const listed = fixture.fixtureType && fixture.OFLData
+    ? (fixture.OFLData.modes || []).find((m) => m.name === fixture.modeName)
+    : null;
+  return listed || fixture.mode || {};
+}
+
+/**
  * How a fixture's definition is identified, its owner included.
  *
  * The kind is part of the key because a group and a structure may share an id
@@ -702,7 +719,7 @@ export function showDefinitions(fixtures, manufacturerName = (slug) => slug) {
 
   fixtures.forEach((fixture) => {
     if (!fixture || !fixture.OFLData) return;
-    const mode = fixture.mode || {};
+    const mode = exportMode(fixture);
     const modeName = fixture.modeName || mode.name || '';
     const model = `${fixture.manufacturer}/${fixture.model}`;
     const key = definitionKey(fixture);

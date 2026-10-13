@@ -13,6 +13,13 @@ import { withoutLedBarChannels, expandLedBarProfile } from './generic/led_bar';
 export const SHOW_SCOPE = 'This show';
 
 /**
+ * What the screen calls that scope. `SHOW_SCOPE` is part of every key a saved
+ * project holds for its own definitions, so its value cannot change; only the
+ * label does.
+ */
+export const SHOW_SCOPE_LABEL = 'This project';
+
+/**
  * The key a working name is stored under.
  *
  * @public
@@ -168,7 +175,7 @@ class DefinitionStore {
    * @param {String} [title] the folder's name
    * @returns {Array} zero or one manufacturer-shaped entries
    */
-  list(title = 'This show') {
+  list(title = SHOW_SCOPE_LABEL) {
     if (!this.size) return [];
     return [{
       name: title,

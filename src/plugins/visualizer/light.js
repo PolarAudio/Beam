@@ -8,9 +8,10 @@ import Shutter, { SHUTTER_MODES } from './shutter';
 import { kelvinToRgb } from '../../models/DMX/colour_temperature';
 import { hazeShaderPrelude, hazeUniforms } from './haze_noise';
 import LightField, {
-  CANDELA_PER_UNIT, REFERENCE_INTENSITY, REFERENCE_LUMENS, SCENE_INTENSITY_PER_UNIT,
+  CANDELA_PER_UNIT, REFERENCE_INTENSITY, REFERENCE_LUMENS, SCENE_INTENSITY_PER_UNIT, LUX_SCALE,
 } from './light_field';
 import { castsContactShadow } from './contact_shadows';
+import Shapers, { bladePlanes, SHAPER_GLSL } from './shapers';
 import { DepthAtlas } from './projector_depth';
 import {
   goboTexture, goboLayerFor, goboImageCell, GOBO_BLUR_LEVELS,
@@ -83,6 +84,19 @@ const BEAM_TOP_RADIUS = 0.09;
  * @constant {Number}
  */
 const LENS_DARK = 0.05;
+
+/**
+ * The most a lens face is drawn at, in scene units. A lit face is the
+ * light's peak candela over the lens's area, on the lux scale: tens of
+ * thousands of times anything else in the frame, which is why a lens glares
+ * in any camera. Held at half the half-float frame's largest value, 65504, so
+ * a face with glare added on it never overflows. High enough that faces keep
+ * their ratio: a 25 W LED bar comes to about 700 and a 300 W spot's lens
+ * reaches the cap, where a cap of 1000 drew both the same.
+ *
+ * @constant {Number}
+ */
+const LENS_FACE_MAX = 30000;
 /** Scratch for the lens colour write. */
 const lensColor = new THREE.Color();
 /**
@@ -102,6 +116,30 @@ const BEAM_MAX_ANGLE = 80;
  * way round.
  */
 const WHEEL_SLOTS_PER_SECOND = 7.5;
+
+/**
+ * How a gobo wheel settles when it reaches a slot: momentum carries it past,
+ * and the slack in the drive lets it ring back and forth before it stops,
+ * which moves the gobo a little along its arc and turns it a little with
+ * the wheel. Amplitude in slots, the ring's rate in Hz, its decay's time
+ * constant in seconds.
+ */
+const WHEEL_SETTLE = { amplitude: 0.05, rate: 7, decay: 0.06 };
+
+/**
+ * How far the gate travels along the gobo wheel's arc for one slot, in field
+ * radii: the slot circle's radius times the turn per slot, for the 100 mm
+ * wheel the shaders take every wheel to be (GOBO_WHEEL_RADIUS and GOBO_STEP
+ * in beam.fragment.glsl).
+ */
+const GOBO_SLOT_ARC = 3.04 * 0.7759;
+
+/**
+ * The shape of a shake: the swing's sine raised to this power, sign kept.
+ * Under 1 the wheel dashes across the middle and hangs at each end, as a
+ * stepper drive throws it; 1 is a plain sine.
+ */
+const SHAKE_SHAPE = 0.4;
 
 /**
  * Colours for colour-wheel slots a profile names but gives no value, by the
@@ -170,14 +208,40 @@ function gelColour(slot) {
  */
 const GOBO_DEFOCUS_MAX = GOBO_BLUR_LEVELS - 1;
 
-/**
- * The penumbra a focus channel sweeps, fully in to fully out. Not from the
- * profile: OFL states no edge softness, so these are Beam's. Focused is
- * nearly a hard edge, as a well-focused spot throws; out is soft to the
- * middle of the radius.
- */
-const PENUMBRA_FOCUSED = 0.05;
+/** The edge under full frost: all falloff, from the axis out. */
 const PENUMBRA_DEFOCUSED = 1.0;
+
+/**
+ * The nearest a lens focuses, in metres; the farthest is infinity. A focus
+ * channel runs between them evenly in 1 / distance, as a focus ring does.
+ *
+ * Focus is a distance: the lens images the gate there, and everything nearer
+ * or farther is blurred by the lens radius times |1 - distance / focus|. The
+ * blur is the whole of defocus -- the pool's edge, the gobo's sharpness and
+ * the shape of the beam in the air, which narrows from the lens onto the
+ * image at the focus and widens past it.
+ */
+const FOCUS_NEAR = 1;
+
+/**
+ * The nearest surface whose blur the pool's cone test allows for, in metres:
+ * the blur's angle grows without bound towards the lens, and nothing a pool
+ * lands on is nearer than this.
+ */
+const BLUR_REACH_NEAR = 0.5;
+
+/**
+ * From how far out a depth tile holds the lens's blur, in metres.
+ *
+ * Nearer the lens the blur's angle keeps growing, and holding it costs the
+ * tile its resolution: a narrow beam from a big lens would spread its 128
+ * texels over ten times its own width. From 2 m the same beam's tile is
+ * about three times its width, and a tile of an ordinary spot barely grows.
+ * Inside 2 m the blurred fringe outside the tile still passes what stands in
+ * it, which is rarely anything. Must match `DEPTH_BLUR_NEAR` in the beam
+ * shader.
+ */
+const DEPTH_BLUR_NEAR = 2;
 
 /**
  * How much wider full frost makes the beam: the field's half angle times
@@ -210,6 +274,17 @@ const MOVER_DEPTH = new DepthAtlas({
 });
 
 /**
+ * Slots at the top of the atlas kept for area lights -- displays -- so their
+ * shadows read through the same tiles and code as a pool's. A mover whose id
+ * lands here gets no tile, as one past the end of the atlas does.
+ */
+const AREA_DEPTH_SLOTS = 16;
+const FIRST_AREA_SLOT = MOVER_DEPTH.maxProjections - AREA_DEPTH_SLOTS;
+
+/** Sources that ask for an area tile: `depthRequest(near, far)`, `setDepthSlot(slot, rect)`. */
+const areaDepthSources = [];
+
+/**
  * How many tiles may be redrawn in one frame.
  *
  * One head panning dirties the scene for every tile, so a chase across two
@@ -221,12 +296,9 @@ const MOVER_DEPTH = new DepthAtlas({
 const DEPTH_TILE_BUDGET = 4;
 
 /**
- * How much wider than the beam's own cone its tile looks, as a ratio of the
- * half-angle's tangent.
- *
- * The cone starts at the lens ring rather than at a point, so close to the
- * lens its edge sits outside the stated angle. Samples that fall outside the
- * tile are taken as lit; the margin keeps that to the first metre or so.
+ * How much wider than everything the beam lights its tile looks, as a ratio
+ * of the half-angle's tangent: room for the texels at the tile's edge, which
+ * the depth test and the soft shadow read. See `tileTanHalf`.
  */
 const DEPTH_FOV_MARGIN = 1.2;
 
@@ -250,13 +322,14 @@ let occlusionEnabled = true;
 /**
  * The haze's scattering coefficient at full haze, per metre.
  *
- * Full haze is a thick stage haze with 10 m visibility. Visibility is where
- * contrast falls to 2 %, so the coefficient is ln(50) / 10 m; a lower haze
- * setting scales it linearly. The same coefficient sets how much light the
+ * Full haze is a thick concert haze with 50 m visibility, across which
+ * beams still read in an arena. Visibility is where contrast falls to 2 %,
+ * so the coefficient is ln(50) / 50 m; a lower haze setting scales it
+ * linearly. The same coefficient sets how much light the
  * air scatters out of a beam towards the eye and how fast the beam is
  * eaten on its way.
  */
-const HAZE_SCATTER_AT_FULL = Math.log(50) / 10;
+export const HAZE_SCATTER_AT_FULL = Math.log(50) / 50;
 
 /**
  * The beam fragment shader, with the scene's haze configuration prepended.
@@ -267,7 +340,10 @@ const HAZE_SCATTER_AT_FULL = Math.log(50) / 10;
  *
  * @constant {String}
  */
-const BEAM_FRAGMENT_SHADER = hazeShaderPrelude() + VOLUMETRIC_BEAM_FRAGMENT_SHADER;
+const BEAM_FRAGMENT_SHADER = `${hazeShaderPrelude()}
+uniform sampler2D shaperTable;
+${SHAPER_GLSL}
+${VOLUMETRIC_BEAM_FRAGMENT_SHADER}`;
 
 const SPOTLIGHT_PHYSICALLY_CORRECT_DISTANCE = 0;
 /**
@@ -299,14 +375,18 @@ const PLAUSIBLE_LUMENS_PER_WATT = [5, 150];
 /** Light spreads as the inverse square of the distance. */
 const SPOTLIGHT_PHYSICALLY_CORRECT_DECAY = 2.0;
 /**
- * The pool's penumbra for a fixture without a focus channel. A focus
- * channel sweeps its own range, `PENUMBRA_DEFOCUSED` to `PENUMBRA_FOCUSED`.
+ * The edge of a light whose file does not describe one: the falloff from
+ * the inner cone to the field, as a fraction of the field's radius. A file
+ * with a beam angle (half) inside its field angle (a tenth) sets its own,
+ * see `headInputs`; the lens's blur then softens it with distance.
  *
- * Shapes the beam in the air as well, through `writeBeamProfile`. Half:
- * a plateau to the middle of the radius, a slope from there to the edge.
- * At 1.2 the plateau was only the inner fifth and two overlapping pools
- * summed to a saddle the eye drew as dark curves along each rim; a wide
- * plateau adds flat, which is what two blurred discs do in an image editor.
+ * Shapes the pool and the beam in the air alike, through `writeBeamProfile`.
+ * Half: a plateau to the middle of the radius, a slope from there to the
+ * edge. At 1.2 the plateau was only the inner fifth and two overlapping
+ * pools summed to a saddle the eye drew as dark curves along each rim. A
+ * cliff edge (0.01) was tried for every lens with a focus channel: it drew
+ * each beam as a flat slab, and where two slabs met at a beam-width's
+ * spacing the end of one stood as a dark line against the other.
  */
 const SPOTLIGHT_PHYSICALLY_CORRECT_PENUMBRA = 0.5;
 /** Per-light shadow map resolution. Every casting light costs one depth pass. */
@@ -439,6 +519,8 @@ let baseMesh;
 let yokeMesh;
 let headMesh;
 let beamMesh;
+/** Scratch for the clear colour round the halo's draw. */
+const haloClearColor = new THREE.Color();
 let capMesh;
 /** The lens faces a file draws as rectangles; the same slots as `capMesh`. */
 let rectCapMesh;
@@ -850,16 +932,27 @@ class Light {
      * when there is one; without a wheel the prism has three.
      */
     /**
-     * How blurred the gobo image is from the focus, in mip levels of the
-     * pattern: 0 in focus. Carried in the prism data's spare slot.
+     * How blurred the gobo image is by frost, in mip levels of the pattern:
+     * 0 without. Carried in the prism data's spare slot. Focus blurs the
+     * gobo through the lens's own blur in the shaders, not here.
      */
-    this._goboDefocus = Light.goboDefocusFor(SPOTLIGHT_PHYSICALLY_CORRECT_PENUMBRA);
+    this._goboDefocus = 0;
+    /**
+     * The edge the fixture's file describes, or the default; see
+     * `profilePenumbra`. What the frost softens from.
+     */
+    this._profilePenumbra = Light.profilePenumbra(data.edgePenumbra);
     /**
      * The lens before frost: the field's half angle from the zoom, and the
-     * penumbra from the focus. Frost is applied over both; see `applyLensAngle` and `applyLensEdge`.
+     * edge from the profile. Frost is applied over both; see `applyLensAngle` and `applyLensEdge`.
      */
     this._baseAngle = null;
-    this._basePenumbra = SPOTLIGHT_PHYSICALLY_CORRECT_PENUMBRA;
+    this._basePenumbra = this._profilePenumbra;
+    /**
+     * Where the lens is focused, as 1 / distance in 1/m: 0 is infinity,
+     * which is where a lens that cannot be focused is taken to be.
+     */
+    this._invFocus = 0;
     /**
      * Frost, 0 none to 1 full, from a frost channel or a frost slot on a
      * wheel; `_frostWheel` names the wheel that set it. `_frostEffect` is a
@@ -877,6 +970,13 @@ class Light {
      */
     this._iris = 1;
     this._irisWheel = null;
+    /**
+     * Framing blades, `{ a, b, rot }` each, and the shaper's rotation in
+     * degrees. See shapers.js. Empty for a light without them.
+     */
+    this._blades = [];
+    this._shaperRotation = 0;
+    this.writeBlades();
     this._prism = {
       on: false, facets: PRISM_DEFAULT_FACETS, linear: false, angle: 0, speedRpm: 0,
     };
@@ -913,8 +1013,13 @@ class Light {
      */
     this._body = data.body || null;
     this._bodyScale = this._body ? 1 : Light.bodyScaleFor(data.bodyHeight);
-    /** How wide the lens is against the shipped one's; see `mountBody`. */
-    this._lensScale = this._bodyScale;
+    /**
+     * How wide the lens is against the shipped one's: the file's stated lens
+     * where the shipped body is drawn, else as the body scales; a file's own
+     * body sets it in `mountBody`.
+     */
+    this._lensScale = !this._body && data.lensRadius > 0
+      ? data.lensRadius / BEAM_TOP_RADIUS : this._bodyScale;
     /** Whether the lens face is a rectangle rather than a disc. */
     this._rectLens = false;
     /** Where the body reaches below the origin, and the pick box; see `mountBody`. */
@@ -941,10 +1046,39 @@ class Light {
     // or not they changed.
     if (this._writtenMatrices) this._writtenMatrices.forEach((m) => m.elements.fill(NaN));
     this._matrixNeedsUpdate = true;
+    this.rewriteSlot();
+    this.writeBlades();
   }
 
   get id() {
     return this._id;
+  }
+
+  /**
+   * Writes everything this light keeps in the per-instance buffers into its
+   * slot.
+   *
+   * The buffers are indexed by slot, and a light moved down one by a deletion
+   * carries none of it along: the slot it lands in holds the optics of the
+   * light that was there until something rewrites them. Intensity, lens colour,
+   * position and direction are written every frame and need nothing here.
+   *
+   * @private
+   */
+  rewriteSlot() {
+    if (this._color) {
+      color_buffer_attribute.setXYZ(this._id, this._color.r, this._color.g, this._color.b);
+      color_buffer_attribute.needsUpdate = true;
+      this.writeColorB();
+    }
+    if (Number.isFinite(this._angle)) {
+      angle_buffer_attribute.setX(this._id, this._angle);
+      angle_buffer_attribute.needsUpdate = true;
+    }
+    emissive_buffer_attribute.setX(this._id, this._highlighted ? 1.0 : 0.0);
+    emissive_buffer_attribute.needsUpdate = true;
+    // The focus and inner cone, then the gobos, prism and iris.
+    this.applyLensEdge();
   }
 
   /**
@@ -990,7 +1124,16 @@ class Light {
    */
   updateLensColor() {
     const lit = this.intensity;
-    lensColor.copy(this.color).multiplyScalar(lit);
+    // The face's radiance on the frame's scale: candela over the lens area,
+    // times lux per scene unit, as a lit surface's value is.
+    const area = Math.PI * this.lensRadius * this.lensRadius;
+    const candela = Light.peakCandela(
+      this._lumens,
+      this._spotLight.angle,
+      this._spotLight.penumbra,
+    );
+    const radiance = Math.min((candela / Math.max(area, 1e-4)) * LUX_SCALE, LENS_FACE_MAX);
+    lensColor.copy(this.color).multiplyScalar(lit * radiance);
     lensColor.r += LENS_DARK * (1 - lit);
     lensColor.g += LENS_DARK * (1 - lit);
     lensColor.b += LENS_DARK * (1 - lit);
@@ -1222,9 +1365,12 @@ class Light {
    * otherwise.
    *
    * @public
-   * @param {Object} inputs optionally `{ minAngle, maxAngle, lumens }`
+   * @param {Object} inputs optionally `{ minAngle, maxAngle, edgePenumbra, lumens }`
    */
   setModeInputs(inputs) {
+    if (inputs.edgePenumbra !== undefined) {
+      this._profilePenumbra = Light.profilePenumbra(inputs.edgePenumbra);
+    }
     this.resetOptics();
     if (inputs.minAngle > 0 && inputs.maxAngle > 0) {
       this._minAngle = inputs.minAngle;
@@ -1257,10 +1403,14 @@ class Light {
     };
     this._iris = 1;
     this._irisWheel = null;
+    this._blades = [];
+    this._shaperRotation = 0;
+    this.writeBlades();
     this._frostWheel = null;
     this._frostEffect = null;
     this.applyFrost(0);
-    this._basePenumbra = SPOTLIGHT_PHYSICALLY_CORRECT_PENUMBRA;
+    this._basePenumbra = this._profilePenumbra;
+    this._invFocus = 0;
     this.applyLensEdge();
     this.strobeEffect = 'Open';
     this.strobeRandom = false;
@@ -1385,7 +1535,7 @@ class Light {
   }
 
   /**
-   * Writes the edge and the gobo blur, the focus's softened by the frost.
+   * Writes the edge and the gobo blur, the profile's softened by the frost.
    * Full frost is a fully soft edge, and a gobo blurred past the atlas's
    * softest level and on into its mean, so the pattern is gone and only its
    * share of the light is left. The blur carries that as defocus past
@@ -1396,10 +1546,9 @@ class Light {
   applyLensEdge() {
     const f = this._frost;
     const penumbra = this._basePenumbra + (PENUMBRA_DEFOCUSED - this._basePenumbra) * f;
-    const defocus = Light.goboDefocusFor(this._basePenumbra);
     this._spotLight.penumbra = penumbra;
-    this._goboDefocus = defocus + (GOBO_DEFOCUS_MAX + 1 - defocus) * f;
-    Light.writeBeamProfile(this._id, penumbra);
+    this._goboDefocus = (GOBO_DEFOCUS_MAX + 1) * f;
+    Light.writeBeamProfile(this._id, penumbra, this._invFocus);
     this.writeOptics();
   }
 
@@ -1475,25 +1624,15 @@ class Light {
   }
 
   /**
-   * Focus, 0 fully out to 100 fully in.
-   *
-   * One penumbra, written to two renderers: the SpotLight's, which softens
-   * the pool of light this fixture throws on to surfaces, and the visible
-   * shaft's in `beam.fragment.glsl`, whose falloff is the same curve so the
-   * air and the pool end at the same place with the same edge.
+   * A focus channel, 0 to 100: the lens's nearest focus to infinity, evenly
+   * in 1 / distance, as a focus ring turns.
    *
    * @type {Number}
    */
   set focus(focus) {
-    // The whole channel sweeps the edge from fully soft to nearly hard, on
-    // its own range rather than down from the no-channel default: tied to
-    // that, lowering the default to cure overlapping pools shrank the sweep
-    // to almost nothing.
     const dial = Math.min(Math.max(Number(focus) || 0, 0), 100) / 100;
-    const penumbra = PENUMBRA_DEFOCUSED + (PENUMBRA_FOCUSED - PENUMBRA_DEFOCUSED) * dial;
-    this._basePenumbra = penumbra;
     this._focus = focus;
-    this.applyLensEdge();
+    this.setInvFocus((1 - dial) / FOCUS_NEAR);
     (this._lamps || []).forEach((lamp) => { lamp.focus = focus; });
   }
 
@@ -1502,20 +1641,78 @@ class Light {
   }
 
   /**
-   * Puts a fixture's radial falloff into the instance buffer: the inner
-   * cone, as a fraction of the field, inside which the beam is full.
+   * A lens focused by hand: the distance it is focused at, in metres, held
+   * to the lens's nearest.
    *
-   * The same number three derives from the SpotLight's penumbra for the
-   * pool, `angle * (1 - penumbra)` over `angle`. A penumbra past 1 folds
-   * over rather than clamping to nothing, exactly as three's cosine does,
-   * so the default 1.2 gives a full core out to a fifth of the radius.
+   * @type {Number}
+   */
+  set focusDistance(metres) {
+    const distance = Number(metres);
+    this.setInvFocus(distance > 0 ? 1 / Math.max(distance, FOCUS_NEAR) : 0);
+    (this._lamps || []).forEach((lamp) => { lamp.focusDistance = metres; });
+  }
+
+  get focusDistance() {
+    return this._invFocus > 0 ? 1 / this._invFocus : Infinity;
+  }
+
+  /**
+   * Focuses the lens, as 1 / distance. The edge keeps the profile's shape;
+   * the lens's blur, from the focus, is what sharpens or softens it with
+   * distance.
+   *
+   * @private
+   * @param {Number} invFocus 1/m, 0 infinity
+   */
+  setInvFocus(invFocus) {
+    this._invFocus = invFocus;
+    this.applyLensEdge();
+  }
+
+  /**
+   * The edge a light is built with: the file's, where it states one, else
+   * the default. A penumbra past 1 would fold over in three's cosine space
+   * as well as in the shaders, so it stops at all falloff.
+   *
+   * @private
+   * @param {Number} [stated] from `headInputs`, null where the file gives none
+   * @returns {Number}
+   */
+  static profilePenumbra(stated) {
+    return Number.isFinite(stated)
+      ? Math.min(Math.max(stated, 0), PENUMBRA_DEFOCUSED)
+      : SPOTLIGHT_PHYSICALLY_CORRECT_PENUMBRA;
+  }
+
+  /**
+   * The lens's radius, in metres: where the beam leaves it and what its blur
+   * is measured in.
+   *
+   * @readonly
+   * @type {Number}
+   */
+  get lensRadius() {
+    return BEAM_TOP_RADIUS * this._lensScale;
+  }
+
+  /**
+   * Puts a fixture's radial falloff and its focus into the instance buffer:
+   * the inner cone, as a fraction of the field, inside which the beam is full
+   * before the lens's blur, and the focus as 1 / distance.
+   *
+   * The inner cone is the number three derives from the SpotLight's penumbra
+   * for the pool, `angle * (1 - penumbra)` over `angle`. A penumbra past 1
+   * folds over rather than clamping to nothing, exactly as three's cosine
+   * does.
    *
    * @public
    * @param {Number} id instance id
    * @param {Number} penumbra the SpotLight's, 0 a hard edge, 1 all falloff
+   * @param {Number} [invFocus] 1 / focus distance, 1/m; 0 infinity
    */
-  static writeBeamProfile(id, penumbra) {
+  static writeBeamProfile(id, penumbra, invFocus = 0) {
     const inner = Math.min(Math.abs(1 - penumbra), 0.99);
+    angle_buffer_attribute.setY(id, invFocus);
     angle_buffer_attribute.setZ(id, inner);
     angle_buffer_attribute.needsUpdate = true;
   }
@@ -1533,6 +1730,7 @@ class Light {
     u.sceneDepth.value = texture;
     u.cameraNear.value = camera.near;
     u.cameraFar.value = camera.far;
+    u.cameraOrtho.value = !!camera.isOrthographicCamera;
   }
 
   /**
@@ -1558,9 +1756,12 @@ class Light {
         slot: 0,
         position: 0,
         angle: 0,
-        // A gobo shake in progress, or null: `{ rate, amplitude, onSlot,
-        // phase, offset }`; see `setWheelShake`.
+        // A gobo shake in progress, or null: `{ rate, amplitude, phase,
+        // offset }`; see `setWheelShake`.
         shake: null,
+        // A gobo wheel ringing as it settles on the slot it reached, or
+        // null: `{ slot, t, direction }`; see `WHEEL_SETTLE`.
+        settle: null,
         speedRpm: 0,
         wheelSpeedRpm: 0,
       };
@@ -1642,15 +1843,17 @@ class Light {
   }
 
   /**
-   * Shakes a wheel on one of its slots: the gobo swings quickly to and fro
-   * about its place, the whole wheel rocking, or, where the profile says the
-   * slot shakes, the gobo turning to and fro in its holder. Speed is the
-   * fixture's slow to fast; the swing is the profile's angle where it gives
-   * one.
+   * Shakes a wheel on one of its slots: the whole wheel rocks, so the gobo
+   * swings quickly to and fro along its arc about its place, turning with
+   * the wheel. That is a shake whether the profile says the slot or the wheel
+   * shakes: a gobo turning in its holder reads as a wobble, not a shake.
+   * Speed is the fixture's slow to fast; the swing is the file's amplitude
+   * or the profile's angle where it gives one.
    *
    * @public
    * @param {String} wheelName
-   * @param {Object} values `{ slotNumber, shakeSpeed, shakeAngle, isShaking }`
+   * @param {Object} values `{ slotNumber, shakeSpeed, rate, shakeAmplitude, shakeAngle }`,
+   *   the amplitude the peak swing in percent of the image
    */
   setWheelShake(wheelName, values) {
     const wheel = this._wheels[wheelName];
@@ -1665,17 +1868,18 @@ class Light {
     const rate = Number.isFinite(values.rate)
       ? Math.max(values.rate, 0)
       : range.min + (Math.min(Math.max(percent, 0), 100) / 100) * (range.max - range.min);
-    const onSlot = values.isShaking === 'slot';
     const degrees = Number.isFinite(values.shakeAngle) && values.shakeAngle > 0
       ? values.shakeAngle : null;
-    // Rocking the wheel, the swing is a share of a slot: the profile's angle
-    // as a share of the wheel's turn, else a fifth of a slot. Turning in the
-    // holder, the swing is an angle: the profile's, else 20 degrees.
+    // The swing as a share of a slot: the file's amplitude, a share of the
+    // image two field radii across, over the gate's travel per slot; else
+    // the profile's angle as a share of the wheel's turn; else a fifth.
     let amplitude = degrees ? (degrees / 360) * wheel.slots.length : 0.2;
-    if (onSlot) amplitude = Light.degToRad(degrees || 20);
+    if (Number.isFinite(values.shakeAmplitude) && values.shakeAmplitude > 0) {
+      amplitude = ((values.shakeAmplitude / 100) * 2) / GOBO_SLOT_ARC;
+    }
     const phase = wheel.shake ? wheel.shake.phase : 0;
     wheel.shake = {
-      rate, amplitude, onSlot, phase, offset: 0,
+      rate, amplitude, phase, offset: 0,
     };
     this.writeOptics();
   }
@@ -1724,24 +1928,6 @@ class Light {
   }
 
   /**
-   * The gobo blur the focus gives, in baked blur levels: the same penumbra that
-   * softens the pool's edge, from `PENUMBRA_FOCUSED` to `PENUMBRA_DEFOCUSED`,
-   * mapped onto 0 to `GOBO_DEFOCUS_MAX` levels. Focus and the image go
-   * together on a real fixture; turning it sharpens the pattern.
-   *
-   * @private
-   * @param {Number} penumbra
-   * @returns {Number}
-   */
-  static goboDefocusFor(penumbra) {
-    const t = Math.min(Math.max(
-      (penumbra - PENUMBRA_FOCUSED) / (PENUMBRA_DEFOCUSED - PENUMBRA_FOCUSED),
-      0,
-    ), 1);
-    return t * GOBO_DEFOCUS_MAX;
-  }
-
-  /**
    * How much wider than the field the cone is drawn: 1, or 1 plus the
    * prism's spread while a prism is in the beam. The vertex shader derives
    * the same number from the prism attribute.
@@ -1751,6 +1937,27 @@ class Light {
    */
   get drawnSpread() {
     return this._prism.on && this._prism.facets >= 2 ? 1 + this._prismSpread : 1;
+  }
+
+  /**
+   * The tangent of the depth tile's half field of view.
+   *
+   * A sample outside the tile counts as lit, so the tile has to hold
+   * everything the beam lights: the field, widened by a prism's spread, and
+   * the lens's blur on top of it, which spreads the edge by the lens radius
+   * times |1/z - 1/focus| in angle. A tile of the field alone let a short
+   * focus, or a big lens on a narrow beam, through every wall around the
+   * edge. The blur's angle grows without bound towards the lens, so it is
+   * held from `DEPTH_BLUR_NEAR` out. The beam shader computes the same
+   * number and the pool reads it from the record.
+   *
+   * @readonly
+   * @type {Number}
+   */
+  get tileTanHalf() {
+    const blur = this.lensRadius
+      * Math.max(Math.abs(1 / DEPTH_BLUR_NEAR - this._invFocus), this._invFocus);
+    return (Math.tan(Light.degToRad(this._angle)) * this.drawnSpread + blur) * DEPTH_FOV_MARGIN;
   }
 
   /**
@@ -1764,6 +1971,81 @@ class Light {
     this._iris = Math.min(Math.max(open, 0), 1);
     this._irisWheel = null;
     this.writeOptics();
+  }
+
+  /**
+   * Sets one end or the rotation of a framing blade, from a shaper channel.
+   *
+   * @public
+   * @param {Number} n the blade, from 1
+   * @param {String} part 'A' or 'B', the insertion of that end 0..1, or
+   *   'Rot', the blade's rotation in degrees
+   * @param {Number} value
+   */
+  setBlade(n, part, value) {
+    const index = Math.floor(Number(n)) - 1;
+    if (!(index >= 0) || !Number.isFinite(value)) return;
+    while (this._blades.length <= index) this._blades.push({ a: 0, b: 0, rot: 0 });
+    const blade = this._blades[index];
+    if (part === 'A') {
+      blade.a = value;
+    } else if (part === 'B') {
+      blade.b = value;
+      blade.hasB = true;
+    } else if (part === 'Rot') {
+      blade.rot = value;
+    } else {
+      return;
+    }
+    this.writeBlades();
+  }
+
+  /**
+   * Turns every blade about the axis, from a shaper rotation channel.
+   *
+   * @public
+   * @param {Number} degrees
+   */
+  setShaperRotation(degrees) {
+    if (!Number.isFinite(degrees)) return;
+    this._shaperRotation = degrees;
+    this.writeBlades();
+  }
+
+  /**
+   * Writes the blades into this light's row of the shaper table, which the
+   * beam and the pool both read.
+   *
+   * @private
+   */
+  writeBlades() {
+    if (!(this._id >= 0) || !this._blades) return;
+    const planes = bladePlanes(this._blades, this._shaperRotation);
+    Shapers.write(this._id, planes.filter((plane, n) => Light.bladeIn(this._blades[n])));
+  }
+
+  /**
+   * Whether a blade is in the light. A blade fully out lies on the field's
+   * edge, and the lens blur and the lens's own width carry light past that
+   * edge, so it would cut the pool's side straight and pinch the beam at the
+   * lens; out, it cuts nothing.
+   *
+   * @private
+   * @param {Object} blade `{ a, b, rot, hasB }`
+   * @returns {Boolean}
+   */
+  static bladeIn(blade) {
+    return blade.a > 0 || (blade.hasB && blade.b > 0) || !!blade.rot;
+  }
+
+  /**
+   * Whether any blade is in the light.
+   *
+   * @private
+   * @returns {Boolean}
+   */
+  bladesIn() {
+    return this._blades.some(Light.bladeIn);
   }
 
   /**
@@ -1833,15 +2115,13 @@ class Light {
       if (!count) return;
       let travelled = false;
       if (wheel.shake) {
-        // Swinging about the slot. Rocking the wheel moves its position,
-        // which the slide draws; turning in the holder moves the gobo's
-        // angle, which `goboPack` adds on.
+        // Rocking about the slot: the wheel's position swings, and the
+        // shaders carry the gobo along its arc with it, in SHAKE_SHAPE.
         const { shake } = wheel;
         shake.phase = (shake.phase + shake.rate * Math.PI * 2 * dt) % (Math.PI * 2);
-        shake.offset = shake.amplitude * Math.sin(shake.phase);
-        wheel.position = shake.onSlot
-          ? wheel.slot
-          : (((wheel.slot + shake.offset) % count) + count) % count;
+        const swing = Math.sin(shake.phase);
+        shake.offset = shake.amplitude * Math.sign(swing) * Math.abs(swing) ** SHAKE_SHAPE;
+        wheel.position = (((wheel.slot + shake.offset) % count) + count) % count;
         travelled = true;
       } else if (wheel.wheelSpeedRpm !== 0) {
         // Scrolling: the whole wheel turns, the target going with it.
@@ -1849,13 +2129,34 @@ class Light {
         wheel.position = ((wheel.position % count) + count) % count;
         wheel.slot = wheel.position;
         travelled = true;
+      } else if (wheel.settle && wheel.settle.slot === wheel.slot) {
+        // Arrived, and ringing about the slot: past it in the direction it
+        // came, back, and smaller each time.
+        const { settle } = wheel;
+        settle.t += dt;
+        let ring = 0;
+        if (settle.t < WHEEL_SETTLE.decay * 6) {
+          ring = WHEEL_SETTLE.amplitude * settle.direction
+            * Math.exp(-settle.t / WHEEL_SETTLE.decay)
+            * Math.sin(Math.PI * 2 * WHEEL_SETTLE.rate * settle.t);
+        } else {
+          wheel.settle = null;
+        }
+        wheel.position = (((wheel.slot + ring) % count) + count) % count;
+        travelled = true;
       } else if (wheel.position !== wheel.slot) {
-        // Travelling to a chosen slot, the shorter way round.
+        // Travelling to a chosen slot, the shorter way round. A gobo wheel
+        // settles when it gets there.
+        wheel.settle = null;
         let d = wheel.slot - wheel.position;
         d = (((d % count) + count * 1.5) % count) - count / 2;
         const step = WHEEL_SLOTS_PER_SECOND * dt;
-        if (Math.abs(d) <= step) wheel.position = wheel.slot;
-        else wheel.position = (((wheel.position + Math.sign(d) * step) % count) + count) % count;
+        if (Math.abs(d) <= step) {
+          wheel.position = wheel.slot;
+          if (wheel.kind === 'gobo') wheel.settle = { slot: wheel.slot, t: 0, direction: Math.sign(d) };
+        } else {
+          wheel.position = (((wheel.position + Math.sign(d) * step) % count) + count) % count;
+        }
         travelled = true;
       }
       if (travelled) {
@@ -1917,8 +2218,7 @@ class Light {
       const whole = Math.floor(wheel.position);
       const frac = wheel.position - whole;
       const index = ((whole % count) + count) % count;
-      const angle = wheel.angle
-        + (wheel.shake && wheel.shake.onSlot ? wheel.shake.offset : 0);
+      const { angle } = wheel;
       if (n === 0 && frac > 0.001 && frac < 0.999) {
         pack[0] = Light.goboPatternAt(wheel, index) + frac;
         pack[1] = angle;
@@ -2640,12 +2940,7 @@ class Light {
     const cam = this._depthCam;
     cam.matrixWorld.compose(lensPosition, rigidQuaternion, depthScale).multiply(depthBasis);
     cam.matrixWorldInverse.copy(cam.matrixWorld).invert();
-    // Wide enough for the whole drawn cone, which a prism widens by its
-    // spread: a sample outside the tile counts as lit, so a tile narrower
-    // than the cone would let the prism's copies through every wall.
-    const tanHalf = Math.tan(Light.degToRad(this._angle))
-      * DEPTH_FOV_MARGIN * this.drawnSpread;
-    cam.fov = 2 * Math.atan(tanHalf) * (180 / Math.PI);
+    cam.fov = 2 * Math.atan(this.tileTanHalf) * (180 / Math.PI);
     cam.aspect = 1;
     cam.near = MOVER_DEPTH.near;
     cam.far = MOVER_DEPTH.far;
@@ -2653,13 +2948,37 @@ class Light {
   }
 
   /**
+   * Adds an area light that wants a depth tile; it takes a slot at the top of
+   * the atlas.
+   *
+   * @public
+   * @param {Object} source `depthRequest(near, far)` and `setDepthSlot(slot, rect)`
+   */
+  static addAreaDepthSource(source) {
+    if (!areaDepthSources.includes(source)) areaDepthSources.push(source);
+  }
+
+  /**
+   * @public
+   * @param {Object} source
+   */
+  static removeAreaDepthSource(source) {
+    const at = areaDepthSources.indexOf(source);
+    if (at > -1) areaDepthSources.splice(at, 1);
+  }
+
+  /**
    * Draws each lit beam's view of the scene into its tile, within the frame's
-   * budget, and tells the beams which tiles are theirs.
+   * budget, and tells the beams which tiles are theirs. Area lights take the
+   * slots at the top of the atlas.
    *
    * Dark beams submit nothing: a tile no one can see is not worth a pass.
-   * Priority is how much the beam matters on screen -- its intensity, how
-   * near it is, and how far it has turned since its tile was drawn -- so a
-   * chase spends the budget on the beams the eye is on.
+   * Dark is the dimmer at nought, not the shutter closed: a strobe is closed
+   * between flashes, and a tile dropped then is missing on the frame the
+   * flash lights, which goes through every surface. Priority is how much the
+   * beam matters on screen -- its dimmer, how near it is, and how far it has
+   * turned since its tile was drawn -- so a chase spends the budget on the
+   * beams the eye is on.
    *
    * @public
    * @param {Object} renderer THREE.WebGLRenderer
@@ -2669,6 +2988,7 @@ class Light {
     if (!beamMesh || !beamMesh.material || !beamMesh.material.uniforms) return;
     const u = beamMesh.material.uniforms;
     if (!occlusionEnabled) {
+      areaDepthSources.forEach((source) => source.setDepthSlot(-1, null));
       instances.forEach((instance) => depth_slot_attribute.setX(instance._id, -1));
       depth_slot_attribute.needsUpdate = true;
       return;
@@ -2677,17 +2997,45 @@ class Light {
     const projections = [];
     instances.forEach((instance) => {
       const id = instance._id;
-      if (id >= MOVER_DEPTH.maxProjections || instance.intensity <= 0 || instance._hidden) return;
+      const dimmer = instance._intensity || 0;
+      if (id >= FIRST_AREA_SLOT || dimmer <= 0 || instance._hidden) return;
       instance.updateDepthCamera();
       instance._beamDummy.getWorldDirection(vector_beam);
       const turned = 1 - Math.max(vector_beam.dot(instance._depthDir), 0);
       const distance = Math.max(vector_cam_pos.distanceTo(lensPosition), 1);
       projections[id] = {
         camera: instance._depthCam,
-        priority: (instance.intensity / distance) * (1 + 4 * turned),
+        priority: (dimmer / distance) * (1 + 4 * turned),
       };
     });
+    // Area lights after the movers, each in a slot of its own from the top.
+    const areaSlots = [];
+    areaDepthSources.forEach((source) => {
+      const slot = FIRST_AREA_SLOT + areaSlots.length;
+      const request = slot < MOVER_DEPTH.maxProjections
+        ? source.depthRequest(MOVER_DEPTH.near, MOVER_DEPTH.far) : null;
+      if (!request) {
+        source.setDepthSlot(-1, null);
+        return;
+      }
+      projections[slot] = request;
+      areaSlots.push([source, slot]);
+    });
     const drawn = MOVER_DEPTH.render(renderer, scene, projections, DEPTH_TILE_BUDGET);
+    areaSlots.forEach(([source, slot]) => {
+      if (!MOVER_DEPTH.hasTile(slot)) {
+        source.setDepthSlot(-1, null);
+        return;
+      }
+      const column = slot % MOVER_DEPTH.columns;
+      const row = Math.floor(slot / MOVER_DEPTH.columns);
+      source.setDepthSlot(slot, new THREE.Vector4(
+        column / MOVER_DEPTH.columns,
+        row / MOVER_DEPTH.rows,
+        1 / MOVER_DEPTH.columns,
+        1 / MOVER_DEPTH.rows,
+      ));
+    });
     drawn.forEach((slot) => {
       const instance = instances[slot];
       if (instance) instance._beamDummy.getWorldDirection(instance._depthDir);
@@ -2709,6 +3057,53 @@ class Light {
     LightField.uniforms.lightFieldDepthBias.value = DEPTH_BIAS;
     LightField.uniforms.lightFieldDepthTile.value = MOVER_DEPTH.tile;
     LightField.uniforms.lightFieldGobo.value = goboTexture();
+  }
+
+  /**
+   * Draws the beams as the source of their halo into the target: the light
+   * they scatter out in every direction, distance in alpha. The same mesh,
+   * the same uniforms, drawn a second time into a small target; see
+   * beam_halo.js.
+   *
+   * @public
+   * @param {THREE.WebGLRenderer} renderer
+   * @param {THREE.Camera} camera the view
+   * @param {THREE.WebGLRenderTarget} target where it goes
+   * @param {Number} fragScale full-frame pixels per target pixel
+   * @returns {Boolean} whether there were beams to draw
+   */
+  static renderHaloSource(renderer, camera, target, fragScale) {
+    if (!beamMesh || !beamMesh.count) return false;
+    const { material } = beamMesh;
+    const { uniforms } = material;
+    const debug = uniforms.debugTerm.value;
+    const blending = [material.blending, material.blendSrc, material.blendDst,
+      material.blendSrcAlpha, material.blendDstAlpha];
+    // Plain sums, alpha included: alpha carries luminance times distance, and
+    // additive blending would multiply the colour by it.
+    material.blending = THREE.CustomBlending;
+    material.blendSrc = THREE.OneFactor;
+    material.blendDst = THREE.OneFactor;
+    material.blendSrcAlpha = THREE.OneFactor;
+    material.blendDstAlpha = THREE.OneFactor;
+    uniforms.haloSource.value = true;
+    uniforms.fragScale.value = fragScale;
+    uniforms.debugTerm.value = 0;
+
+    const clearColor = renderer.getClearColor(haloClearColor);
+    const clearAlpha = renderer.getClearAlpha();
+    renderer.setRenderTarget(target);
+    renderer.setClearColor(0x000000, 0);
+    renderer.clear(true, false, false);
+    renderer.render(beamMesh, camera);
+    renderer.setClearColor(clearColor, clearAlpha);
+
+    [material.blending, material.blendSrc, material.blendDst,
+      material.blendSrcAlpha, material.blendDstAlpha] = blending;
+    uniforms.haloSource.value = false;
+    uniforms.fragScale.value = 1;
+    uniforms.debugTerm.value = debug;
+    return true;
   }
 
   /**
@@ -3059,6 +3454,8 @@ class Light {
         // and a surface it lights are on the same exposure.
         beamUnits: { value: SPOTLIGHT_PHYSICALLY_CORRECT_INTENSITY },
         hazeScatter: { value: HAZE_SCATTER_AT_FULL },
+        haloSource: { value: false },
+        fragScale: { value: 1 },
         // Which shader term the debug panel is drawing instead of the beam.
         debugTerm: { value: 0 },
         glowFactor: {
@@ -3075,12 +3472,17 @@ class Light {
         },
         // Every gobo pattern, one texture array layer each.
         goboAtlas: { value: goboTexture() },
+        // Every light's framing blades, a row each; see shapers.js.
+        shaperTable: { value: Shapers.texture },
         // What each beam's own lens sees, from `renderDepth`.
         depthAtlas: { value: null },
         depthColumns: { value: MOVER_DEPTH.columns },
         depthRows: { value: MOVER_DEPTH.rows },
         depthFar: { value: MOVER_DEPTH.far },
         depthBias: { value: DEPTH_BIAS },
+        cameraOrtho: {
+          value: false,
+        },
         cameraNear: {
           type: 'f',
           value: 0.01,
@@ -3108,8 +3510,13 @@ class Light {
       // the surface fade reads the scene's depth, and this sits exactly where
       // the beam starts. It is a lens face, not an obstacle.
       depthWrite: false,
-      side: THREE.DoubleSide,
+      // The face emits forwards only: seen from behind, wherever the housing
+      // does not cover it, it would show at the lens's full brightness.
+      side: THREE.FrontSide,
     });
+    // Something a reflection can meet, though it writes no depth: see
+    // reflections.js.
+    capMaterial.userData.reflectionTarget = true;
 
     capGeometry.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 0, LENS_FACE_OFFSET));
 
@@ -3163,6 +3570,18 @@ class Light {
     boundingBoxMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     boundingBoxMesh.instanceMatrix.needsUpdate = true;
     boundingBoxMesh.visible = false;
+  }
+
+  /**
+   * The camera the beams are seen through, when the view swaps between
+   * perspective and orthographic.
+   *
+   * @public
+   * @static
+   * @param {THREE.Camera} camera
+   */
+  static setCamera(camera) {
+    camera_handle = camera;
   }
 
   static prepareInstanciation(camera, scene) {
@@ -3236,6 +3655,7 @@ class Light {
       this._goboDefocus,
     );
     record.iris = this._iris;
+    record.shaperRow = this._blades && this.bladesIn() ? this._id : -1;
 
     // The beam's depth tile, so the pool stops where the beam does. The slot
     // is last frame's, written by `renderDepth` after the field is read,
@@ -3257,8 +3677,16 @@ class Light {
       record.tileOrigin.copy(lensPosition);
       record.axisX.set(1, 0, 0).applyQuaternion(rigidQuaternion);
       record.axisY.set(0, 1, 0).applyQuaternion(rigidQuaternion);
-      record.tanHalf = Math.tan(Light.degToRad(this._angle))
-        * DEPTH_FOV_MARGIN * this.drawnSpread;
+      record.tanHalf = this.tileTanHalf;
+      // The lens's blur, which the pool takes at each surface's distance. It
+      // spreads the edge past the field by the lens radius times
+      // |1/distance - 1/focus| in angle, so the cone test reaches that far
+      // for any surface from `BLUR_REACH_NEAR` out.
+      record.lensRadius = this.lensRadius;
+      record.invFocus = this._invFocus;
+      const reach = Math.tan(outer)
+        + record.lensRadius * (1 / BLUR_REACH_NEAR + this._invFocus);
+      record.cosReach = Math.cos(Math.atan(reach));
     }
     return true;
   }
@@ -3435,6 +3863,8 @@ class Light {
  * is built, so there is nothing to catch up on.
  */
 function syncEnvironment() {
+  LightField.uniforms.lightFieldExtinction.value = SceneEnv.hazeEnabled
+    ? HAZE_SCATTER_AT_FULL * SceneEnv.hazeAmount : 0;
   if (!beamMesh || !beamMesh.material || !beamMesh.material.uniforms) return;
   const { uniforms } = beamMesh.material;
   uniforms.fogState.value = SceneEnv.hazeEnabled;

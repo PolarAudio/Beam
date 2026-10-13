@@ -24,12 +24,19 @@ const DEFAULTS = {
    * machine. Opening a show on another computer is the normal case.
    *
    * Restored on startup, so a project full of video panels comes up connected
-   * instead of black until someone opens Preferences > Video. Reconnecting to a
+   * instead of black until someone opens the Video inputs window. Reconnecting to a
    * sender the user themselves chose here is not opening a receiver behind
    * their back -- it is honouring the setting, the same way Art-Net input
    * being enabled is honoured.
    */
   videoSource: '',
+  /**
+   * Which NDI sender fills each NDI input on this machine, by the input's
+   * uid. A sender's name means nothing on another computer, so this is a
+   * setting, not show data. `videoSource` above is read once, to bind the
+   * input an older show opens with.
+   */
+  videoBindings: {},
   globalFoggingState: 1,
   /**
    * Haze intensity, as a percentage.
@@ -55,15 +62,25 @@ const DEFAULTS = {
    */
   globalFoggingTurbulences: 33,
   /**
-   * Global brightness with the house lights up. The scene keeps two, because
-   * looking at a rig and looking at a show want different rooms, and the one
-   * you are not in should not have to be dialled back every time.
+   * House light with the house lights up, in lux on a white floor. The scene
+   * keeps two, because looking at a rig and looking at a show want different
+   * rooms, and the one you are not in should not have to be dialled back.
    */
-  globalBrightness: 100,
-  /** Global brightness with the house lights down. */
-  brightnessHouseOff: 30,
+  houseLuxUp: 300,
+  /** House light with the house lights down, in lux on a white floor. */
+  houseLuxDown: 6,
+  /**
+   * Camera exposure with the house lights up and down, as EV at ISO 100. A
+   * lit room and a dark show want different exposures; each is fixed.
+   */
+  houseEVUp: 7,
+  houseEVDown: 6.5,
   /** Which of the two is in force. */
   houseLights: true,
+  /** Whether the window stays above other applications. */
+  stayOnTop: false,
+  /** Whether glossy surfaces reflect what is on screen. */
+  reflections: true,
   /**
    * Environment image lighting the room, one per house-lights state.
    *
@@ -102,10 +119,13 @@ const DEFAULTS = {
   /** Whether the frame timings and the shader tuning panel are on screen. */
   debug: false,
   /**
-   * Whether a channel's ranges are shown beside its DMX value while the value
-   * is being changed, where they can also be picked from.
+   * What sender mode speaks: `'sacn'` (multicast) or `'artnet'`. The mode
+   * itself is never stored -- every launch receives -- but the protocol and
+   * target are facts about this machine's rig.
    */
-  channelRangeGuide: true,
+  dmxSendProtocol: 'sacn',
+  /** Where Art-Net goes in sender mode; broadcast when empty. */
+  dmxSendTarget: '',
   /** Scene background, as a hex string. Matches SceneManager's own default. */
   backgroundColor: '#0C0D0A',
   /**

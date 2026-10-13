@@ -50,7 +50,7 @@ Beam is a fork of **[ASLS Studio](https://github.com/ASLS-org/studio)** by Timé
 Patch fixtures from a built-in library (XML fixture definitions parsed via `xml2js`), assign DMX addresses and operating modes. Troubleshoot DMX issues.
 
 #### Fixture Grouping
-Fixtures from different universes can be combined into logical groups. Groups are the unit of cue programming: scenes and effects are defined at the group level and can span the show's entire rig.
+Fixtures from different universes can be combined into logical groups. Groups are the unit of cue programming: scenes and effects are defined at the group level and can span the entire rig.
 
 #### Reusable custom structures
 Group your reusable creations and store it as a structure for later re-use or when you require several of them.
@@ -132,15 +132,9 @@ npm run dist:win
 
 ---
 
-## Streaming to Hardware
+## DMX in and out
 
-Beam sends live show data using the **[WSC (Web Show Control)](https://github.com/ASLS-org/WSC)** protocol — a compact, binary, transport-agnostic protocol designed for real-time control of performance and show systems.
-
-WSC carries multiple message types over a single connection: bulk channel data (DMX universes), linear timecode (SMPTE/MTC), cue lifecycle commands (GO, STOP, PAUSE…), typed parameter writes, and opaque binary tunnels to downstream systems. Every packet includes a Transport Descriptor that tells the gateway which downstream protocol to use — so the browser never needs to know about the physical layer.
-
-The reference gateway (`@asls/wsc-server`) runs as a Node.js process alongside Beam and translates incoming WSC packets to the appropriate downstream protocol. Forwarding targets include Art-Net, sACN, DMX512, MIDI, MIDI Show Control, MIDI Timecode, OSC, and others.
-
-Refer to the [WSC repository](https://github.com/ASLS-org/WSC) and its JavaScript implementation guide for gateway setup instructions.
+Beam receives Art-Net (UDP 6454) and sACN (UDP 5568) and drives the visualizer from it. **Edit → Preferences → DMX → Mode** switches it to Send, which puts the fixtures' own values on the wire as sACN multicast or Art-Net, so a real fixture can be tested with the same controls. Lasers are fed over Ponk, IDN, Ether Dream or LaserCube; Beam answers on the network as the device, so the sending software needs nothing installed. Desktop app only: browsers cannot do UDP.
 
 ---
 
@@ -153,8 +147,8 @@ Refer to the [WSC repository](https://github.com/ASLS-org/WSC) and its JavaScrip
 | 3D Visualizer | [Three.js](https://threejs.org/) r170 + WebGL 2.0 + GLSL + [postprocessing](https://github.com/pmndrs/postprocessing) |
 | Build Tool | [Vite](https://vitejs.dev/) |
 | Desktop Shell | [Electron](https://www.electronjs.org/) v41 via `electron-vite` + `electron-builder` |
-| Show Output | [WSC](https://github.com/ASLS-org/WSC) via `@asls/wsc-client` / `@asls/wsc-sdk` |
-| Fixture Definitions | XML parsing via `xml2js` |
+| DMX and lasers | Art-Net, sACN, Ponk, IDN, Ether Dream and LaserCube over UDP in the Electron main process |
+| Fixture Definitions | GDTF (zip via `fflate`, XML via `DOMParser`) and Open Fixture Library JSON |
 | Event Bus | `mitt` |
 
 ---
@@ -163,9 +157,9 @@ Refer to the [WSC repository](https://github.com/ASLS-org/WSC) and its JavaScrip
 
 Contributions of all kinds are welcome — bug reports, feature requests, fixture library additions, documentation improvements, and code.
 
-1. **Fork** the repository and create a branch off `develop`.
-2. Make your changes and test them locally (`npm start`).
-3. Open a **Pull Request** against `develop` with a clear description of the change and why.
+1. **Fork** the repository and create a branch off `master`.
+2. Make your changes and test them locally (`npm run electron:start`, `npm test`).
+3. Open a **Pull Request** against `master` with a clear description of the change and why.
 
 For larger changes or new features, come and say so on [Discord](https://discord.gg/9EJqb4Kpwf) first — it is easier to align on direction there than in a pull request that has already been written.
 

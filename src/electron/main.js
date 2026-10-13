@@ -18,10 +18,14 @@ import {
   is,
   optimizer,
 } from '@electron-toolkit/utils';
+import fs from 'fs';
 import path from 'path';
+import { Readable } from 'stream';
 import icon from '../assets/images/beam_logo.png?asset';
 import artnet from './artnet';
 import sacn from './sacn';
+import sacnSender from './sacn_sender';
+import artnetSender from './artnet_sender';
 import LaserHub, { addresses as laserAddresses } from './laser_hub';
 import jsonstore from './jsonstore';
 import library from './library';
@@ -30,6 +34,7 @@ import documentstore from './documentstore';
 import projectexport from './projectexport';
 import videorecorder from './videorecorder';
 import environmentstore from './environmentstore';
+import mediastore from './mediastore';
 import gdtfstore from './gdtfstore';
 import gdtfshare from './gdtfshare';
 import fileexport from './fileexport';
@@ -85,6 +90,50 @@ process.on('unhandledRejection', (err) => {
 process.env.ELECTRON_ENABLE_LOGGING = '1';
 process.env.ELECTRON_ENABLE_STACK_DUMPING = '1';
 
+/** Content types for the video files `serveRange` answers for. */
+const VIDEO_TYPES = {
+  '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm',
+};
+
+/**
+ * Answers a request for a video file, honouring a byte range.
+ *
+ * A video element reads in ranges to seek, to loop and to find an index
+ * written at the end of the file; a protocol that only ever answers with the
+ * whole file leaves some files unplayable and none of them seekable.
+ *
+ * @param {Request} request
+ * @param {String} target absolute path, already resolved and contained
+ * @returns {Response}
+ */
+function serveRange(request, target) {
+  const { size } = fs.statSync(target);
+  const type = VIDEO_TYPES[path.extname(target).toLowerCase()] || 'application/octet-stream';
+  const headers = new Headers({
+    'Accept-Ranges': 'bytes',
+    'Access-Control-Allow-Origin': '*',
+    'Content-Type': type,
+  });
+  const wanted = /^bytes=(\d*)-(\d*)$/.exec(request.headers.get('Range') || '');
+  if (!wanted || (!wanted[1] && !wanted[2])) {
+    headers.set('Content-Length', String(size));
+    return new Response(Readable.toWeb(fs.createReadStream(target)), { status: 200, headers });
+  }
+  // `bytes=-n` is the last n bytes; `bytes=a-` runs to the end.
+  let start = wanted[1] ? Number(wanted[1]) : Math.max(size - Number(wanted[2]), 0);
+  let end = wanted[1] && wanted[2] ? Number(wanted[2]) : size - 1;
+  end = Math.min(end, size - 1);
+  if (start > end || start >= size) {
+    headers.set('Content-Range', `bytes */${size}`);
+    return new Response(null, { status: 416, headers });
+  }
+  start = Math.max(start, 0);
+  headers.set('Content-Range', `bytes ${start}-${end}/${size}`);
+  headers.set('Content-Length', String(end - start + 1));
+  const body = Readable.toWeb(fs.createReadStream(target, { start, end }));
+  return new Response(body, { status: 206, headers });
+}
+
 protocol.registerSchemesAsPrivileged([
   {
     // Models the user dropped into their library, served as files. A .glb is
@@ -99,6 +148,8 @@ protocol.registerSchemesAsPrivileged([
       secure: true,
       supportFetchAPI: true,
       corsEnabled: true,
+      // A video element reads its file in ranges, to seek and to loop.
+      stream: true,
     },
   },
   {
@@ -282,6 +333,17 @@ function createWindow() {
   // still exist, and `closed` has already destroyed it.
   mainWindow.on('close', persistWindowState);
 
+  // Full screen can be left by the system as well as from the page, so the
+  // page is told whenever it changes. The event says which way: inside its
+  // handler `isFullScreen` still reports the state before the change.
+  const tellFullScreen = (on) => () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('window:full-screen', on);
+    }
+  };
+  mainWindow.on('enter-full-screen', tellFullScreen(true));
+  mainWindow.on('leave-full-screen', tellFullScreen(false));
+
   // electron-vite sets ELECTRON_RENDERER_URL while `dev` is running. In dev we
   // load the live Vite dev server (http origin, assets over http); when packaged
   // we load the built index and serve assets over the `static://` protocol.
@@ -356,8 +418,15 @@ function setupArtnet() {
    * transfer.
    */
   let framePort = null;
+  /**
+   * Whether Beam is the sender. Inbound frames are then held back from the
+   * renderer -- the fixtures keep what the panels set -- while the receivers
+   * go on recording who is sending, so a second sender can be named.
+   */
+  let sending = false;
 
   const forward = (batch) => {
+    if (sending) return;
     if (framePort) {
       try {
         framePort.postMessage(batch);
@@ -410,6 +479,28 @@ function setupArtnet() {
     sources: [...artnet.sourceReport(), ...sacn.sourceReport()],
     conflicts: sacn.conflicts(),
   }));
+
+  // Sender mode: Beam drives the wire from its own fixture values, on one
+  // protocol at a time.
+  let sender = null;
+  ipcMain.handle('dmx:set-sending', (_event, enabled, opts = {}) => {
+    if (sender) sender.stop();
+    sender = null;
+    sending = !!enabled;
+    if (sending) {
+      if (opts.protocol === 'artnet') {
+        sender = artnetSender;
+        sender.start({ target: opts.target });
+      } else {
+        sender = sacnSender;
+        sender.start({ multicastInterface: sacn.multicastInterface });
+      }
+    }
+    return sending;
+  });
+  ipcMain.on('dmx:send', (_event, universe, data) => {
+    if (sending && sender) sender.send(universe, data);
+  });
 
   // Start listening immediately — a visualizer's whole job is to receive. Both
   // protocols at once: they are different sockets writing one address space,
@@ -514,6 +605,8 @@ function setupLibrary() {
   // Environment images. Listed rather than browsed: the renderer picks a name
   // out of the library, and `objectstore.resolve` turns that name into a file.
   ipcMain.handle('library:environments', () => environmentstore.list());
+  ipcMain.handle('library:media', () => mediastore.list());
+  ipcMain.handle('library:addMedia', () => mediastore.add(mainWindow));
   // The dialog is attached to the window so it is modal to Beam rather than
   // floating loose, which is how every other file prompt here behaves.
   ipcMain.handle('library:addEnvironment', () => environmentstore.add(mainWindow));
@@ -603,6 +696,21 @@ function setupDocumentStore() {
   ipcMain.on('app:claimSplash', (event) => {
     event.returnValue = splashUnclaimed;
     splashUnclaimed = false;
+  });
+
+  // The window's full screen and stay on top, from the View menu. Each
+  // answers with the state the window is in afterwards.
+  ipcMain.handle('window:set-full-screen', (_event, on) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    mainWindow.setFullScreen(Boolean(on));
+    return Boolean(on);
+  });
+  ipcMain.handle('window:is-full-screen', () => Boolean(mainWindow
+    && !mainWindow.isDestroyed() && mainWindow.isFullScreen()));
+  ipcMain.handle('window:set-always-on-top', (_event, on) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    mainWindow.setAlwaysOnTop(Boolean(on));
+    return mainWindow.isAlwaysOnTop();
   });
 }
 
@@ -713,6 +821,7 @@ app.whenReady().then(() => {
     const url = new URL(request.url);
     const target = objectstore.resolve(decodeURIComponent(`${url.host}${url.pathname}`));
     if (!target) return new Response('Not found', { status: 404 });
+    if (mediastore.kindOf(target) === 'video') return serveRange(request, target);
     const response = await net.fetch(`file://${target}`);
     const headers = new Headers(response.headers);
     headers.set('Access-Control-Allow-Origin', '*');
@@ -752,6 +861,8 @@ app.on('before-quit', () => {
 app.on('window-all-closed', () => {
   artnet.stop();
   sacn.stop();
+  sacnSender.stop();
+  artnetSender.stop();
   laserHub.stop();
   app.quit();
 });

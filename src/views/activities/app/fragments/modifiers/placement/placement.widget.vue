@@ -1,6 +1,7 @@
 <template>
   <uk-widget
     class="placement_widget position_tool"
+    :class="{ position_tool_scaled: scalable }"
     dockable
     :header="{ title, icon: 'move' }"
   >
@@ -78,6 +79,56 @@
             label="Rotation Z"
           />
         </uk-flex>
+        <!-- A model from a file is sized along its own axes, in metres. A
+             created shape is sized by its own dimensions instead, and a
+             fixture keeps its size. -->
+        <uk-flex
+          v-if="scalable"
+          col
+          :gap="8"
+        >
+          <uk-num-input
+            v-model="sizeX"
+            :disabled="locked || !sized"
+            color="var(--axis-x-field)"
+            :precision="2"
+            :min="0.01"
+            :max="1000"
+            label="Length (X)"
+          />
+          <uk-num-input
+            v-model="sizeY"
+            :disabled="locked || !sized"
+            color="var(--axis-y-field)"
+            :precision="2"
+            :min="0.01"
+            :max="1000"
+            label="Width (Y)"
+          />
+          <uk-num-input
+            v-model="sizeZ"
+            :disabled="locked || !sized"
+            color="var(--axis-z-field)"
+            :precision="2"
+            :min="0.01"
+            :max="1000"
+            label="Height (Z)"
+          />
+        </uk-flex>
+      </uk-flex>
+      <uk-flex
+        v-if="scalable && sized"
+        :gap="8"
+        class="position_tool_model"
+      >
+        <span class="position_tool_note">Model: {{ modelSizeText }}</span>
+        <uk-button
+          icon="undo"
+          label="original size"
+          title="Put the model back to its own size"
+          :disabled="locked || originalSize"
+          @click="restoreSize"
+        />
       </uk-flex>
       <p
         v-if="locked"
@@ -101,6 +152,9 @@ const AXES = {
   rotX: ['rotation', 'x'],
   rotY: ['rotation', 'y'],
   rotZ: ['rotation', 'z'],
+  sizeX: ['size', 'x'],
+  sizeY: ['size', 'y'],
+  sizeZ: ['size', 'z'],
 };
 
 export default {
@@ -156,8 +210,9 @@ export default {
           if (!this.fixture) return 0;
           const [side, axis] = AXES[name];
           const live = Controls.liveTransform(this.fixture);
-          if (live) return Number(live[side][axis].toFixed(2));
-          return this.fixture[name];
+          if (live && live[side]) return Number(live[side][axis].toFixed(2));
+          const value = this.fixture[name];
+          return typeof value === 'number' ? Number(value.toFixed(2)) : value;
         },
         set(value) {
           if (this.fixture) this.fixture[name] = value;
@@ -177,6 +232,39 @@ export default {
      */
     locked() {
       return !!(this.fixture && this.fixture.locked);
+    },
+    /**
+     * Whether the subject scales by axis.
+     *
+     * @property {Boolean} scalable
+     */
+    scalable() {
+      return !!(this.fixture && this.fixture.isScalable);
+    },
+    /**
+     * The model's own size, once it has loaded.
+     *
+     * @property {Object|null} modelSize
+     */
+    modelSize() {
+      // eslint-disable-next-line no-unused-expressions
+      this.liveTick;
+      return this.scalable ? this.fixture.modelSize : null;
+    },
+    /** Whether the model has loaded, so has a size to show and set. */
+    sized() {
+      return !!this.modelSize;
+    },
+    /** The model's own size, as read under the fields. */
+    modelSizeText() {
+      const s = this.modelSize;
+      return s ? `${s.x.toFixed(2)} × ${s.y.toFixed(2)} × ${s.z.toFixed(2)} m` : '';
+    },
+    /** Whether the model is already at its own size. */
+    originalSize() {
+      // eslint-disable-next-line no-unused-expressions
+      this.liveTick;
+      return !!(this.fixture && this.fixture.isOriginalSize);
     },
     /**
      * Why the fields are greyed out, named so it can be acted on.
@@ -199,6 +287,14 @@ export default {
     EventBus.off('transform_changed', this.queueLiveRead);
   },
   methods: {
+    /**
+     * Puts the model back to its own size.
+     *
+     * @public
+     */
+    restoreSize() {
+      if (this.fixture) this.fixture.restoreSize();
+    },
     /**
      * Schedules one re-read per frame.
      *
@@ -225,6 +321,10 @@ export default {
   max-width: 170px;
   min-width: 170px;
 }
+.position_tool.position_tool_scaled {
+  max-width: 255px;
+  min-width: 255px;
+}
 .position_tool_body {
   height: 100%;
   width: 100%;
@@ -233,6 +333,16 @@ export default {
 .position_tool > :deep(.body) {
   /* The note wraps, and a nowrap ancestor would keep it on one clipped line. */
   white-space: normal;
+}
+.position_tool_model {
+  flex-wrap: wrap;
+  align-items: center;
+}
+.position_tool_note {
+  font-family: Roboto-Regular;
+  font-size: 11px;
+  color: var(--secondary-lighter-alt);
+  white-space: nowrap;
 }
 .position_tool_locked {
   font-family: Roboto-Regular;

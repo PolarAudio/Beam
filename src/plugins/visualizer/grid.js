@@ -70,8 +70,11 @@ const DEFAULT_OPACITY = 0.4;
  */
 const DEFAULT_LINE_WIDTH_PX = 0.3;
 
-/** A cool grey that reads against both the light and the dark venue. */
-const DEFAULT_COLOR = '#7d858e';
+/**
+ * Near white, as seen after the exposure: the default floor is dark grey with
+ * the house lights up or down, so light lines contrast in both.
+ */
+const DEFAULT_COLOR = '#e6e9ed';
 
 class InfiniteGridHelper extends THREE.Mesh {
   /**
@@ -82,6 +85,18 @@ class InfiniteGridHelper extends THREE.Mesh {
    */
   constructor(unit = 1, color = null, distance = 100, axes = 'xzy') {
     const planeAxes = axes.substr(0, 2);
+    const normalAxis = axes.substr(2, 1);
+    // Where the grid is centred: under the camera, or, orthographic, where the
+    // view's axis meets the plane -- the camera there stands well back, and
+    // its own place is off to one side of what is on screen.
+    const anchor = /* glsl */`
+        vec3 gridAnchor() {
+          if (!isOrthographic) return cameraPosition;
+          vec3 forward = -vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2]);
+          if (abs(forward.${normalAxis}) < 1e-3) return cameraPosition;
+          return cameraPosition + forward * (-cameraPosition.${normalAxis} / forward.${normalAxis});
+        }
+    `;
     const geometry = new THREE.PlaneGeometry(2, 2, 1, 1);
 
     const material = new THREE.ShaderMaterial({
@@ -99,15 +114,16 @@ class InfiniteGridHelper extends THREE.Mesh {
         uDistance: { value: distance },
         uOpacity: { value: DEFAULT_OPACITY },
         uLineWidth: { value: DEFAULT_LINE_WIDTH_PX },
+        uExposure: { value: 1 },
       },
       vertexShader: /* glsl */`
         varying vec3 worldPosition;
         uniform float uDistance;
-
+${anchor}
         void main() {
           // The plane is carried along under the camera, so it never runs out.
           vec3 pos = position.${axes} * uDistance;
-          pos.${planeAxes} += cameraPosition.${planeAxes};
+          pos.${planeAxes} += gridAnchor().${planeAxes};
           worldPosition = pos;
           gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
         }
@@ -120,6 +136,8 @@ class InfiniteGridHelper extends THREE.Mesh {
         uniform float uDistance;
         uniform float uOpacity;
         uniform float uLineWidth;
+        uniform float uExposure;
+${anchor}
 
         /** Antialiased coverage of the lines of a grid of this cell size. */
         float gridCoverage(float size) {
@@ -175,18 +193,23 @@ class InfiniteGridHelper extends THREE.Mesh {
 
           // Gone before the plane's own edge, so the grid ends in nothing
           // rather than in a visible rim.
-          float d = distance(cameraPosition.${planeAxes}, worldPosition.${planeAxes});
+          float d = distance(gridAnchor().${planeAxes}, worldPosition.${planeAxes});
           a *= 1.0 - smoothstep(uDistance * 0.35, uDistance * 0.95, d);
 
           a *= uOpacity;
           if (a <= 0.002) discard;
-          gl_FragColor = vec4(uColor, a);
+          // Divided by the camera's exposure, which the tone curve applies to
+          // the whole frame afterwards, so the lines keep their colour at any EV.
+          gl_FragColor = vec4(uColor / uExposure, a);
         }
       `,
     });
 
     super(geometry, material);
     this.frustumCulled = false;
+    this.onBeforeRender = (renderer) => {
+      this.material.uniforms.uExposure.value = Math.max(renderer.toneMappingExposure || 1, 1e-4);
+    };
   }
 
   /**

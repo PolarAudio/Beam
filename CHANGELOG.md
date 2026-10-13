@@ -1,5 +1,160 @@
 # Changelog
 
+## 0.1.0-alpha.21
+
+### LED fixtures
+
+- LED bars and panels are drawn at their real luminance, worked out from the fixture's lumens. A definition can state **Lumens** in the create dialog; without it a strip LED counts as 4 lm (a WS2812B) and a tile as 1500 nits over its face. An LED smaller than a screen pixel is drawn about a pixel wide with its light kept. The glare comes from bloom. LEDs are dark from behind.
+- LED bars and panels light the room. Each is a rectangle light the size of its face, coloured per point from its own pixels: a surface near the red end of a bar is lit red. No shadows yet.
+- The LED debug sliders for gain, die size, halo strength, near dimming and back scatter no longer affect LED fixtures.
+
+### Displays
+
+- A display's light takes its colour from the part of the picture nearest each surface point, blurred with distance, instead of from the whole picture's average.
+- **See-through** displays: a mesh screen with the LEDs on opaque strips along the rows and open space between them, in a frame with no back. **Transparency %** is the open share as quoted; 0 makes each strip as tall as its LEDs.
+
+### Reflections
+
+- Screen-space reflections trace a depth pyramid instead of a fixed march, so thin bars no longer break into dots in a reflection.
+- The largest glossy flat surface is reflected as a mirror: the scene is drawn from below it, blurred by roughness and distance. Vertical glossy faces still use screen-space reflections.
+
+### Fixtures
+
+- Framing blades are drawn only when inserted. All blades at 0 no longer square the beam, and one inserted blade no longer draws all four.
+- A gobo or colour wheel stops spinning when its channel leaves the spin range for a wheel mode or a range with no function.
+- A lens face's brightness cap is 30 times higher, so an LED bar's lens and a discharge spot's no longer draw the same. Seen from behind, a lens face no longer glows.
+- Full haze is 50 m visibility, was 10 m. A beam seen from across a large room no longer fades out while the floor behind it stays bright; beams seen over more than about 5 m are brighter than before.
+
+### Interface
+
+- **File → Save Project** sits under Open Project and saves without a dialog; **Save Project As…** opens the dialog on the current file.
+- **View → Copy view to clipboard** copies the 3D view as a PNG, without the gizmo, view cube or timings.
+- The channel range guide is always on; its preference is gone.
+
+## 0.1.0-alpha.20
+
+### Video inputs
+
+- A project receives video through inputs: one NDI stream or one image or video file each. A display or projector picks an input and shows all of it; several can share one. Connectors and slicing are gone; send one NDI stream per output from the media server.
+- **Create input…** at the bottom of a display's or projector's Input list, or Ctrl+Shift+I, opens the Video inputs window; the gear beside Input opens it on that device's input. It lists the inputs with their state and how many devices use each, and previews the selected one with its size and measured frame rate. It moved out of Preferences: inputs belong to the project. Senders are looked for again every few seconds while it is open. **Add NDI input** with a **Sender** chosen on this machine, or **Add file…**.
+- A feed opens only while a device shows its input.
+- Image and video files: PNG, JPEG, WebP, MP4, MOV or WebM, copied into `Library/Media`. A video plays muted and loops. A file belongs to the project: it is saved with it, Export carries it, and an opened export plays its own copy. An NDI sender stays a setting of the machine.
+- A video file input has **Play**/**Pause**, a position slider and the time in the Video inputs window. Every device showing the file follows; pause and position are not saved.
+- A **Test card** is built into every project: grey wedge, colour bars, a one-pixel grid, a circle and an F in one corner. It cannot be removed, and Export does not carry it, since Beam ships it.
+- Displays and projectors have **Rotation**, **Mirror H** / **Mirror V**, **Crop** on each side in input pixels, **Scale** (Stretch, Fit, Fill, Native) and digital **Zoom**. Each is a control in the definition: Fixed, Adjustable or DMX. Fit shows a square video on a 16:9 screen with bars at the sides.
+- Each projector shows its own input; up to six projectors draw at once, as before.
+- A projected picture is read at the level of detail its size on the surface needs, so fine detail no longer breaks into moiré on a wall.
+- A project saved with connectors opens with one input. A device on a whole-frame connector keeps its turn and mirrors; one on a smaller connector shows the whole picture and is listed once on opening.
+
+### Preferences
+
+- The default floor is a dark grey of about 10% reflectance, #595959, was #b9babb (about 49%). Existing projects keep their floor.
+- The grid cancels the camera's exposure, so its lines look the same at any EV, and its lines are near white, #e6e9ed, was #7d858e.
+- House lights up and down are set in lux on a white floor, to one decimal, on the same scale as projectors and fixtures. Defaults are 300 lux up and 6 lux down.
+- Visualizer and Art-Net preferences are one window, **Edit → Preferences**, with a **Visualizer** and a **DMX** tab. A setting is one line with its explanation as a tooltip, and house up and house down share a row. **Reset all...** is at the bottom of the window. Ctrl+Shift+V opens the Visualizer tab, Ctrl+Shift+A the DMX tab.
+- **Debug → Camera** has **house up EV** and **house down EV** sliders, the same stored preferences as the window.
+- Each house state has its own camera exposure, **Exposure, house up (EV)** and **Exposure, house down (EV)**, defaults 7 and 6.5. A lit room at 300 lux and a dark show both read correctly. Each environment image is measured once, so a lux figure means the same light whichever image is chosen. Earlier percentages are not carried over.
+
+### Reflections
+
+- Glossy surfaces reflect what is on screen (screen-space reflections), on any surface: a floor, a deck, steps, a metal object. The reflection is blurred by the surface's roughness and the distance to what it reflects, and replaces the environment image's share of the reflection where something is found. Lens faces are reflected; beams in the air are not. **Preferences → Visualizer → Reflections**, on by default. While it is on, displays no longer add their rectangle highlight, since their picture is reflected.
+- Regression set: a reflect scene, a glossy slab with the test card on a display, a grey cube and a head pointed down at it.
+
+### View
+
+- A **View** menu: **Full window** (F10) shows only the 3D view and its toolbar, also from a button at the right of that toolbar. **Full screen** (F11) is full window across the monitor, with the toolbar shown while the pointer is at the top edge; Escape leaves it before deselecting. **Stay on top** keeps the window above other applications and is remembered; the other two start off.
+
+### Projectors
+
+- The camera's exposure is an EV at ISO 100: a luminance of 1.2 x 2^EV cd/m² reaches the top of the tone curve. EV 5.25 is the old exposure of 1.0. The exposure multiplier in Debug → Camera is gone; exposure is set per house state in Preferences.
+- Surfaces are lit in luminance: a matte surface under E lux has luminance reflectance x E / pi. Projected light and the house light now include the pi, as mover pools already did; at the same lux both are a factor of pi darker than before.
+- Projected light is multiplied by the colour of the surface it lands on. A grey #808080 wall returns about 22% of what a white one does; before, every surface returned all of it.
+- The generic projector defaults to 4000 lumens, was 10000.
+- A projector's black level is its white over its contrast, across the frame; the soft edge dims only the picture above it, so blended overlaps show a brighter black.
+- A display's full white is its nits. It used to be a fixed level of about 45 nits whatever the definition said.
+- Displays light the room: an area light at the picture's average colour, which falls as 1 / (d² + R²) for a disc of the panel's area, with soft shadows from a depth tile. Up to 16 displays; one costs about 0.2 ms of GPU time. On standard materials a display is a rectangle (linearly transformed cosines), so a glossy floor reflects its shape, at the picture's average colour, rather than a point.
+- A projector's light in the haze is sampled only where the frame holds picture. A cropped, fitted or zoomed-out picture no longer breaks into bands in the air.
+- Changing a device value in Fixture settings marks the project as changed. Crop, zoom, shift and the other controls were lost on closing without a prompt.
+- The Edit menu has Copy, Paste and Preferences. The Preferences menu is gone.
+- Changing a model's size, in Placement or with the gizmo, keeps its lowest point where it was, so a model on the floor no longer grows into it.
+- Framing blades from GDTF shaper channels: Blade(n)A and B, Blade(n)Rot and ShaperRot cut the pool and the beam alike. Up to eight blades per light; a blade with only A moves parallel. Seen in the Ayrton Diablo, Martin MAC Encore and Viper Performance, and Robe BMFL Blade profiles.
+- The toolbar no longer has Auto-rotate, Auto-focus, the Visualizer title or Hide. The performance panel no longer shows the camera position.
+- With Native scale a crop only blacks out the edges; the kept pixels stay in place. With Stretch, Fit and Fill the kept part is scaled to the picture.
+- A projector's position is on its lens axis. A projector whose lens is off-centre keeps its position: its body moves by the lens offset and its picture is now centred on the position.
+
+### Names
+
+- A `.beam` file is a **project** and what it holds is the **scene**: the show is what MadMapper or Resolume plays. **Add to show** is **Add to scene**, **Import Showfile** is **Import JSON Project**, and messages and the manual say project.
+
+### Development
+
+- Regression set: a display scene, 40 nits showing the test card. The projector shows the test card at a dimmer of 70 on a grey screen, so its white sits below clipping; the laser draws a triangle with a red, a green and a blue side. The room uses house lights down at 2 lux.
+
+## 0.1.0-alpha.19
+
+### Viewport
+
+- **Orthographic** on the toolbar swaps the camera for a plan or elevation view with no vanishing point. The view keeps its direction and target. The wheel scales the view about the cursor; Shift + right-drag turns about the target. Studio and recording stay perspective and switch back.
+- Right-drag orbits about the point under the pointer, which stays under the pointer. Middle-drag is a lens shift: the picture slides and the camera does not move. Ctrl + middle-drag walks the camera along the floor with the grabbed spot staying under the pointer. The wheel moves toward the point under the cursor.
+- The view cube is smaller, pinned to the viewport's corner, and is never recorded.
+- Escape deselects and leaves the view where it is.
+- Toolbar buttons sit closer together.
+
+### 3D models
+
+- A model from a file has Length (X), Width (Y) and Height (Z) in metres in the Placement widget, along the model's own axes, with its original size beneath. The show saves all three. Fixtures and created shapes do not scale.
+- Scale tool (**S**, and a toolbar button) for one model at a time. The centre handle scales all three axes.
+- Models compressed with Draco load. The decoder was missing from the build.
+- The three shipped floors have thumbnails.
+
+### Moving heads
+
+- Focus is the distance the lens is focused at: the focus channel runs from 1 m to infinity, and a lens without one has **Focus at (m)** in its settings, default 5 m. The beam narrows from the lens to the image at the focus and widens past it; the pool's edge and the gobo are sharp at the focus and blur away from it.
+- The beam's edge comes from the fixture's beam and field angles: the field angle is the edge, the beam angle sets how soft. A file stating the two equal draws a hard edge. A profile with one angle keeps the default edge. Two corpus files change width (B-EYE K20, Cuepix Blinder).
+- A beam's soft edge stops at walls. A short focus or a big lens spread the edge past the depth tile and that fringe went through every surface.
+- Pool shadows are soft by the lens's size: sharp where they meet what casts them, wider away from it.
+- In haze, the air and the pool fade together with distance from the lens, and what the haze scatters out of the beam comes back as a glow around it. **Debug → Mover beam → scattered glow** compares with and without.
+- A beam's edge is one continuous ramp; the samples along the ray no longer draw the edge twice near the focus.
+- A strobing light stops at surfaces between flashes. It lit through walls on the frame after a flash.
+- A light moved down a slot by a deletion kept the colour, angle, focus, gobos, prism and iris of the light that had been there. Fixed.
+- A GDTF fixture drawn with the shipped body takes its lens size from the file.
+- Gobo wheels turn: 44.5 degrees a slot, with an overshoot that settles. A shake rocks the whole wheel.
+- GDTF: channel names use the attribute's pretty name; pan/tilt speed channels drive the head; DMX profiles are applied; a gobo shake's amplitude sets its swing; gobo thumbnails are drawn without a white backing.
+- GDTF fixtures export to MadMapper by name. Every channel was named "[object Object]" and only the Pan/Tilt island was placed.
+
+### DMX
+
+- **Preferences → Art-Net → Mode** is Off, Receive or Send. Send puts the fixtures' own values on the wire as sACN multicast or Art-Net, to test real fixtures with the same controls. Every launch starts in Receive.
+
+### Lasers
+
+- A laser on the default address found no stream and drew nothing while points arrived. Fixed: the renderer kept overwriting the address the device was bound to.
+- A stream delivering under a quarter of its declared point rate counts as stopped and the beam goes out. A host with nothing left to send kept a beam lit with a trickle.
+
+### Selection
+
+- A selected object shows the orange outline; a selected structure or group passes it to its members. The outline covers the whole silhouette, hidden parts included.
+
+### Debug panel
+
+- Double-click a control's name to put it back to its default. **Reset all** at the top does every control. The old button that cleared every preference is gone from the panel; it stays under **Preferences → Reset to defaults**.
+- Camera folder: exposure, tone curve, glare strength and spread. Nothing is stored.
+- Regrouped: Camera, Room (Light, Haze), LED (Die, Distance, Glow), Mover beam, Laser (Brightness, Shape, Diagnostics).
+- The panel sits in the viewport's top-right corner, grows downwards as folders open and scrolls past the viewport's bottom. Which folders are open is remembered.
+- Removed: Bloom, Scene haze (the same settings as Preferences → Visualizer), contour cycling and render passes.
+- **Strict patch** moves to **Preferences → Art-Net**. A stored setting carries over.
+
+### Fixes
+
+- LED panels and bars drew only their glow after the orthographic change. Fixed.
+- axios is replaced by fetch. It carried twenty-odd advisories, and its current version refuses the scheme a packaged build loads fixtures over.
+
+### Development
+
+- CLAUDE.md maps the code and the rules for working in it; tools/dev launches, probes, screenshots and times the dev build.
+- Visual regression set: test scenes at four haze levels with a frozen clock, diffed against a stored set.
+- Contributors: PolarAudio for the Draco decoder, the floor thumbnails and the laser stream fixes.
+
 ## 0.1.0-alpha.18
 
 ### GDTF fixtures

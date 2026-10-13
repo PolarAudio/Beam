@@ -20,16 +20,12 @@
         :gap="6"
         class="definition_home"
       >
-        <span class="scope_note">
-          Defined in this show, not in the library. It goes when its last
-          instance does.
-        </span>
         <uk-flex :gap="8">
           <uk-button
             icon="export"
             label="save to library"
             :disabled="saving"
-            title="Move this definition into the library, to place in other shows"
+            title="Move this definition into the library, to place in other projects"
             @click="openSave"
           />
         </uk-flex>
@@ -963,11 +959,6 @@ export default {
 .fixture_model_body {
   padding: 8px;
   min-width: 0;
-}
-.scope_note {
-  margin: 0;
-  font-size: 11px;
-  color: var(--secondary-lighter-alt);
 }
 .save_form {
   padding: 12px;

@@ -164,6 +164,15 @@ export default {
   },
   props: {
     /**
+     * Whether a click anywhere on a row with children opens or closes it,
+     * rather than selecting it. For lists whose folders are only containers,
+     * where selecting one would do nothing.
+     */
+    openFolders: {
+      type: Boolean,
+      default: false,
+    },
+    /**
      * Whether a press beside or below the rows starts a band selection: every
      * row the drag passes over is highlighted as it goes. Ctrl or Shift adds
      * to what is already highlighted.
@@ -579,6 +588,10 @@ export default {
      */
     clickRow(e, row, siblings) {
       if (row.value.disabled || this.dragging) return;
+      if (this.openFolders && row.children && row.children.length) {
+        this.unfold(row);
+        return;
+      }
       if (e && e.shiftKey && !this.noHighlight) this.selectRange(row, siblings);
       else if (e && e.ctrlKey && !this.noHighlight) this.toggleHighlight(row);
       else this.selectOnly(row);

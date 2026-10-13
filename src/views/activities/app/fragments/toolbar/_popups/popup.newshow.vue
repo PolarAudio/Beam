@@ -76,7 +76,7 @@ export default {
           index: 0,
         },
         {
-          name: 'Demo Show',
+          name: 'Demo Project',
           more: 'Simple demo sample project',
           icon: 'save',
           preview: 'asls.png',

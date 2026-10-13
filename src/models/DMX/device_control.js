@@ -287,9 +287,9 @@ export class ChoiceType extends ControlType {
   /**
    * @param {Object} [options]
    * @param {String} [options.source] which list the app should offer:
-   *   'connectors' or 'dacStreams'
+   *   'videoInputs' or 'dacStreams'
    */
-  constructor({ source = 'connectors', ...rest } = {}) {
+  constructor({ source = 'videoInputs', ...rest } = {}) {
     super({ ...rest, editor: EDITORS.CHOICE });
     this.source = source;
   }

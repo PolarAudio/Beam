@@ -1,4 +1,9 @@
 import * as THREE from 'three';
+import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
+import Shapers, { SHAPER_GLSL } from './shapers';
+import DisplayLight from './display_light';
+
+RectAreaLightUniformsLib.init();
 
 /**
  * What one unit of light-field intensity is worth, in candela.
@@ -38,6 +43,15 @@ const CANDELA_PER_UNIT = (REFERENCE_LUMENS / REFERENCE_SOLID_ANGLE) / REFERENCE_
  * dark venue -- which is what sixty lux on a wall at night looks like.
  */
 const LUX_SCALE = 0.022;
+
+/**
+ * What the render buffer holds: luminance in cd/m2 times this. A matte
+ * surface of reflectance rho under E lux has luminance rho E / pi, so it reads
+ * rho E LUX_SCALE / pi -- what three's Lambert term gives a light whose
+ * intensity is in these units. The camera's exposure undoes this factor; see
+ * `exposureForEV` in visualizer.js.
+ */
+const SCENE_PER_NIT = LUX_SCALE;
 
 /**
  * A light-field unit as a three.js light intensity: candela into scene
@@ -90,7 +104,8 @@ const SCENE_INTENSITY_PER_UNIT = CANDELA_PER_UNIT * LUX_SCALE;
  * Eleven:
  *
  *   0: position.xyz, range
- *   1: direction.xyz, cosine of the cone's outer edge
+ *   1: direction.xyz, cosine of how far out the light can reach: the cone's
+ *      outer edge, widened by the lens's blur for a light with a tile
  *   2: colour.rgb (already scaled by intensity), cosine of the penumbra
  *   3: the depth tile's rect in the atlas, x y width height
  *   4: the tile camera's x axis, world; tangent of its half fov
@@ -101,7 +116,16 @@ const SCENE_INTENSITY_PER_UNIT = CANDELA_PER_UNIT * LUX_SCALE;
  *      none); w the gobo defocus from the focus, in baked blur levels
  *   9: the colour past a colour wheel split, rgb scaled by intensity; w the
  *      split, 0 none
- *  10: how far the iris is open, 1 fully to 0 closed; yzw unused
+ *  10: how far the iris is open, 1 fully to 0 closed; the lens radius, m;
+ *      1 / focus distance, 1/m, 0 infinity; cosine of the cone's outer edge.
+ *      An iris of -1 marks an area light, a display: the lens radius is then
+ *      the radius of a disc of the panel's area
+ *  11: the light's row of the shaper table, -1 for no blades
+ *
+ * An area light uses texels 7 and 8, which it has no gobo or prism for, for
+ * its rectangle: the half-width and half-height vectors, world. 7.w is its
+ * picture's tile in the display atlas, 1-based and negative when the
+ * rectangle's x runs against the panel's, 0 none; 8.w its intensity.
  *
  * `direction` is stored three's way round -- `normalize(position - target)`,
  * pointing back up the beam rather than along it -- so that the angle test
@@ -113,7 +137,7 @@ const SCENE_INTENSITY_PER_UNIT = CANDELA_PER_UNIT * LUX_SCALE;
  *
  * @constant {Number}
  */
-const TEXELS_PER_LIGHT = 11;
+const TEXELS_PER_LIGHT = 12;
 
 /** Lights the texture holds before it is grown. Doubles on demand. */
 const INITIAL_CAPACITY = 128;
@@ -161,8 +185,20 @@ const record = {
   /** The colour past a colour wheel split, and the split, 0 none. */
   colorB: new THREE.Color(),
   split: 0,
+  /** The lens radius, m, and 1 / its focus distance, 1/m; 0 no blur. */
+  lensRadius: 0,
+  invFocus: 0,
+  /** The cosine of the light's reach past its cone, null for the cone itself. */
+  cosReach: null,
   /** How far the iris is open, 1 fully to 0 closed. */
   iris: 1,
+  /** The light's row of the shaper table, -1 for no blades. */
+  shaperRow: -1,
+  /** An area light's atlas tile, signed and 1-based as texel 7.w; 0 none. */
+  pictureSlot: 0,
+  /** An area light's half-width and half-height, world; read when iris is -1. */
+  rectX: new THREE.Vector3(),
+  rectY: new THREE.Vector3(),
 };
 
 /**
@@ -176,13 +212,29 @@ const uniforms = {
   lightFieldCount: { value: 0 },
   // Sources write candela on the lux scale; light falls as the inverse square.
   lightFieldDecay: { value: 2 },
+  // The haze's extinction per metre on the way from a lens to a surface;
+  // 0 with no haze. The beam in the air pays the same on its own path.
+  lightFieldExtinction: { value: 0 },
   // The mover depth atlas, set by `Light.renderDepth` each frame.
   lightFieldDepth: { value: null },
   lightFieldDepthFar: { value: 1 },
   lightFieldDepthBias: { value: 0.05 },
   lightFieldDepthTile: { value: 128 },
+  // 1 softens the depth tile's shadows by the lens's size, 0 keeps them hard.
+  lightFieldSoftShadow: { value: 1 },
   // The gobo patterns, one atlas, set with the depth atlas.
   lightFieldGobo: { value: null },
+  // Every light's framing blades; see shapers.js.
+  lightFieldShapers: { value: Shapers.texture },
+  // The rectangle-light tables three's own RectAreaLight reads; half float is
+  // filterable on every WebGL2 device.
+  lightFieldLtc1: { value: THREE.UniformsLib.LTC_HALF_1 },
+  // 0 while screen-space reflections show the displays' own picture, so a
+  // display is not reflected twice.
+  lightFieldAreaSpecular: { value: 1 },
+  lightFieldLtc2: { value: THREE.UniformsLib.LTC_HALF_2 },
+  // Every lit display's panel, mipmapped; see display_light.js.
+  lightFieldPictures: DisplayLight.atlasUniform,
 };
 
 /** Builds the texture, or rebuilds it after the store has grown. */
@@ -236,11 +288,38 @@ const FIELD_LIGHT_CHUNK = /* glsl */`
     float angleCos = dot( fieldLight.direction, spotDirection );
     if ( angleCos <= packedDirection.w ) continue;
 
-    float attenuation = getDistanceAttenuation( lightDistance, packedPosition.w, lightFieldDecay );
+    float attenuation = getDistanceAttenuation( lightDistance, packedPosition.w, lightFieldDecay )
+      * exp( -lightFieldExtinction * lightDistance );
     if ( attenuation <= 0.0 ) continue;
     // A colour wheel split: how much of this point's light is the far colour.
     float farShare = 0.0;
     vec3 farColor = packedColor.rgb;
+
+    // An area light -- a display -- is a matte rectangle; its colour is its
+    // luminance times its area. A standard material integrates it over the
+    // rectangle below, so a glossy surface reflects its shape. Any other
+    // material takes it as a disc of the same area, radius R, falling as
+    // cos / (d^2 + R^2), so a surface at its face receives pi times its
+    // luminance and one far off sees a point.
+    vec4 packedLens = texelFetch( lightField, ivec2( 10, i ), 0 );
+    bool areaLight = packedLens.x < -0.5;
+    vec3 areaColor = packedColor.rgb;
+    vec3 rectX = vec3( 0.0 );
+    vec3 rectY = vec3( 0.0 );
+    if ( areaLight ) {
+      attenuation = exp( -lightFieldExtinction * lightDistance );
+      vec4 packedRectX = texelFetch( lightField, ivec2( 7, i ), 0 );
+      vec4 packedRectY = texelFetch( lightField, ivec2( 8, i ), 0 );
+      rectX = ( viewMatrix * vec4( packedRectX.xyz, 0.0 ) ).xyz;
+      rectY = ( viewMatrix * vec4( packedRectY.xyz, 0.0 ) ).xyz;
+      if ( abs( packedRectX.w ) > 0.5 ) {
+        areaColor = fieldPicture( geometryPosition - lightPosition, rectX, rectY, packedRectX.w ) * packedRectY.w;
+      }
+      farColor = areaColor;
+#ifndef STANDARD
+      attenuation *= angleCos / ( lightDistance * lightDistance + packedLens.y * packedLens.y );
+#endif
+    }
 
     // The pool's shape, and whether this point is the first thing the
     // light's lens sees. A light with a depth tile carries its beam frame:
@@ -266,22 +345,28 @@ const FIELD_LIGHT_CHUNK = /* glsl */`
       vec3 offset = geometryPosition - tileOrigin;
       float along = dot( offset, tileAxisZ );
       if ( along <= 0.0 ) continue;
-      vec4 packedGobo = texelFetch( lightField, ivec2( 7, i ), 0 );
-      vec4 packedPrism = texelFetch( lightField, ivec2( 8, i ), 0 );
-      // The tile's half fov is the field's tangent times the margin, times
-      // the prism's spread while one is in; the field's own tangent is
-      // what the aperture coordinate is measured against.
-      float drawnSpread = abs( packedPrism.x ) >= 2.0 ? 1.0 + packedPrism.z : 1.0;
-      float tanField = packedAxisX.w / ( FIELD_DEPTH_FOV_MARGIN * drawnSpread );
-      vec2 aperture = vec2( dot( offset, tileAxisX ), dot( offset, tileAxisY ) ) / ( along * tanField );
-      vec4 packedColorB = texelFetch( lightField, ivec2( 9, i ), 0 );
-      float packedIris = texelFetch( lightField, ivec2( 10, i ), 0 ).x;
-      vec2 sides = fieldStencil( aperture, packedOrigin.w, packedGobo, packedPrism, packedColorB.w, packedIris );
-      float shape = sides.x + sides.y;
-      if ( shape <= 0.0 ) continue;
-      attenuation *= shape;
-      farShare = sides.y / shape;
-      farColor = packedColorB.rgb;
+      if ( !areaLight ) {
+        vec4 packedGobo = texelFetch( lightField, ivec2( 7, i ), 0 );
+        vec4 packedPrism = texelFetch( lightField, ivec2( 8, i ), 0 );
+        // The aperture coordinate is measured against the field's own tangent:
+        // the outer cone's, which a prism widens by its spread, taken back out.
+        // Not the tile's, which also holds the lens's blur.
+        float drawnSpread = abs( packedPrism.x ) >= 2.0 ? 1.0 + packedPrism.z : 1.0;
+        float cosOuter = max( packedLens.w, 1e-4 );
+        float tanField = sqrt( max( 1.0 - cosOuter * cosOuter, 0.0 ) ) / cosOuter / drawnSpread;
+        vec2 aperture = vec2( dot( offset, tileAxisX ), dot( offset, tileAxisY ) ) / ( along * tanField );
+        vec4 packedColorB = texelFetch( lightField, ivec2( 9, i ), 0 );
+        // The lens's blur at this surface, in field radii: the lens radius times
+        // how far the surface is from the focus, over the field's radius here.
+        float blur = packedLens.y * abs( 1.0 - along * packedLens.z ) / max( along * tanField, 1e-5 );
+        float shaperRow = texelFetch( lightField, ivec2( 11, i ), 0 ).x;
+        vec2 sides = fieldStencil( aperture, packedOrigin.w, packedGobo, packedPrism, packedColorB.w, packedLens.x, blur, shaperRow );
+        float shape = sides.x + sides.y;
+        if ( shape <= 0.0 ) continue;
+        attenuation *= shape;
+        farShare = sides.y / shape;
+        farColor = packedColorB.rgb;
+      }
 
       float texel = 2.0 * along * packedAxisX.w / lightFieldDepthTile;
       vec3 lifted = offset + geometryNormal * ( texel * 1.5 );
@@ -298,16 +383,50 @@ const FIELD_LIGHT_CHUNK = /* glsl */`
       float allowance = lightFieldDepthBias + min( texel * 1.5 * slope, texel * 8.0 );
       vec2 ndc = vec2( -dot( lifted, tileAxisX ), dot( lifted, tileAxisY ) ) / ( alongLifted * packedAxisX.w );
       if ( all( lessThan( abs( ndc ), vec2( 1.0 ) ) ) ) {
-        vec2 tileUv = packedTile.xy + ( ndc * 0.5 + 0.5 ) * packedTile.zw;
-        float seen = unpackRGBAToDepth( texture2D( lightFieldDepth, tileUv ) ) * lightFieldDepthFar;
-        if ( alongLifted > seen + allowance ) continue;
+        float seen = fieldDepthAt( packedTile, ndc );
+        bool blocked = alongLifted > seen + allowance;
+        if ( lightFieldSoftShadow > 0.5 && packedLens.y > 0.0 ) {
+          float lit = fieldSoftShadow(
+            packedTile, ndc, blocked ? seen : -1.0, lifted, geometryNormal,
+            tileAxisX, tileAxisY, tileAxisZ, packedAxisX.w, packedLens.y, texel
+          );
+          if ( lit <= 0.0 ) continue;
+          attenuation *= lit;
+        } else if ( blocked ) {
+          continue;
+        }
       }
-    } else {
-      attenuation *= getSpotAttenuation( packedDirection.w, packedColor.w, angleCos );
+    } else if ( !areaLight ) {
+      // The cone's own edge, not the reach the cone test above allowed for.
+      float cosOuter = packedLens.w;
+      attenuation *= getSpotAttenuation( cosOuter, packedColor.w, angleCos );
       if ( attenuation <= 0.0 ) continue;
     }
 
-    fieldLight.color = mix( packedColor.rgb, farColor, farShare ) * attenuation;
+#ifdef STANDARD
+    // The rectangle by linearly transformed cosines, as three's RectAreaLight:
+    // diffuse and specular integrated over its corners, wound so its normal
+    // faces the lit side. attenuation holds only extinction and shadow here.
+    if ( areaLight ) {
+      vec3 rectCoords[ 4 ];
+      rectCoords[ 0 ] = lightPosition + rectX - rectY;
+      rectCoords[ 1 ] = lightPosition - rectX - rectY;
+      rectCoords[ 2 ] = lightPosition - rectX + rectY;
+      rectCoords[ 3 ] = lightPosition + rectX + rectY;
+      vec3 luminance = areaColor * attenuation / max( 4.0 * length( rectX ) * length( rectY ), 1e-6 );
+      vec2 ltcUv = LTC_Uv( geometryNormal, geometryViewDir, material.roughness );
+      vec4 ltc1 = texture2D( lightFieldLtc1, ltcUv );
+      vec4 ltc2 = texture2D( lightFieldLtc2, ltcUv );
+      mat3 ltcInverse = mat3( vec3( ltc1.x, 0.0, ltc1.y ), vec3( 0.0, 1.0, 0.0 ), vec3( ltc1.z, 0.0, ltc1.w ) );
+      vec3 fresnel = material.specularColor * ltc2.x + ( vec3( 1.0 ) - material.specularColor ) * ltc2.y;
+      reflectedLight.directSpecular += lightFieldAreaSpecular * luminance * fresnel
+        * LTC_Evaluate( geometryNormal, geometryViewDir, geometryPosition, ltcInverse, rectCoords );
+      reflectedLight.directDiffuse += luminance * material.diffuseColor
+        * LTC_Evaluate( geometryNormal, geometryViewDir, geometryPosition, mat3( 1.0 ), rectCoords );
+      continue;
+    }
+#endif
+    fieldLight.color = mix( areaColor, farColor, farShare ) * attenuation;
     fieldLight.visible = true;
     RE_Direct( fieldLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight );
   }
@@ -320,14 +439,122 @@ const FIELD_PARS_CHUNK = /* glsl */`
 uniform sampler2D lightField;
 uniform int lightFieldCount;
 uniform float lightFieldDecay;
+uniform float lightFieldExtinction;
 uniform sampler2D lightFieldDepth;
 uniform float lightFieldDepthFar;
 uniform float lightFieldDepthBias;
 uniform float lightFieldDepthTile;
+uniform float lightFieldSoftShadow;
 uniform sampler2D lightFieldGobo;
+uniform sampler2D lightFieldShapers;
+uniform sampler2D lightFieldLtc1;
+uniform sampler2D lightFieldLtc2;
+uniform float lightFieldAreaSpecular;
+uniform sampler2D lightFieldPictures;
+${SHAPER_GLSL}
 
-// The tile looks wider than the field by this, as in light.js.
-#define FIELD_DEPTH_FOV_MARGIN 1.2
+// The display atlas, as display_light.js: GRID tiles across of TILE texels.
+#define FIELD_PICTURE_GRID ${DisplayLight.GRID.toFixed(1)}
+#define FIELD_PICTURE_TILE ${DisplayLight.TILE.toFixed(1)}
+
+// A display's light at a point, per unit intensity. A point takes light from
+// the whole panel weighted by cos^2 / d^2, which gathers the part of it within
+// about the point's distance from the panel's plane. So: the panel point
+// nearest the point, read from a mip whose texel is twice that distance.
+// d is from the panel's centre; rx and ry its half-width and half-height
+// vectors; slot as texel 7.w. An explicit level, as the loop diverges.
+vec3 fieldPicture( vec3 d, vec3 rx, vec3 ry, float slot ) {
+  float lx2 = max( dot( rx, rx ), 1e-8 );
+  float ly2 = max( dot( ry, ry ), 1e-8 );
+  vec2 p = vec2( dot( d, rx ) / lx2, dot( d, ry ) / ly2 );
+  if ( slot < 0.0 ) p.x = -p.x;
+  vec2 panel = clamp( p * 0.5 + 0.5, 0.0, 1.0 );
+  float h = abs( dot( d, normalize( cross( rx, ry ) ) ) );
+  float texelWorld = 2.0 * sqrt( max( lx2, ly2 ) ) / FIELD_PICTURE_TILE;
+  float lod = clamp( log2( max( 2.0 * h, 1e-4 ) / texelWorld ), 0.0, log2( FIELD_PICTURE_TILE ) );
+  // Kept half a texel of the coarser level inside the tile, so the filter
+  // never reaches a neighbour.
+  float edge = 0.5 * exp2( ceil( lod ) ) / FIELD_PICTURE_TILE;
+  vec2 q = clamp( panel, vec2( edge ), vec2( 1.0 - edge ) );
+  float index = abs( slot ) - 1.0;
+  vec2 cell = vec2( mod( index, FIELD_PICTURE_GRID ), floor( index / FIELD_PICTURE_GRID ) );
+  return textureLod( lightFieldPictures, ( cell + q ) / FIELD_PICTURE_GRID, lod ).rgb;
+}
+
+// Soft shadows. The lens is a disc, not a point: a surface point sees the part
+// of it no blocker hides, and that share is the light it gets. Seen from the
+// lens centre, a blocker at distance d hides the lens from a point at z across
+// an angle of R (1/d - 1/z), so that is how wide the depth tile is read around
+// the point. The search for blockers allows for one as near as SHADOW_NEAR;
+// both reads are capped at SHADOW_MAX_TEXELS of the tile.
+#define FIELD_SHADOW_SEARCH 8
+#define FIELD_SHADOW_FILTER 16
+#define FIELD_SHADOW_NEAR 0.5
+#define FIELD_SHADOW_MAX_TEXELS 12.0
+
+// The distance along the beam to the first thing the lens sees at ndc.
+float fieldDepthAt( vec4 tile, vec2 ndc ) {
+  vec2 inside = clamp( ndc, vec2( -1.0 + 1.0 / lightFieldDepthTile ), vec2( 1.0 - 1.0 / lightFieldDepthTile ) );
+  vec2 uv = tile.xy + ( inside * 0.5 + 0.5 ) * tile.zw;
+  return unpackRGBAToDepth( texture2D( lightFieldDepth, uv ) ) * lightFieldDepthFar;
+}
+
+// Sample i of n spread evenly over the unit disc, the pattern turned by a
+// per-pixel angle so the few samples blur into grain rather than stripes.
+vec2 fieldDisc( int i, int n, float turn ) {
+  float r = sqrt( ( float( i ) + 0.5 ) / float( n ) );
+  float a = float( i ) * 2.39996323 + turn;
+  return r * vec2( cos( a ), sin( a ) );
+}
+
+// Whether the surface, extended as a plane, is behind the tile at ndc. The
+// plane through the point, not the point's own distance, so a floor seen at a
+// slant does not shadow itself across the width of the read.
+bool fieldPlaneBlocked( vec4 tile, vec2 ndc, vec3 lifted, vec3 normal, vec3 ax, vec3 ay, vec3 az, float tanHalf, float allowance, inout float seen ) {
+  seen = fieldDepthAt( tile, ndc );
+  vec3 ray = az - ndc.x * tanHalf * ax + ndc.y * tanHalf * ay;
+  float facing = dot( ray, normal );
+  float plane = dot( lifted, normal );
+  float along = dot( lifted, az );
+  float receiver = abs( facing ) > 1e-4 ? plane / facing : along;
+  if ( receiver <= 0.0 ) receiver = along;
+  return receiver > seen + allowance;
+}
+
+// The share of the lens the point sees, 0 to 1. centreBlocker is the depth
+// seen at the point itself when that blocks it, else negative.
+float fieldSoftShadow( vec4 tile, vec2 ndc, float centreBlocker, vec3 lifted, vec3 normal, vec3 ax, vec3 ay, vec3 az, float tanHalf, float lensRadius, float texel ) {
+  float z = dot( lifted, az );
+  float lensNdc = lensRadius / tanHalf;
+  float texelNdc = 2.0 / lightFieldDepthTile;
+  float maxNdc = FIELD_SHADOW_MAX_TEXELS * texelNdc;
+  float allowance = lightFieldDepthBias + texel * 1.5;
+
+  float searchNdc = min( lensNdc * max( 1.0 / FIELD_SHADOW_NEAR - 1.0 / z, 0.0 ), maxNdc );
+  float blockerSum = 0.0;
+  float blockers = 0.0;
+  if ( centreBlocker >= 0.0 ) { blockerSum += centreBlocker; blockers += 1.0; }
+  float seen;
+  // Interleaved gradient noise.
+  float turn = 6.28318531 * fract( 52.9829189 * fract( dot( gl_FragCoord.xy, vec2( 0.06711056, 0.00583715 ) ) ) );
+  for ( int i = 0; i < FIELD_SHADOW_SEARCH; i++ ) {
+    if ( fieldPlaneBlocked( tile, ndc + fieldDisc( i, FIELD_SHADOW_SEARCH, turn ) * searchNdc, lifted, normal, ax, ay, az, tanHalf, allowance, seen ) ) {
+      blockerSum += seen;
+      blockers += 1.0;
+    }
+  }
+  if ( blockers == 0.0 ) return 1.0;
+  if ( blockers > float( FIELD_SHADOW_SEARCH ) ) return 0.0;
+
+  float d = blockerSum / blockers;
+  float radius = clamp( lensNdc * ( 1.0 / d - 1.0 / z ), 0.5 * texelNdc, maxNdc );
+  float lit = 0.0;
+  for ( int i = 0; i < FIELD_SHADOW_FILTER; i++ ) {
+    if ( !fieldPlaneBlocked( tile, ndc + fieldDisc( i, FIELD_SHADOW_FILTER, turn ) * radius, lifted, normal, ax, ay, az, tanHalf, allowance, seen ) ) lit += 1.0;
+  }
+  return lit / float( FIELD_SHADOW_FILTER );
+}
+
 // How much of the light a prism lets through, as in the beam shader.
 #define FIELD_PRISM_TRANSMISSION 0.88
 
@@ -394,18 +621,37 @@ float fieldSplit( vec2 p, float split, float defocus ) {
 // side of any colour split, and past it. The falloff from the inner cone to
 // the field, through every gobo in the beam; with a prism, the mean over the
 // prism's displaced copies, split included.
+// A gobo wheel turns on its own centre, as in the beam shader: every wheel is
+// taken as 100 mm across, slots 38 mm out, gobos 25 mm across, so the slot
+// circle is 3.04 field radii from the centre and one slot is a turn of
+// 0.7759 rad, holes 2.3 field radii apart.
+#define FIELD_GOBO_WHEEL_RADIUS 3.04
+#define FIELD_GOBO_STEP 0.7759
+
+// Where a point of the gate falls in a gobo the wheel has turned by turn
+// radians away from the gate: carried round the wheel's centre, so shifted
+// along an arc and turned by the same angle. The shaft is at +y in the gate,
+// below the optical axis in the projected image, as in the beam shader.
+vec2 fieldGoboOnWheel( vec2 p, float turn ) {
+  vec2 centre = vec2( 0.0, FIELD_GOBO_WHEEL_RADIUS );
+  vec2 d = p - centre;
+  float c = cos( turn );
+  float s = sin( turn );
+  return vec2( c * d.x + s * d.y, -s * d.x + c * d.y ) + centre;
+}
+
 // Every gobo in the beam at a point of the aperture. A wheel between two
 // slots carries the fraction of the way it has gone in the first pattern
-// number: the old gobo slides out along the wheel and the next slides in,
-// each through its own round hole, the holes 2.3 field radii apart.
+// number: the old gobo turns out of the gate on the wheel and the next turns
+// in, each through its own round hole.
 float fieldGobos( vec2 p, vec4 gobo, float defocus ) {
   float frac = fract( gobo.x );
   if ( frac <= 0.0 ) {
     return fieldGobo( p, gobo.xy, defocus ) * fieldGobo( p, gobo.zw, defocus );
   }
   float soft = 0.02 + 0.08 * defocus;
-  vec2 pa = p + vec2( frac * 2.3, 0.0 );
-  vec2 pb = p - vec2( ( 1.0 - frac ) * 2.3, 0.0 );
+  vec2 pa = fieldGoboOnWheel( p, frac * FIELD_GOBO_STEP );
+  vec2 pb = fieldGoboOnWheel( p, -( 1.0 - frac ) * FIELD_GOBO_STEP );
   float holeA = 1.0 - smoothstep( 1.0 - soft, 1.0, length( pa ) );
   float holeB = 1.0 - smoothstep( 1.0 - soft, 1.0, length( pb ) );
   return holeA * fieldGobo( pa, vec2( floor( gobo.x ), gobo.y ), defocus )
@@ -420,24 +666,51 @@ float fieldIris( vec2 p, float iris, float defocus ) {
   return 1.0 - smoothstep( iris - soft, iris + 0.001, length( p ) );
 }
 
-vec2 fieldStencil( vec2 p, float inner, vec4 gobo, vec4 prism, float split, float iris ) {
+// The field's edge through the lens's blur, at a distance r from the axis
+// in field radii. The image of the gate is a disc of radius 1, and the blur
+// spreads each point of it over a disc of radius blur: light is full out to
+// |1 - blur|, gone at 1 + blur, and where the blur is wider than the image,
+// near the lens, spread that much thinner, so the light through every slice
+// of the beam is the same. The inner cone softens the image's own edge.
+float fieldEdge( float r, float inner, float blur ) {
+  float height = blur > 1.0 ? 1.0 / ( blur * blur ) : 1.0;
+  float lo = abs( 1.0 - blur ) - ( 1.0 - inner );
+  return height * ( 1.0 - smoothstep( lo, 1.0 + blur, r ) );
+}
+
+// The lens's blur as gobo blur levels. The atlas bakes a cell of 128 px,
+// two field radii across, at Gaussian sigmas of 0, 2.5 and 7 px, as
+// gobo_library.js; a blur disc of radius b field radii is a sigma of about
+// half its 64 b px.
+float fieldBlurLevels( float blur ) {
+  float sigma = 32.0 * blur;
+  return sigma < 2.5 ? sigma / 2.5 : 1.0 + min( ( sigma - 2.5 ) / 4.5, 1.0 );
+}
+
+vec2 fieldStencil( vec2 p, float inner, vec4 gobo, vec4 prism, float split, float iris, float blur, float shaperRow ) {
   int facets = int( abs( prism.x ) );
   bool linear = prism.x < 0.0;
+  // The gobo is as soft as the frost or the lens makes it, whichever is more.
+  float defocus = max( prism.w, fieldBlurLevels( blur ) );
+  // Framing blades sit in the gate with the gobos.
+  float bladeSoft = 0.01 + 0.06 * defocus;
   if ( facets < 2 ) {
-    float v = ( 1.0 - smoothstep( inner, 1.0, length( p ) ) )
-      * fieldGobos( p, gobo, prism.w )
-      * fieldIris( p, iris, prism.w );
-    float far = fieldSplit( p, split, prism.w );
+    float v = fieldEdge( length( p ), inner, blur )
+      * fieldGobos( p, gobo, defocus )
+      * fieldIris( p, iris, defocus )
+      * shaperMask( lightFieldShapers, shaperRow, p, bladeSoft );
+    float far = fieldSplit( p, split, defocus );
     return vec2( v * ( 1.0 - far ), v * far );
   }
   vec2 sum = vec2( 0.0 );
   for ( int k = 0; k < FIELD_PRISM_FACETS; k ++ ) {
     if ( k >= facets ) break;
     vec2 q = p - fieldPrismOffset( k, facets, linear, prism.y, prism.z );
-    float v = ( 1.0 - smoothstep( inner, 1.0, length( q ) ) )
-      * fieldGobos( q, gobo, prism.w )
-      * fieldIris( q, iris, prism.w );
-    float far = fieldSplit( q, split, prism.w );
+    float v = fieldEdge( length( q ), inner, blur )
+      * fieldGobos( q, gobo, defocus )
+      * fieldIris( q, iris, defocus )
+      * shaperMask( lightFieldShapers, shaperRow, q, bladeSoft );
+    float far = fieldSplit( q, split, defocus );
     sum += vec2( v * ( 1.0 - far ), v * far );
   }
   return sum * ( FIELD_PRISM_TRANSMISSION / float( facets ) );
@@ -506,6 +779,11 @@ const LightField = {
       record.prism.set(0, 0, 0, 0);
       record.split = 0;
       record.iris = 1;
+      record.lensRadius = 0;
+      record.invFocus = 0;
+      record.cosReach = null;
+      record.shaperRow = -1;
+      record.pictureSlot = 0;
       if (sources[i].readLight(record)) {
         LightField.ensureCapacity(count + 1);
         const at = count * TEXELS_PER_LIGHT * 4;
@@ -517,7 +795,7 @@ const LightField = {
         data[at + 4] = record.direction.x;
         data[at + 5] = record.direction.y;
         data[at + 6] = record.direction.z;
-        data[at + 7] = record.cosOuter;
+        data[at + 7] = record.cosReach !== null ? record.cosReach : record.cosOuter;
 
         data[at + 8] = record.color.r * record.intensity;
         data[at + 9] = record.color.g * record.intensity;
@@ -544,15 +822,16 @@ const LightField = {
         data[at + 26] = record.tileOrigin.z;
         data[at + 27] = record.inner;
 
-        data[at + 28] = record.gobo.x;
-        data[at + 29] = record.gobo.y;
-        data[at + 30] = record.gobo.z;
-        data[at + 31] = record.gobo.w;
+        const area = record.iris < 0;
+        data[at + 28] = area ? record.rectX.x : record.gobo.x;
+        data[at + 29] = area ? record.rectX.y : record.gobo.y;
+        data[at + 30] = area ? record.rectX.z : record.gobo.z;
+        data[at + 31] = area ? record.pictureSlot : record.gobo.w;
 
-        data[at + 32] = record.prism.x;
-        data[at + 33] = record.prism.y;
-        data[at + 34] = record.prism.z;
-        data[at + 35] = record.prism.w;
+        data[at + 32] = area ? record.rectY.x : record.prism.x;
+        data[at + 33] = area ? record.rectY.y : record.prism.y;
+        data[at + 34] = area ? record.rectY.z : record.prism.z;
+        data[at + 35] = area ? record.intensity : record.prism.w;
 
         const far = record.split > 0 ? record.colorB : record.color;
         data[at + 36] = far.r * record.intensity;
@@ -561,9 +840,14 @@ const LightField = {
         data[at + 39] = record.split;
 
         data[at + 40] = record.iris;
-        data[at + 41] = 0;
-        data[at + 42] = 0;
-        data[at + 43] = 0;
+        data[at + 41] = record.lensRadius;
+        data[at + 42] = record.invFocus;
+        data[at + 43] = record.cosOuter;
+
+        data[at + 44] = record.shaperRow;
+        data[at + 45] = 0;
+        data[at + 46] = 0;
+        data[at + 47] = 0;
         count += 1;
       }
     }
@@ -620,5 +904,6 @@ export {
   CANDELA_PER_UNIT,
   REFERENCE_INTENSITY,
   LUX_SCALE,
+  SCENE_PER_NIT,
   SCENE_INTENSITY_PER_UNIT,
 };

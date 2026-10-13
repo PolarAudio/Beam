@@ -26,8 +26,6 @@ const state = {
   lastReport: 0,
   lastLog: 0,
   fps: 0,
-  /** The camera whose position is reported. See `watchCamera`. */
-  camera: null,
   element: null,
   /** Whether the readout should be on screen once it exists. */
   visible: true,
@@ -66,22 +64,6 @@ function adapterName(gl) {
 const average = (samples) => (
   samples.length ? samples.reduce((a, b) => a + b, 0) / samples.length : 0
 );
-
-/**
- * Where the camera is, formatted for reading off the screen.
- *
- * Here rather than in a panel of its own because it is read the same way the
- * timings are -- glanced at while moving around, to answer "how far away is
- * that". Metres, and the scene is Z-up, so the third number is height.
- *
- * @returns {String}
- */
-function cameraLine() {
-  const { camera } = state;
-  if (!camera) return '-';
-  const { position } = camera;
-  return `${position.x.toFixed(2)}  ${position.y.toFixed(2)}  ${position.z.toFixed(2)}`;
-}
 
 function push(samples, value) {
   samples.push(value);
@@ -229,7 +211,6 @@ function end() {
 
   state.element.textContent = [
     `adapter    ${state.adapter}`,
-    `camera     ${cameraLine()}`,
     `fps        ${state.fps.toFixed(1)}`,
     `gpu        ${gpu}`,
     `cpu        ${average(state.cpuSamples).toFixed(2)} ms`,
@@ -279,18 +260,6 @@ function getPasses() {
   return state.passes;
 }
 
-/**
- * Hands the overlay the camera whose position it reports.
- *
- * Read live each frame rather than pushed, so nothing has to remember to
- * update it as the view moves.
- *
- * @param {Object} camera
- */
-function watchCamera(camera) {
-  state.camera = camera;
-}
-
 export default {
-  init, begin, end, setPasses, getPasses, setVisible, watchCamera,
+  init, begin, end, setPasses, getPasses, setVisible,
 };

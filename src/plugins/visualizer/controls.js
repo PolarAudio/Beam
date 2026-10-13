@@ -152,7 +152,11 @@ const euler = new THREE.Euler();
 const GIZMO_MODES = {
   TRANSLATE: 'translate',
   ROTATE: 'rotate',
+  SCALE: 'scale',
 };
+
+/** The smallest scale a gizmo drag may leave on an axis. */
+const MIN_GIZMO_SCALE = 0.01;
 /**
  * How far the pointer may travel between press and release and still count as
  * a click rather than a camera orbit.
@@ -316,16 +320,48 @@ const FIT_FILL = 0.92;
  */
 const MIN_FRAME_RADIUS = 0.6;
 /**
- * The volume an empty scene is framed as, in metres, and where it sits.
+ * How far behind the orbit target an orthographic camera stands, in metres.
  *
- * A unit cube at the origin straddles the floor and is small enough that the
- * camera ends up kneeling on the grid, looking at a point underfoot. A room
- * standing *on* the floor is what an empty show is really showing, so that is
- * what gets framed.
+ * Where an orthographic camera sits along its axis changes nothing in the
+ * picture; it only has to be clear of the scene, so nothing is cut by the
+ * near plane. Every move puts it back here.
  *
- * @constant {Object} EMPTY_SCENE_SIZE
+ * @constant {Number}
  */
-const EMPTY_SCENE_SIZE = new THREE.Vector3(8, 8, 4);
+export const ORTHO_STANDOFF = 200;
+/**
+ * The field of view an orthographic view is sized against: its frustum is as
+ * tall as a perspective view this wide would show at the orbit target, so
+ * framing and the switch between the two keep the picture the same size.
+ *
+ * @constant {Number}
+ */
+export const ORTHO_REFERENCE_FOV = 45;
+
+/**
+ * Sets an orthographic camera's frustum to a half-height in metres, keeping
+ * its aspect.
+ *
+ * @param {THREE.OrthographicCamera} camera
+ * @param {Number} half metres from the middle of the view to its top
+ */
+export function setOrthoHalfHeight(camera, half) {
+  const height = camera.top - camera.bottom;
+  const aspect = height > 0 ? (camera.right - camera.left) / height : 1;
+  camera.top = half;
+  camera.bottom = -half;
+  camera.left = -half * aspect;
+  camera.right = half * aspect;
+  camera.updateProjectionMatrix();
+}
+
+/**
+ * The nearest a view-cube click leaves the camera to what it turns about, in
+ * metres, so a camera sitting on its pivot still gets somewhere to look from.
+ *
+ * @constant {Number}
+ */
+const MIN_VIEW_DISTANCE = 1;
 /**
  * How far above the floor the camera is always kept.
  *
@@ -368,11 +404,13 @@ const GIZMO_SIZE = 0.65;
 const GIZMO_OPACITY = 0.6;
 
 /**
- * The screen-space handle at the gizmo's centre, which is removed.
+ * The screen-space handle at the gizmo's centre, which is removed from the
+ * move and rotate tools.
  *
  * Dragging in the camera's plane is the one motion with no relation to the
  * rig's own axes, and it sits directly over whatever is selected. The two-axis
- * planes stay: those are useful for sliding along a truss or a wall.
+ * planes stay: those are useful for sliding along a truss or a wall. The
+ * scale tool keeps its centre handle, which scales all three axes together.
  *
  * @constant {Array}
  */
@@ -464,7 +502,10 @@ class Controls {
    * @type {String}
    */
   set gizmoMode(value) {
-    const next = value === GIZMO_MODES.ROTATE ? GIZMO_MODES.ROTATE : GIZMO_MODES.TRANSLATE;
+    let next = GIZMO_MODES.TRANSLATE;
+    if (value === GIZMO_MODES.ROTATE) next = GIZMO_MODES.ROTATE;
+    // Only a single model from a file scales; anything else stays on Move.
+    if (value === GIZMO_MODES.SCALE && this.scaleTarget()) next = GIZMO_MODES.SCALE;
     this.lastGizmoMode = next;
     this.mode = CONTROL_MODES.NORMAL;
     if (this.handle) this.handle.setMode(next);
@@ -477,6 +518,49 @@ class Controls {
 
   get gizmoMode() {
     return this.lastGizmoMode;
+  }
+
+  /**
+   * The item the scale tool works on: the selection when it is one model
+   * from a file, otherwise null. Fixtures, created shapes, structures and
+   * several items together do not scale by axis.
+   *
+   * @public
+   * @returns {Object|null}
+   */
+  scaleTarget() {
+    if (this.pooledInstances.length !== 1) return null;
+    const [item] = this.pooledInstances;
+    return item && item.isScalable ? item : null;
+  }
+
+  /**
+   * Puts the gizmo on the scale proxy: at the model's origin, turned with
+   * it, and scaled as it is, so the handles run along the model's own axes.
+   *
+   * @private
+   * @param {Object} item from `scaleTarget`
+   */
+  attachScaleProxy(item) {
+    const node = toRaw(item._3DModel._dummy);
+    node.updateMatrixWorld(true);
+    node.getWorldPosition(this.scaleProxy.position);
+    node.getWorldQuaternion(this.scaleProxy.quaternion);
+    const { scale } = item;
+    this.scaleProxy.scale.set(scale.x, scale.y, scale.z);
+    this.scaleProxy.updateMatrixWorld(true);
+    this.handle.setSpace('local');
+    this.handle.attach(this.scaleProxy);
+  }
+
+  /**
+   * Whether the gizmo has hold of the scale proxy.
+   *
+   * @private
+   * @returns {Boolean}
+   */
+  scaling() {
+    return !!(this.handle && this.handle.object === this.scaleProxy);
   }
 
   /**
@@ -509,6 +593,11 @@ class Controls {
     this.stripCentreHandle();
     this.applySnap();
     this.handle.setMode('translate'); // Setting default handle mode
+    // What the scale tool drags. The model's own transform node is in the
+    // selection group and carries no scale, so the gizmo scales this stand-in
+    // and the model is drawn from it.
+    this.scaleProxy = new THREE.Object3D();
+    SceneManager.add(this.scaleProxy);
     this.controlHandle = orbitcontrolsControlsHandle;
     this.cameraHandle = camera;
 
@@ -559,6 +648,18 @@ class Controls {
     // a fixture anywhere -- understage and pit positions are real -- but a drag
     // should not push one through the floor by accident.
     this.handle.addEventListener('objectChange', () => {
+      if (this.scaling()) {
+        const { scale } = this.scaleProxy;
+        scale.set(
+          Math.max(Math.abs(scale.x), MIN_GIZMO_SCALE),
+          Math.max(Math.abs(scale.y), MIN_GIZMO_SCALE),
+          Math.max(Math.abs(scale.z), MIN_GIZMO_SCALE),
+        );
+        const target = this.scaleTarget();
+        if (target) target.previewScale({ x: scale.x, y: scale.y, z: scale.z });
+        EventBus.emit('transform_changed');
+        return;
+      }
       this.clampToFloor();
       this.syncGroupsFromGizmo();
       // Said out loud so the coordinate fields can follow a drag. They cannot
@@ -569,6 +670,17 @@ class Controls {
     });
     this.handle.addEventListener('mouseUp', () => { // Listening for mouseup events on control helpers
       this.controlHandle.enabled = true; // Enabling camera control
+      // The drag is kept only now, so a scale is written once per drag.
+      // Its node goes back into the scene first: writing the model sets the
+      // node's position in world space, which inside the selection group would
+      // land offset by the group's own position.
+      const target = this.scaling() ? this.scaleTarget() : null;
+      if (target) {
+        const { x, y, z } = this.scaleProxy.scale;
+        this.applyTransformation();
+        if (target.scaleKeepingBottom) target.scaleKeepingBottom({ x, y, z });
+        else target.scale = { x, y, z };
+      }
       this.showHelpers(); // Update modifications
     });
     this.controlHandle.domElement.addEventListener('mousedown', () => {
@@ -604,18 +716,16 @@ class Controls {
     }
 
     if (e.key === 'Escape') {
-      this.mode = CONTROL_MODES.DISCRETE;
-      this.showHelpers();
-      this.handle.setMode('translate');
-      this.detachAll();
-      // Escape is an explicit request to reset the view, not a side effect of
-      // selecting, so it stands whatever auto-focus is set to.
-      this.setFocus(false, { force: true });
-      this.clearAllHighlighting();
+      // Deselects and nothing else, as a click on empty scene does: the view
+      // stays where it is, so a crowded scene with no empty space to click
+      // can still be cleared without losing the framing.
+      this.deselectAll();
     } else if (e.key.toLowerCase() === 't') {
       this.gizmoMode = GIZMO_MODES.TRANSLATE;
     } else if (e.key.toLowerCase() === 'r') {
       this.gizmoMode = GIZMO_MODES.ROTATE;
+    } else if (e.key.toLowerCase() === 's') {
+      this.gizmoMode = GIZMO_MODES.SCALE;
     } else if (e.key === 'Delete' || e.key === 'Backspace') {
       // Asked for rather than done here: what a fixture or a structure means
       // when it is deleted -- addresses released, members taken with it -- is
@@ -679,9 +789,6 @@ class Controls {
    * @param {Object} e pointerdown event
    */
   handlePointerDown(e) {
-    // Right starts an orbit, so that is the moment to decide what it turns
-    // about.
-    if (e.button === 2) this.setPivotFromPointer(e);
     // A press that starts on a gizmo axis belongs to the transform handle.
     // Middle and right belong to the camera.
     if (e.button !== 0 || (this.handle && this.handle.axis)) {
@@ -930,23 +1037,8 @@ class Controls {
    */
   setPivotFromPointer(e) {
     if (!this.cameraHandle || !this.controlHandle) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    if (!rect.width || !rect.height) return;
-    pointer.x = (((e.clientX - rect.left) / rect.width) * 2) - 1;
-    pointer.y = (-((e.clientY - rect.top) / rect.height) * 2) + 1;
-    raycaster.setFromCamera(pointer, this.cameraHandle);
-
-    const targets = SCENE_RENDERERS
-      .flatMap((renderer) => renderer.pickObjects())
-      .filter(Boolean);
-    const hit = raycaster.intersectObjects(targets, false)
-      .find((candidate) => shown(ownerOfHit(candidate)));
-    if (hit) {
-      pivotPoint.copy(hit.point);
-    } else if (!raycaster.ray.intersectPlane(pivotGround, pivotPoint)) {
-      // Pointing at the sky: nothing to orbit about, so leave the pivot alone.
-      return;
-    }
+    // Pointing at the sky: nothing to orbit about, so leave the pivot alone.
+    if (!this.scenePointAt(e, pivotPoint)) return;
 
     pivotAxis.subVectors(this.controlHandle.target, this.cameraHandle.position);
     if (pivotAxis.lengthSq() < 1e-9) return;
@@ -960,6 +1052,34 @@ class Controls {
     this.controlHandle.target
       .copy(this.cameraHandle.position)
       .add(pivotAxis.multiplyScalar(depth));
+  }
+
+  /**
+   * The first thing in the scene under the pointer, or the floor where
+   * nothing is.
+   *
+   * @public
+   * @param {Object} e `{ clientX, clientY, currentTarget }`, the canvas as target
+   * @param {Object} out THREE.Vector3 to write the point into
+   * @returns {Boolean} false when the pointer meets neither, at the sky
+   */
+  scenePointAt(e, out) {
+    if (!this.cameraHandle) return false;
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (!rect.width || !rect.height) return false;
+    pointer.x = (((e.clientX - rect.left) / rect.width) * 2) - 1;
+    pointer.y = (-((e.clientY - rect.top) / rect.height) * 2) + 1;
+    raycaster.setFromCamera(pointer, this.cameraHandle);
+    const targets = SCENE_RENDERERS
+      .flatMap((renderer) => renderer.pickObjects())
+      .filter(Boolean);
+    const hit = raycaster.intersectObjects(targets, false)
+      .find((candidate) => shown(ownerOfHit(candidate)));
+    if (hit) {
+      out.copy(hit.point);
+      return true;
+    }
+    return !!raycaster.ray.intersectPlane(pivotGround, out);
   }
 
   /**
@@ -1011,8 +1131,27 @@ class Controls {
    * @param {Object} item fixture or structure
    * @returns {Object|null} `{ position, rotation }` in metres and degrees
    */
-  // eslint-disable-next-line class-methods-use-this
   liveTransform(item) {
+    const live = this.liveTransformOf(item);
+    if (!live || !this.scaling() || toRaw(item) !== this.scaleTarget()) return live;
+    const { scale } = this.scaleProxy;
+    const own = item.modelSize || { x: 0, y: 0, z: 0 };
+    return {
+      ...live,
+      scale: { x: scale.x, y: scale.y, z: scale.z },
+      size: { x: own.x * scale.x, y: own.y * scale.y, z: own.z * scale.z },
+    };
+  }
+
+  /**
+   * Position and rotation of an item the gizmo has hold of.
+   *
+   * @private
+   * @param {Object} item fixture or structure
+   * @returns {Object|null} `{ position, rotation }`
+   */
+  // eslint-disable-next-line class-methods-use-this
+  liveTransformOf(item) {
     const model = item ? toRaw(item._3DModel) : null;
     const dummy = model ? toRaw(model._dummy) : null;
     if (!dummy || !dummy.parent || toRaw(dummy.parent) === SceneManager) return null;
@@ -1194,9 +1333,8 @@ class Controls {
   framingDistance(box = this.boundingBox, fill = FRAME_FILL) {
     box.getBoundingSphere(framingSphere);
     const radius = Math.max(framingSphere.radius, MIN_FRAME_RADIUS);
-    const halfFov = THREE.MathUtils.degToRad(this.cameraHandle.fov || 50) / 2;
-    const spread = Math.tan(halfFov) * fill;
-    const aspect = this.cameraHandle.aspect || 1;
+    const spread = this.viewTan() * fill;
+    const aspect = this.viewAspect();
     return Math.max(radius / spread, radius / (spread * aspect));
   }
 
@@ -1217,9 +1355,26 @@ class Controls {
    * @param {Number} [options.fov] field of view to arrive at, degrees
    * @param {Function} [options.onDone] called once, on arrival
    */
-  flyTo(endPos, endTarget, options = {}) {
+  flyTo(endPosition, endTarget, options = {}) {
     if (!this.cameraHandle) return;
     cancelAnimationFrame(this.rafID);
+    // A flight aims the camera afresh, so a lens shift goes with it.
+    this.clearLensShift();
+    // Orthographic: the distance asked for becomes the frustum's size, and the
+    // camera goes to its standoff along the same direction.
+    const ortho = this.isOrtho();
+    let endPos = endPosition;
+    let startHalf = 0;
+    let endHalf = 0;
+    if (ortho) {
+      const back = endPosition.clone().sub(endTarget);
+      const distance = back.length();
+      if (distance > 1e-6) back.divideScalar(distance);
+      else back.copy(this.cameraHandle.position).sub(this.controlHandle.target).normalize();
+      startHalf = this.cameraHandle.top / (this.cameraHandle.zoom || 1);
+      endHalf = distance > 1e-6 ? distance * this.viewTan() : startHalf;
+      endPos = endTarget.clone().addScaledVector(back, ORTHO_STANDOFF);
+    }
     this.cameraHandle.updateMatrixWorld();
     const startPos = new THREE.Vector3();
     startPos.setFromMatrixPosition(this.cameraHandle.matrixWorld);
@@ -1261,7 +1416,9 @@ class Controls {
         startTPos.y + dTY * progress,
         startTPos.z + dTZ * progress,
       );
-      if (endFov !== null) {
+      if (ortho) {
+        setOrthoHalfHeight(this.cameraHandle, startHalf + (endHalf - startHalf) * progress);
+      } else if (endFov !== null) {
         this.cameraHandle.fov = startFov + (endFov - startFov) * progress;
         this.cameraHandle.updateProjectionMatrix();
       }
@@ -1341,33 +1498,97 @@ class Controls {
   }
 
   /**
-   * Looks at the scene from an arbitrary direction, framed to fit.
+   * Looks from an arbitrary direction at the same distance.
    *
    * The corners of the navigation cube are isometric views, which are not one
    * of the six named axes, so direction is the general form and setView is a
    * convenience over it.
    *
+   * Only the direction changes. The view turns about the selection's centre
+   * when something is selected, so the selection lands on the optical axis,
+   * and about the orbit centre otherwise. The camera stays as far from that
+   * centre as it was; framing the whole scene is the frame button's job.
+   *
    * @public
    * @param {Object} direction vector from the subject towards the camera
    */
   setViewDirection(direction) {
-    if (!this.cameraHandle) return;
-    this.sceneBounds(sceneBox);
-    // An empty scene still deserves a sensible viewpoint, so fall back to an
-    // empty room resting on the floor rather than refusing to move.
-    if (sceneBox.isEmpty()) {
-      sceneBox.setFromCenterAndSize(
-        new THREE.Vector3(0, 0, EMPTY_SCENE_SIZE.z / 2),
-        EMPTY_SCENE_SIZE,
-      );
-    }
-    const centre = sceneBox.getCenter(new THREE.Vector3());
+    if (!this.cameraHandle || !this.controlHandle) return;
+    const centre = this.pooledInstances.length && !this.boundingBox.isEmpty()
+      ? this.boundingBox.getCenter(new THREE.Vector3())
+      : this.controlHandle.target.clone();
+    this.cameraHandle.updateMatrixWorld();
+    const eye = new THREE.Vector3().setFromMatrixPosition(this.cameraHandle.matrixWorld);
+    // Orthographic: the distance whose view is as big as the frustum, so the
+    // picture keeps its size.
+    const distance = this.isOrtho()
+      ? this.orthoDistance()
+      : Math.max(eye.distanceTo(centre), MIN_VIEW_DISTANCE);
     const unit = direction.clone().normalize();
-    const distance = this.framingDistance(sceneBox, FIT_FILL);
     this.flyTo(
       this.aboveFloor(centre.clone().addScaledVector(unit, distance)),
       centre,
     );
+  }
+
+  /**
+   * Whether the view is orthographic.
+   *
+   * @public
+   * @returns {Boolean}
+   */
+  isOrtho() {
+    return !!(this.cameraHandle && this.cameraHandle.isOrthographicCamera);
+  }
+
+  /**
+   * Tangent of half the view's height angle: the camera's own, or the one an
+   * orthographic view is sized against.
+   *
+   * @public
+   * @returns {Number}
+   */
+  viewTan() {
+    const fov = this.isOrtho() ? ORTHO_REFERENCE_FOV : (this.cameraHandle.fov || 50);
+    return Math.tan(THREE.MathUtils.degToRad(fov) / 2);
+  }
+
+  /**
+   * The view's width over its height.
+   *
+   * @public
+   * @returns {Number}
+   */
+  viewAspect() {
+    const camera = this.cameraHandle;
+    if (!camera) return 1;
+    if (this.isOrtho()) {
+      const height = camera.top - camera.bottom;
+      return height > 0 ? (camera.right - camera.left) / height : 1;
+    }
+    return camera.aspect || 1;
+  }
+
+  /**
+   * The distance at which a perspective view would be as big as the
+   * orthographic frustum is now.
+   *
+   * @public
+   * @returns {Number} metres
+   */
+  orthoDistance() {
+    const camera = this.cameraHandle;
+    return (camera.top / (camera.zoom || 1)) / this.viewTan();
+  }
+
+  /**
+   * Centres the picture again after a middle-drag slid it.
+   *
+   * @public
+   */
+  clearLensShift() {
+    const camera = this.cameraHandle;
+    if (camera && camera.view && camera.view.enabled) camera.clearViewOffset();
   }
 
   /**
@@ -1467,7 +1688,7 @@ class Controls {
       if (!set) return;
       Object.keys(set).forEach((mode) => {
         const root = set[mode];
-        if (!root) return;
+        if (!root || mode === GIZMO_MODES.SCALE) return;
         [...root.children]
           .filter((child) => CENTRE_HANDLES.includes(child.name))
           .forEach((child) => root.remove(child));
@@ -1731,7 +1952,13 @@ class Controls {
       this.boundingBoxMesh.getWorldPosition(position2);
       this.groupedInstances.position.copy(position2);
       if (this.mode !== CONTROL_MODES.DISCRETE) {
-        this.handle.attach(this.groupedInstances);
+        const target = this.lastGizmoMode === GIZMO_MODES.SCALE ? this.scaleTarget() : null;
+        if (target) {
+          this.attachScaleProxy(target);
+        } else {
+          this.handle.setSpace('world');
+          this.handle.attach(this.groupedInstances);
+        }
       }
       this.groupedInstances.attach(this.boundingBoxMesh);
 
@@ -1785,7 +2012,12 @@ class Controls {
     // store follows it, whether or not anything gets announced afterwards.
     Selection.set(this.pooledInstances);
     // Selecting a fixture brings the gizmo back in whichever mode was last
-    // used, rather than leaving the user to press T/R every time.
+    // used, rather than leaving the user to press T/R every time. Scale only
+    // while the selection is a single model; anything else drops to Move.
+    if (this.lastGizmoMode === GIZMO_MODES.SCALE && !this.scaleTarget()) {
+      this.lastGizmoMode = GIZMO_MODES.TRANSLATE;
+      EventBus.emit('gizmo_mode', this.lastGizmoMode);
+    }
     if (this.handle) {
       this.mode = CONTROL_MODES.NORMAL;
       this.handle.setMode(this.lastGizmoMode);

@@ -4,6 +4,8 @@
 // into bytes, and spelling that as arithmetic would obscure the one thing a
 // reader needs to check it against, which is the spec's own diagram.
 import DmxReceiver, { DMX_LENGTH } from './dmx_receiver';
+import { SACN_PORT, ACN_ID, groupFor } from './sacn_wire';
+import { SacnSender } from './sacn_sender';
 
 /**
  * sACN (E1.31) UDP engine (main process).
@@ -32,14 +34,6 @@ import DmxReceiver, { DMX_LENGTH } from './dmx_receiver';
  *
  * @see ANSI E1.31-2018
  */
-
-/** The port every sACN source sends to. */
-const SACN_PORT = 5568;
-
-/** ACN packet identifier, 12 bytes, the same in every E1.31 packet. */
-const ACN_ID = Buffer.from([
-  0x41, 0x53, 0x43, 0x2d, 0x45, 0x31, 0x2e, 0x31, 0x37, 0x00, 0x00, 0x00,
-]);
 
 /** Root layer vector for a data packet. */
 const VECTOR_ROOT_E131_DATA = 0x00000004;
@@ -118,7 +112,7 @@ class Sacn extends DmxReceiver {
    * @returns {String} dotted quad
    */
   static groupFor(universe) {
-    return `239.255.${(universe >> 8) & 0xff}.${universe & 0xff}`;
+    return groupFor(universe);
   }
 
   /**
@@ -229,6 +223,8 @@ class Sacn extends DmxReceiver {
     const universe = msg.readUInt16BE(AT.UNIVERSE);
     if (universe < 1) return null;
     const cid = msg.subarray(AT.CID, AT.CID + 16).toString('hex');
+    // Beam's own sender mode, heard back over multicast loopback.
+    if (cid === SacnSender.cid) return null;
     const sequence = msg.readUInt8(AT.SEQUENCE);
     if (!this.isCurrent(`${cid}/${universe}`, sequence)) return null;
 

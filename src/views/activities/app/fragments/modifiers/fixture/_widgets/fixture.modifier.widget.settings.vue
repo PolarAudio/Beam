@@ -82,11 +82,11 @@
       <uk-num-input
         v-if="hasManualFocus"
         :mixed="focusMixed"
-        :model-value="fixture.focus"
+        :model-value="fixture.focusDistance"
         style="width: 92px"
-        label="Focus %"
-        :precision="0"
-        :min="0"
+        label="Focus at (m)"
+        :precision="1"
+        :min="1"
         :max="100"
         @update:model-value="writeFocus"
       />
@@ -256,15 +256,133 @@
         <uk-flex
           v-if="!isLaser && !isStrobe"
           :gap="8"
-          class="row"
+          class="row level"
         >
           <uk-select-input
             v-show="byHand('source')"
+            :key="`source-${sourceListKey}`"
             :model-value="sourceIndex"
             style="flex: 1"
-            label="Source"
+            label="Input"
             :options="sourceOptions"
             @input="pickSource"
+          />
+          <button
+            v-show="byHand('source')"
+            type="button"
+            class="more_button"
+            title="Edit this input"
+            @click="editInput"
+          >
+            …
+          </button>
+        </uk-flex>
+
+        <!-- What the panel, its processor or the projector does to the picture
+             it receives. A row the definition fixes is hidden. -->
+        <uk-flex
+          v-if="isScreen && showsAny(['rotation', 'mirrorH', 'mirrorV'])"
+          :gap="8"
+          class="row level"
+        >
+          <uk-select-input
+            v-show="byHand('rotation')"
+            :model-value="rotationIndex"
+            style="flex: 1"
+            label="Rotation"
+            :options="rotationOptions"
+            @input="pickRotation"
+          />
+          <uk-checkbox
+            v-show="byHand('mirrorH')"
+            :mixed="isMixed('mirrorH')"
+            :model-value="!!read('mirrorH')"
+            label="Mirror H"
+            @update:model-value="writeDevice('mirrorH', $event)"
+          />
+          <uk-checkbox
+            v-show="byHand('mirrorV')"
+            :mixed="isMixed('mirrorV')"
+            :model-value="!!read('mirrorV')"
+            label="Mirror V"
+            @update:model-value="writeDevice('mirrorV', $event)"
+          />
+        </uk-flex>
+        <template v-if="isScreen && showsAny(['cropLeft', 'cropRight', 'cropTop', 'cropBottom'])">
+          <span class="section_label">Crop px</span>
+          <uk-flex
+            :gap="8"
+            class="row"
+          >
+            <uk-num-input
+              v-show="byHand('cropLeft')"
+              :mixed="isMixed('cropLeft')"
+              :model-value="read('cropLeft')"
+              style="width: 72px"
+              label="Left"
+              :precision="0"
+              :min="0"
+              :max="8192"
+              @update:model-value="writeDevice('cropLeft', $event)"
+            />
+            <uk-num-input
+              v-show="byHand('cropRight')"
+              :mixed="isMixed('cropRight')"
+              :model-value="read('cropRight')"
+              style="width: 72px"
+              label="Right"
+              :precision="0"
+              :min="0"
+              :max="8192"
+              @update:model-value="writeDevice('cropRight', $event)"
+            />
+            <uk-num-input
+              v-show="byHand('cropTop')"
+              :mixed="isMixed('cropTop')"
+              :model-value="read('cropTop')"
+              style="width: 72px"
+              label="Top"
+              :precision="0"
+              :min="0"
+              :max="8192"
+              @update:model-value="writeDevice('cropTop', $event)"
+            />
+            <uk-num-input
+              v-show="byHand('cropBottom')"
+              :mixed="isMixed('cropBottom')"
+              :model-value="read('cropBottom')"
+              style="width: 72px"
+              label="Bottom"
+              :precision="0"
+              :min="0"
+              :max="8192"
+              @update:model-value="writeDevice('cropBottom', $event)"
+            />
+          </uk-flex>
+        </template>
+        <uk-flex
+          v-if="isScreen && showsAny(['scale', 'pictureZoom'])"
+          :gap="8"
+          class="row level"
+        >
+          <uk-select-input
+            v-show="byHand('scale')"
+            :model-value="scaleIndex"
+            style="flex: 1"
+            label="Scale"
+            :options="scaleOptions"
+            @input="pickScale"
+          />
+          <uk-num-input
+            v-show="byHand('pictureZoom')"
+            :mixed="isMixed('pictureZoom')"
+            :model-value="read('pictureZoom')"
+            style="width: 92px"
+            label="Zoom %"
+            :precision="0"
+            :min="25"
+            :max="400"
+            @update:model-value="writeDevice('pictureZoom', $event)"
           />
         </uk-flex>
 
@@ -557,9 +675,12 @@
 
 <script>
 import { DMX_UNIVERSE_LENGTH } from '@/models/DMX/patch.model';
+import { ROTATIONS } from '@/models/DMX/video_input';
+import { SCALE_MODES, PICTURE_KEYS } from '@/models/DMX/picture_controls';
 import { MAX_SHADOW_CASTERS } from '@/plugins/visualizer/light';
 import { imageSizeAt } from '@/models/DMX/generic/projector';
 import { GENERIC_KINDS } from '@/models/DMX/generic/kinds';
+import EventBus from '@/plugins/eventbus';
 import LaserStream from '@/plugins/laser_stream';
 import Laser from '@/plugins/visualizer/laser';
 import { SELECTABLE_PROTOCOLS, PROTOCOL_LABELS } from '@/models/DMX/laser_settings';
@@ -595,6 +716,19 @@ const WIRE_POLL_MS = 100;
 
 /** How long the copy button confirms for, in ms. */
 const COPY_FEEDBACK_MS = 1500;
+
+/** The action at the bottom of a device's Input list. */
+const CREATE_INPUT = 'Create input…';
+
+/** How each scale mode reads in the list. */
+const SCALE_NAMES = {
+  stretch: 'Stretch', fit: 'Fit', fill: 'Fill', native: 'Native',
+};
+
+/** How each rotation reads in the list. */
+const ROTATION_NAMES = {
+  0: '0°', 90: '90° clockwise', 180: '180°', 270: '90° anticlockwise',
+};
 
 export default {
   name: 'FixtureModifierWidgetSettings',
@@ -654,6 +788,8 @@ export default {
        * video popup hit reading a frame's size off a class instance.
        */
       deviceRevision: 0,
+      /** Bumped to redraw the Input list after its action entry is picked. */
+      sourceListKey: 0,
     };
   },
   computed: {
@@ -666,6 +802,10 @@ export default {
     targets() {
       if (this.fixtures && this.fixtures.length > 1) return this.fixtures;
       return this.fixture ? [this.fixture] : [];
+    },
+    /** The ids of the fixtures this panel stands for. */
+    targetIds() {
+      return this.targets.map((target) => target.id);
     },
     /** Whether the panel stands for several fixtures. */
     many() {
@@ -710,8 +850,8 @@ export default {
     },
     focusMixed() {
       if (!this.many) return false;
-      const first = this.fixture.focus;
-      return this.targets.some((target) => target.focus !== first);
+      const first = this.fixture.focusDistance;
+      return this.targets.some((target) => target.focusDistance !== first);
     },
     /**
      * Whether this fixture can cast a shadow at all. An emitter bar has no
@@ -882,6 +1022,10 @@ export default {
         duration: device.value('duration'),
         blinder: device.value('blinder'),
         gel: device.value('gel'),
+        // A display's or projector's picture: turn, mirrors, crop, scale and
+        // zoom. Absent here, every row would read empty -- a zoom showing its
+        // minimum, a mirror that a click could only ever turn on.
+        ...Object.fromEntries(PICTURE_KEYS.map((key) => [key, device.value(key)])),
       });
     },
     /**
@@ -963,9 +1107,35 @@ export default {
         ? 'Held until DMX arrives, then whatever is driving wins.'
         : 'Not patched, so these are the only thing driving this fixture.';
     },
-    /** Every connector in the show, with an unbound entry at the top. */
-    connectors() {
-      return (this.$show && this.$show.videoConnectors) || [];
+    /** Every video input in the show. */
+    videoInputs() {
+      return (this.$show && this.$show.videoInputs) || [];
+    },
+    /** A screen: it turns and mirrors its picture. */
+    isDisplay() {
+      return !!(this.fixture && this.fixture.deviceKind === GENERIC_KINDS.DISPLAY);
+    },
+    /** Shows a picture: a display or a projector. */
+    isScreen() {
+      return this.isDisplay || this.isProjector;
+    },
+    scaleOptions() {
+      const list = SCALE_MODES.map((mode) => SCALE_NAMES[mode]);
+      return this.isMixed('scale') ? ['*', ...list] : list;
+    },
+    scaleIndex() {
+      if (this.isMixed('scale')) return 0;
+      const at = SCALE_MODES.indexOf(this.read('scale'));
+      return at < 0 ? 0 : at;
+    },
+    rotationOptions() {
+      const list = ROTATIONS.map((r) => ROTATION_NAMES[r]);
+      return this.isMixed('rotation') ? ['*', ...list] : list;
+    },
+    rotationIndex() {
+      if (this.isMixed('rotation')) return 0;
+      const at = ROTATIONS.indexOf(Number(this.read('rotation')) || 0);
+      return at < 0 ? 0 : at;
     },
     /** How this laser is fed. */
     protocol() {
@@ -1088,10 +1258,12 @@ export default {
       return `Receiving${state.rate ? ` at ${Math.round(state.rate / 1000)} kpps` : ''}.`;
     },
     sourceOptions() {
-      // A laser's source is which Ponk stream feeds it, not a video connector.
+      // A laser's source is which Ponk stream feeds it, not a video input.
+      // The last entry of a video list is an action: it opens the window
+      // where inputs are made.
       const list = this.isLaser
         ? this.laserSources.map((source) => source.label)
-        : ['— none —', ...this.connectors.map((c) => c.name)];
+        : ['— none —', ...this.videoInputs.map((input) => input.name), CREATE_INPUT];
       return this.isMixed('source') ? ['*', ...list] : list;
     },
     sourceIndex() {
@@ -1102,13 +1274,13 @@ export default {
         return at < 0 ? 0 : at;
       }
       if (value === null || value === undefined) return 0;
-      // A channel names a connector by position, one-based, which is what makes
+      // A channel names an input by position, one-based, which is what makes
       // `Source Select = 1` read as the first one. A hand-set value is an id,
-      // which survives connectors being reordered.
+      // which survives inputs being reordered.
       if (this.device.isDriven('source') && this.device.hasLive('source')) {
-        return Math.min(Math.max(value, 0), this.connectors.length);
+        return Math.min(Math.max(value, 0), this.videoInputs.length);
       }
-      const at = this.connectors.findIndex((c) => c.id === value);
+      const at = this.videoInputs.findIndex((input) => input.id === value);
       return at < 0 ? 0 : at + 1;
     },
     /**
@@ -1274,8 +1446,11 @@ export default {
       this.channelRevision += 1;
       if (this.device) this.deviceRevision += 1;
     }, WIRE_POLL_MS);
+    // The Video inputs window can set a device's input; the rows re-read.
+    EventBus.on('video_input_assigned', this.onInputAssigned);
   },
   beforeUnmount() {
+    EventBus.off('video_input_assigned', this.onInputAssigned);
     if (this.streamTimer) clearInterval(this.streamTimer);
     this.streamTimer = null;
     if (this.wireTimer) clearInterval(this.wireTimer);
@@ -1395,7 +1570,7 @@ export default {
      * @param {*} value
      */
     writeFocus(value) {
-      this.targets.forEach((target) => { target.focus = value; });
+      this.targets.forEach((target) => { target.focusDistance = value; });
     },
     writeDevice(key, value) {
       if (!this.device) return;
@@ -1405,6 +1580,8 @@ export default {
         const model = target._3DModel;
         if (model && model.refresh) model.refresh();
       });
+      // A device value is saved with the project, so changing one is an edit.
+      if (this.$show && this.$show.touch) this.$show.touch();
       this.deviceRevision += 1;
     },
     /**
@@ -1423,11 +1600,44 @@ export default {
         this.writeDevice('source', (this.laserSources[index] || {}).value || null);
         return;
       }
-      const connector = index > 0 ? this.connectors[index - 1] : null;
+      if (index === this.videoInputs.length + 1) {
+        EventBus.emit('open_video_inputs', { inputId: null, fixtureIds: this.targetIds });
+        // Redrawn so the list shows the input it had, not the action.
+        this.sourceListKey += 1;
+        return;
+      }
+      const input = index > 0 ? this.videoInputs[index - 1] : null;
       // Through `writeDevice` rather than writing here: that is the one path
       // that also tells the renderer to redraw; without it, picking a source
       // would leave a display black until some *other* field was touched.
-      this.writeDevice('source', connector ? connector.id : null);
+      this.writeDevice('source', input ? input.id : null);
+    },
+    /** Whether any of these is set by hand here, so its row is worth drawing. */
+    showsAny(keys) {
+      return keys.some((key) => this.byHand(key));
+    },
+    pickScale(pick) {
+      const index = Number(pick) - (this.isMixed('scale') ? 1 : 0);
+      if (index < 0 || index >= SCALE_MODES.length) return;
+      this.writeDevice('scale', SCALE_MODES[index]);
+    },
+    onInputAssigned() {
+      this.deviceRevision += 1;
+      this.sourceListKey += 1;
+    },
+    /** Opens the Video inputs window on this device's input, if it has one. */
+    editInput() {
+      const value = this.isMixed('source') ? null : this.read('source');
+      const input = this.videoInputs.find((candidate) => candidate.id === value);
+      EventBus.emit('open_video_inputs', {
+        inputId: input ? input.id : null,
+        fixtureIds: this.targetIds,
+      });
+    },
+    pickRotation(pick) {
+      const index = Number(pick) - (this.isMixed('rotation') ? 1 : 0);
+      if (index < 0 || index >= ROTATIONS.length) return;
+      this.writeDevice('rotation', ROTATIONS[index]);
     },
     /**
      * Sets how this laser is fed.
@@ -1571,6 +1781,33 @@ export default {
 /* Top, not centred: a row mixes a labelled field with a bare hint or a DMX
    marker, and centring floats the short ones half way down beside the tall
    ones. Every widget in this app lines its rows up at the top. */
+/* A button or checkbox has no label above it, so it sits on the bottom edge
+   of the field beside it rather than level with that field's label. */
+.row.level {
+  align-items: flex-end;
+}
+
+/* The ellipsis that opens a list's window, drawn as the field beside it
+   is: same height, frame and ground, square. */
+.more_button {
+  flex: 0 0 auto;
+  width: 25px;
+  height: 25px;
+  padding: 0;
+  border: 1px solid var(--secondary-dark);
+  border-radius: 0;
+  background: var(--primary-dark);
+  color: var(--secondary-lighter);
+  font-family: Roboto-Regular, sans-serif;
+  font-size: 14px;
+  line-height: 1;
+  text-transform: none;
+  cursor: pointer;
+}
+.more_button:hover {
+  background: var(--secondary-dark);
+}
+
 .row {
   align-items: flex-start;
 }

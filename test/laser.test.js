@@ -240,5 +240,105 @@ check('a malformed batch is ignored', LaserStream.report().length, 1);
 
 LaserStream.disable();
 
-console.log(failures ? `\n${failures} FAILED` : '\nall passed');
-process.exit(failures ? 1 : 0);
+// -- A DAC stream is looked up by the address the device is bound to --------
+//
+// Batches are tagged with the bound address. A laser asking under null finds
+// nothing while the points sit in the ring. The address is kept in
+// `publishInputs` in `visualizer/laser.js`.
+
+LaserStream.disable();
+{
+  // What `laser_hub` sends: protocol, the address the device was bound to, and
+  // the IDN service number, tagged by `IdnDac.makeService`.
+  const pushed = batch('idn', 30000, 400, 0);
+  pushed.address = '192.168.100.109';
+  pushed.service = 1;
+  LaserStream.push(pushed);
+
+  const found = LaserStream.frame('idn', 50, 1, '192.168.100.109');
+  check('a laser holding the resolved address finds its points', found.count, 400);
+  check('and reads the stream the device played', found.points[0], 0);
+
+  // The same laser asking under no address is a lookup miss, not an empty
+  // stream.
+  check('a laser that lost the address finds nothing', LaserStream.frame('idn', 50, 1, null).count, 0);
+  check('while the points are still held', LaserStream.frame('idn', 50, 1, '192.168.100.109').count, 400);
+
+  // The service is half the address too: two lasers on one unit are told apart
+  // by it, and one asking for the other's service reads its points.
+  const second = batch('idn', 30000, 100, 500);
+  second.address = '192.168.100.109';
+  second.service = 2;
+  LaserStream.push(second);
+  check('a second service is its own stream', LaserStream.frame('idn', 50, 2, '192.168.100.109').count, 100);
+  check('and service 1 is unchanged by it', LaserStream.frame('idn', 50, 1, '192.168.100.109').count, 400);
+
+  // The status line reads `report`, so a lost address also reads as nothing
+  // connected.
+  const rows = LaserStream.report().filter((r) => r.protocol === 'idn');
+  check('report addresses every stream it holds', rows.length, 2);
+  check('and names the address the device is bound to', rows.every((r) => r.address === '192.168.100.109'), true);
+  check('no row is reachable under a null address', LaserStream.report().some((r) => r.protocol === 'idn' && !r.address), false);
+}
+
+LaserStream.disable();
+
+// -- A starved stream goes dark ----------------------------------------------
+//
+// Recency alone passes a trickle: a stopped IDN host measured 31 pps against
+// a declared 14,610. These check the achieved rate, not the age of the last
+// packet.
+
+/** A batch of `n` points at a declared rate, tagged as an IDN service. */
+function dacBatch(n, rate, address = '10.0.0.1', service = 1) {
+  const points = new Uint16Array(n * POINT_STRIDE);
+  for (let i = 0; i < n; i += 1) {
+    points[i * POINT_STRIDE] = i & 0xffff;
+    points[(i * POINT_STRIDE) + 2] = 0xffff;
+  }
+  return {
+    protocol: 'idn', rate, address, service, points,
+  };
+}
+
+const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+
+/** Pushes a batch of `n` points every 50 ms for `ms`. */
+async function feedFor(n, rate, ms) {
+  const until = performance.now() + ms;
+  do {
+    LaserStream.push(dacBatch(n, rate));
+    await sleep(50);
+  } while (performance.now() < until);
+}
+
+(async () => {
+  LaserStream.disable();
+
+  console.log('\n-- a stream really delivering its rate stays lit --');
+  await feedFor(1500, 30000, 700); // 30 kpps declared, 30 kpps delivered
+  check('a healthy stream is live', LaserStream.report()[0].live, true);
+  check('and still drawing', LaserStream.frame('idn', 50, 1, '10.0.0.1').count > 0, true);
+
+  console.log('\n-- a trickle declaring the same rate goes dark --');
+  // One point every 50 ms is 20 pps against 30,000 declared. Every push lands
+  // inside the 200 ms staleness window, so this is starved, not quiet.
+  await feedFor(1, 30000, 700);
+  check('a starved stream is not live', LaserStream.report()[0].live, false);
+  check('and draws nothing', LaserStream.frame('idn', 50, 1, '10.0.0.1').count, 0);
+  check('and reports no points held', LaserStream.report()[0].held, 0);
+  // What arrived is still counted.
+  check('though what arrived is still counted', LaserStream.report()[0].received > 0, true);
+
+  console.log('\n-- and silence is still dark, for the other reason --');
+  LaserStream.disable();
+  await feedFor(1500, 30000, 400);
+  check('a healthy stream is live again', LaserStream.report()[0].live, true);
+  await sleep(400);
+  check('silence ends it', LaserStream.report()[0].live, false);
+  check('and it draws nothing', LaserStream.frame('idn', 50, 1, '10.0.0.1').count, 0);
+
+  LaserStream.disable();
+  console.log(failures ? `\n${failures} FAILED` : '\nall passed');
+  process.exit(failures ? 1 : 0);
+})();

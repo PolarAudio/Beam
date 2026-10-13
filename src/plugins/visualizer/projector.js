@@ -1,9 +1,11 @@
 import * as THREE from 'three';
+import VideoRouter from './video_router';
+import { pictureOf, pictureMapping } from '../../models/DMX/picture_controls';
 import SceneManager from './scene_manager';
 import { PROJECTOR_NEAR, PROJECTOR_FAR } from './projector_depth';
 import { castsContactShadow } from './contact_shadows';
 import {
-  DEFAULT_PROJECTOR_PARAMS, lensOrigin, throwAngles, throwFrustum, throwRange,
+  DEFAULT_PROJECTOR_PARAMS, lensOrigin, bodyCentre, throwAngles, throwFrustum, throwRange,
 } from '../../models/DMX/generic/projector';
 import BodyFinish from './body_finish';
 import { setOutlined } from './selection_outline';
@@ -37,6 +39,35 @@ import { setOutlined } from './selection_outline';
 
 /** Every projector in the scene, so the statics can sweep them. */
 const instances = new Set();
+
+/**
+ * The part of the frame (0..1, y up) that holds picture: the texture rectangle
+ * `bounds` mapped back through the frame-to-texture map, clipped to the frame.
+ * Crop with Native, Fit and zoom below 100 leave the rest of the frame black.
+ *
+ * @param {Array} rowX frame-to-texture row for u
+ * @param {Array} rowY frame-to-texture row for v
+ * @param {Array} bounds texture rectangle `[x0, y0, x1, y1]`
+ * @returns {Array} `[x0, y0, x1, y1]` in the frame
+ */
+export function litRect(rowX, rowY, bounds) {
+  const [a, b, tx] = rowX;
+  const [c, d, ty] = rowY;
+  const det = a * d - b * c;
+  if (Math.abs(det) < 1e-9) return [0, 0, 1, 1];
+  const [x0, y0, x1, y1] = bounds;
+  const corners = [[x0, y0], [x1, y0], [x0, y1], [x1, y1]].map(([u, v]) => [
+    (d * (u - tx) - b * (v - ty)) / det,
+    (a * (v - ty) - c * (u - tx)) / det,
+  ]);
+  const xs = corners.map((corner) => corner[0]);
+  const ys = corners.map((corner) => corner[1]);
+  const clip = (value) => Math.min(Math.max(value, 0), 1);
+  return [
+    clip(Math.min(...xs)), clip(Math.min(...ys)),
+    clip(Math.max(...xs)), clip(Math.max(...ys)),
+  ];
+}
 
 /** Unit body, scaled per projector. */
 const BOX_GEOMETRY = new THREE.BoxGeometry(1, 1, 1);
@@ -146,7 +177,7 @@ class Projector {
     // and this sees the new value on the next refresh without being re-handed
     // anything. Null for a projector built without a placement behind it.
     this._settingsAt = data.settingsAt || (() => null);
-    this._connectorAt = data.connectorAt || (() => null);
+    this._inputAt = data.inputAt || (() => null);
     // The lens as a camera: what it can see is what it lights. Plain rather
     // than a PerspectiveCamera because the frustum is asymmetric -- lens shift
     // is an off-centre projection, and `fov` cannot say that.
@@ -227,6 +258,8 @@ class Projector {
     // Width across, depth front-to-back, height up -- the box stands the way
     // the machine does.
     this._body.scale.set(width, depth, height);
+    const body = bodyCentre(params);
+    this._body.position.set(body.x, body.y, body.z);
 
     // The model measures the lens from the centre of the front panel, seen by
     // someone facing it. The panel faces -Y, so that observer stands at -Y and
@@ -384,9 +417,10 @@ class Projector {
     const width = Math.max(Number(params.width) || 0, 0.001);
     const height = Math.max(Number(params.height) || 0, 0.001);
     const depth = Math.max(Number(params.depth) || 0, 0.001);
+    const body = bodyCentre(params);
     this._dummy.updateMatrixWorld();
-    bodyBounds.min.set(-width / 2, -depth / 2, -height / 2);
-    bodyBounds.max.set(width / 2, depth / 2, height / 2);
+    bodyBounds.min.set(body.x - width / 2, body.y - depth / 2, body.z - height / 2);
+    bodyBounds.max.set(body.x + width / 2, body.y + depth / 2, body.z + height / 2);
     bodyBounds.applyMatrix4(this._dummy.matrixWorld);
     box.union(bodyBounds);
   }
@@ -412,7 +446,8 @@ class Projector {
    * @type {Number}
    */
   get floorOffset() {
-    return (Number((this._params || {}).height) || 0) / 2;
+    const params = this._params || {};
+    return (Number(params.height) || 0) / 2 - bodyCentre(params).z;
   }
 
   /**
@@ -495,6 +530,7 @@ class Projector {
   static deleteInstance(instance) {
     if (!instance) return;
     instances.delete(instance);
+    VideoRouter.drop(instance);
     if (instance._frustum && instance._frustum.geometry) instance._frustum.geometry.dispose();
     setOutlined(instance, false);
     if (instance._dummy) SceneManager.remove(instance._dummy);
@@ -522,9 +558,10 @@ class Projector {
    * @returns {Object|null} `{ camera, lensMatrix, rect, lumensPerArea, gain }`
    */
   projection() {
-    if (this._hidden) return null;
-    const connector = this._connectorAt();
-    if (!connector) return null;
+    const input = this._hidden ? null : this._inputAt();
+    // Opens the input's feed if nothing else holds it; a no-op when unchanged.
+    VideoRouter.use(this, input ? input.id : null);
+    if (!input) return null;
 
     const settings = this._settingsAt();
     // A closed shutter is a projector throwing nothing, not a black picture --
@@ -580,9 +617,12 @@ class Projector {
     return {
       camera: this._camera,
       lensMatrix: this._lensMatrix,
-      rect: connector.rect,
+      pictureMap: this.pictureMap(settings, input),
+      inputId: input.id,
       // Lux times metres squared: divide by distance squared for lux.
       lumensPerArea: Math.max(Number(params.lumens) || 0, 0) / areaAtOneMetre,
+      // Full-on/full-off contrast: black is white over this, across the frame.
+      black: 1 / Math.max(Number(params.contrast) || DEFAULT_PROJECTOR_PARAMS.contrast, 1),
       gain,
       blend: {
         left: edge('blendLeft'),
@@ -590,6 +630,35 @@ class Projector {
         top: edge('blendTop'),
         bottom: edge('blendBottom'),
       },
+    };
+  }
+
+  /**
+   * Where each point of the throw comes from in the input, as the pass reads
+   * it: two rows of an affine map from the frame (0..1, y up) to the input's
+   * texture (y up), and the rectangle of the texture that holds picture.
+   *
+   * @param {Object} settings ProjectorSettings
+   * @param {Object} input VideoInput
+   * @returns {Object} `{ rowX, rowY, bounds }`, arrays of 3, 3 and 4
+   */
+  pictureMap(settings, input) {
+    const params = this._params || {};
+    const feed = VideoRouter.feedFor(input.id);
+    const m = pictureMapping(pictureOf(settings), {
+      aspect: (Number(params.pixelsWide) || 16) / (Number(params.pixelsHigh) || 9),
+      pixelsWide: params.pixelsWide,
+      pixelsHigh: params.pixelsHigh,
+    }, feed ? { width: feed.width, height: feed.height } : {});
+    // The mapping counts down from the top-left on both sides; the frame and
+    // the texture both count up. With u = fx and v = 1 - fy:
+    //   x = ax fx - bx fy + (bx + cx)
+    //   1 - y = -ay fx + by fy + (1 - by - cy)
+    const rowX = [m.ax, -m.bx, m.bx + m.cx];
+    const rowY = [-m.ay, m.by, 1 - m.by - m.cy];
+    const bounds = [m.bounds.x0, 1 - m.bounds.y1, m.bounds.x1, 1 - m.bounds.y0];
+    return {
+      rowX, rowY, bounds, lit: litRect(rowX, rowY, bounds),
     };
   }
 

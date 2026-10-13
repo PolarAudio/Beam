@@ -1,10 +1,16 @@
 import * as THREE from 'three';
 import SceneManager from './scene_manager';
 import VideoRouter from './video_router';
+import { pictureOf, pictureMapping } from '../../models/DMX/picture_controls';
 import { createPanelMaterial } from './video_material';
-import { DEFAULT_DISPLAY_PARAMS, pixelFill, displayCurve } from '../../models/DMX/generic/display';
+import {
+  DEFAULT_DISPLAY_PARAMS, pixelFill, displayCurve, stripShare,
+} from '../../models/DMX/generic/display';
 import BodyFinish from './body_finish';
 import { castsContactShadow } from './contact_shadows';
+import LightField, { SCENE_PER_NIT } from './light_field';
+import Light from './light';
+import DisplayLight from './display_light';
 import { setOutlined } from './selection_outline';
 
 /**
@@ -19,14 +25,28 @@ import { setOutlined } from './selection_outline';
  * which the view cube calls Front -- so a display at zero rotation stands
  * upright facing the way an audience sits, rather than lying on its back.
  *
- * The crop is done exactly the way the slicing editor does it: four geometry
- * UVs written from `VideoConnector.sampleAt`. That method is the one place that
- * says what a rotation and a flip mean, which is why it is on the model rather
- * than in the editor.
+ * A display shows the whole of its input, turned and mirrored by its own
+ * settings, as a real panel or LED processor does. The geometry UVs are
+ * written from `orientedSample`, the one place that says what a rotation and a
+ * mirror mean.
  */
 
 /** Every display in the scene, so the statics can sweep them. */
 const instances = new Set();
+
+/**
+ * The display's depth tile: a camera at the screen looking out along its
+ * normal, wide enough for the light it throws at any useful angle. Points
+ * past it are left unshadowed.
+ */
+const AREA_TILE_FOV = 150;
+
+/** How far a display's light is followed, in metres. */
+const AREA_RANGE = 60;
+
+const screenNormal = new THREE.Vector3();
+const screenCentre = new THREE.Vector3();
+const lookTarget = new THREE.Vector3();
 
 /**
  * A point on the display's surface, in the fixture's own space.
@@ -178,9 +198,12 @@ function buildScreen(width, height, offset, curve, hy) {
  * @param {Number} depth casing depth
  * @param {Number} bezel border width around the picture
  * @param {Number} recess how far the screen sits back from the front face
+ * @param {Object} curve
+ * @param {Boolean} open a see-through panel's casing: the frame alone, with no
+ *   back, so the room shows through the picture; nothing without a bezel
  * @returns {Object} THREE.BufferGeometry
  */
-function buildCasing(width, height, depth, bezel, recess, curve) {
+function buildCasing(width, height, depth, bezel, recess, curve, open = false) {
   const outer = width + bezel * 2;
   const hx = outer / 2;
   const hz = height / 2 + bezel;
@@ -195,9 +218,11 @@ function buildCasing(width, height, depth, bezel, recess, curve) {
   // arc position to another.
   const along = (from, to, sz, offset) => (t) => at(from + (to - from) * t, sz, offset);
 
+  if (open && !(bezel > 0)) return build.geometry();
+
   // Back, and the two ends. The ends are flat whatever the curve, because both
   // their edges sit at one arc position.
-  build.band(segments, along(-hx, hx, hz, depth), along(-hx, hx, -hz, depth));
+  if (!open) build.band(segments, along(-hx, hx, hz, depth), along(-hx, hx, -hz, depth));
   build.quad(at(hx, -hz, 0), at(hx, -hz, depth), at(hx, hz, depth), at(hx, hz, 0));
   build.quad(at(-hx, -hz, 0), at(-hx, hz, 0), at(-hx, hz, depth), at(-hx, -hz, depth));
 
@@ -219,13 +244,26 @@ function buildCasing(width, height, depth, bezel, recess, curve) {
     frame(w, hx, -h, h, 1);
   }
 
+  // An open frame has a back face as well, and its inner walls run the full
+  // depth, since there is no box behind the picture for them to meet.
+  if (open) {
+    const back = (from, to, z0, z1, count) => {
+      build.band(count, along(from, to, z1, depth), along(from, to, z0, depth));
+    };
+    back(-hx, hx, -hz, -h, segments);
+    back(-hx, hx, h, hz, segments);
+    back(-hx, -w, -h, h, 1);
+    back(w, hx, -h, h, 1);
+  }
+
   // The recess walls, facing inwards so they are seen from the front. With the
   // screen flush there is no recess and no walls -- see `recessFor`.
-  if (recess > 0) {
-    build.quad(at(-w, -h, 0), at(-w, -h, recess), at(-w, h, recess), at(-w, h, 0));
-    build.quad(at(w, -h, 0), at(w, h, 0), at(w, h, recess), at(w, -h, recess));
-    build.band(segments, along(-w, w, -h, 0), along(-w, w, -h, recess));
-    build.band(segments, along(-w, w, h, recess), along(-w, w, h, 0));
+  const wall = open ? depth : recess;
+  if (wall > 0) {
+    build.quad(at(-w, -h, 0), at(-w, -h, wall), at(-w, h, wall), at(-w, h, 0));
+    build.quad(at(w, -h, 0), at(w, h, 0), at(w, h, wall), at(w, -h, wall));
+    build.band(segments, along(-w, w, -h, 0), along(-w, w, -h, wall));
+    build.band(segments, along(-w, w, h, wall), along(-w, w, h, 0));
   }
 
   return build.geometry();
@@ -282,12 +320,12 @@ class Display {
    * @param {Object} data
    * @param {Object} data.params display parameters, see the generic model
    * @param {Function} [data.settingsAt] () => the placement's DisplaySettings
-   * @param {Function} [data.connectorAt] () => the VideoConnector it shows
+   * @param {Function} [data.inputAt] () => the VideoInput it shows
    */
   constructor(data = {}) {
     this._params = data.params || {};
     this._settingsAt = data.settingsAt || (() => null);
-    this._connectorAt = data.connectorAt || (() => null);
+    this._inputAt = data.inputAt || (() => null);
     this._position = new THREE.Vector3();
     this._rotation = new THREE.Vector3();
     this.unsupported = false;
@@ -317,6 +355,14 @@ class Display {
     this.applyGeometry();
     this.refresh();
     instances.add(this);
+    // The display lights the room with its picture's average, and casts
+    // shadows from its own depth tile.
+    if (this._level === undefined) this._level = 0;
+    this._depthSlot = -1;
+    this._depthRect = null;
+    this._depthCam = new THREE.PerspectiveCamera(AREA_TILE_FOV, 1, 0.05, 100);
+    LightField.register(this);
+    Light.addAreaDepthSource(this);
   }
 
   /**
@@ -338,7 +384,8 @@ class Display {
     const recess = recessFor(bezel, depth);
     const curve = displayCurve(params, width + bezel * 2);
     this._body.geometry.dispose();
-    this._body.geometry = buildCasing(width, height, depth, bezel, recess, curve);
+    const open = !!params.seeThrough;
+    this._body.geometry = buildCasing(width, height, depth, bezel, recess, curve, open);
 
     // On the floor of the recess, filling the opening exactly and bent on the
     // same curve. The walls meet it at right angles, so there is no pair of
@@ -360,15 +407,18 @@ class Display {
    * @public
    */
   refresh() {
-    const feed = VideoRouter.feed();
-    const connector = this._connectorAt();
+    const input = this._inputAt();
+    // Opens the input's feed if nothing else holds it; a no-op when unchanged.
+    VideoRouter.use(this, input ? input.id : null);
+    const feed = input ? VideoRouter.feedFor(input.id) : null;
     const settings = this._settingsAt();
 
     // Nothing selected, nothing bound, or nothing decoded yet. `displayTexture`
     // rather than `texture`: the raw one cannot be filtered, which is the whole
     // reason the decode pass exists.
-    if (!feed || !feed.displayTexture || !connector) {
-      if (this._screen.material !== BLANK_MATERIAL) this._screen.material = BLANK_MATERIAL;
+    if (!feed || !feed.displayTexture) {
+      const blank = this.blankMaterial();
+      if (this._screen.material !== blank) this._screen.material = blank;
       this._material = null;
       this._feedGeneration = -1;
       return;
@@ -385,12 +435,13 @@ class Display {
         pixelsHigh: this._params.pixelsHigh,
         fillX: fill.x,
         fillY: fill.y,
+        stripShare: stripShare(this._params),
       });
       this._screen.material = this._material;
       this._feedGeneration = VideoRouter.generation();
     }
 
-    this.writeScreenUvs(connector);
+    this.writeScreenUvs(settings, feed);
 
     // Dimmer and blank fold into one number, because from the screen's point of
     // view they are the same thing: how much of the picture comes out.
@@ -402,14 +453,40 @@ class Display {
   }
 
   /**
+   * What the screen shows with no picture: the shared blank, or for a
+   * see-through panel its strips alone, so the room shows between them.
+   *
+   * @returns {THREE.Material}
+   */
+  blankMaterial() {
+    const strips = stripShare(this._params);
+    if (!(strips > 0)) return BLANK_MATERIAL;
+    if (!this._blankStrips || this._blankStrips.opacity !== strips) {
+      if (this._blankStrips) this._blankStrips.dispose();
+      this._blankStrips = BLANK_MATERIAL.clone();
+      this._blankStrips.transparent = true;
+      this._blankStrips.opacity = strips;
+      this._blankStrips.depthWrite = false;
+    }
+    return this._blankStrips;
+  }
+
+  /**
    * Scales the picture's brightness, whichever material is drawing it.
    *
+   * Full white is the display's peak luminance, its nits, on the render
+   * buffer's scale.
+   *
    * @public
-   * @param {Number} gain 0..1
+   * @param {Number} level 0..1, dimmer and shutter
    */
-  setGain(gain) {
+  setGain(level) {
+    this._level = level;
     const material = this._material;
     if (!material) return;
+    const stated = Number(this._params.nits);
+    const nits = stated > 0 ? stated : DEFAULT_DISPLAY_PARAMS.nits;
+    const gain = level * nits * SCENE_PER_NIT;
     if (material.uniforms && material.uniforms.gain) {
       material.uniforms.gain.value = gain;
     } else if (material.color) {
@@ -419,18 +496,24 @@ class Display {
   }
 
   /**
-   * Points the screen's corners at the region the connector describes.
+   * Points the screen at its input, turned and mirrored by the settings.
    *
-   * The same four-corner permutation the slicing editor uses, through the same
-   * `sampleAt` -- a crop, a quarter turn and two mirrors are one reordering of
-   * four pairs. The inversions in `y` are the texture's, not the connector's:
-   * the frame is uploaded with `flipY`, so v = 1 is the picture's top row while
-   * every coordinate on a connector counts downwards from the top-left.
+   * A quarter turn and two mirrors are one reordering of the panel's
+   * coordinates, through `orientedSample`. The inversions in `y` are the
+   * texture's: the frame is uploaded with `flipY`, so v = 1 is the picture's
+   * top row while the orientation counts downwards from the top-left.
    *
    * @public
-   * @param {Object} connector a VideoConnector
+   * @param {Object} settings the display's DisplaySettings, or null
+   * @param {Object} [feed] the input's feed, for its size
    */
-  writeScreenUvs(connector) {
+  writeScreenUvs(settings, feed = null) {
+    const params = this._params || {};
+    const mapping = pictureMapping(pictureOf(settings), {
+      aspect: (Number(params.width) || 16) / (Number(params.height) || 9),
+      pixelsWide: params.pixelsWide,
+      pixelsHigh: params.pixelsHigh,
+    }, feed ? { width: feed.width, height: feed.height } : {});
     const attribute = this._screen.geometry.attributes.uv;
     const panel = this._screen.geometry.attributes.panelUv;
     if (!attribute || !panel) return;
@@ -438,7 +521,7 @@ class Display {
     // screen -- which has as many vertices as it has facets -- maps the same way
     // a flat one does.
     const pick = (u, v) => {
-      const at = connector.sampleAt(u, 1 - v);
+      const at = mapping.map(u, 1 - v);
       return { x: at.x, y: 1 - at.y };
     };
     for (let i = 0; i < attribute.count; i += 1) {
@@ -451,13 +534,25 @@ class Display {
     // needs it to carry a cell centre found on the panel back into the picture,
     // and taking it from the mapping itself means a rotated or mirrored slice
     // is already accounted for.
-    const uniforms = this._material && this._material.uniforms;
-    if (!uniforms || !uniforms.pictureAxisX) return;
     const origin = pick(0, 0);
     const alongX = pick(1, 0);
     const alongY = pick(0, 1);
-    uniforms.pictureAxisX.value.set(alongX.x - origin.x, alongX.y - origin.y);
-    uniforms.pictureAxisY.value.set(alongY.x - origin.x, alongY.y - origin.y);
+    // Where the input holds picture, in the texture's coordinates: outside it
+    // is the black of a fitted picture's bars.
+    const { bounds } = mapping;
+    // The same frame for the light the display throws, which samples the
+    // picture across the panel.
+    this._pictureFrame = {
+      origin: new THREE.Vector2(origin.x, origin.y),
+      axisX: new THREE.Vector2(alongX.x - origin.x, alongX.y - origin.y),
+      axisY: new THREE.Vector2(alongY.x - origin.x, alongY.y - origin.y),
+      bounds: new THREE.Vector4(bounds.x0, 1 - bounds.y1, bounds.x1, 1 - bounds.y0),
+    };
+    const uniforms = this._material && this._material.uniforms;
+    if (!uniforms || !uniforms.pictureAxisX) return;
+    uniforms.pictureAxisX.value.copy(this._pictureFrame.axisX);
+    uniforms.pictureAxisY.value.copy(this._pictureFrame.axisY);
+    if (uniforms.pictureBounds) uniforms.pictureBounds.value.copy(this._pictureFrame.bounds);
   }
 
   /**
@@ -616,11 +711,133 @@ class Display {
   }
 
   /**
+   * Averages every lit display's picture, for the light it throws.
+   *
+   * @static
+   * @param {THREE.WebGLRenderer} renderer
+   */
+  static updateLight(renderer) {
+    const entries = [];
+    instances.forEach((display) => {
+      if (!display.lights()) return;
+      const input = display._inputAt();
+      const feed = input ? VideoRouter.feedFor(input.id) : null;
+      if (!feed || !feed.displayTexture) return;
+      entries.push({
+        owner: display, texture: feed.displayTexture, frame: display._pictureFrame || null,
+      });
+    });
+    DisplayLight.update(renderer, entries);
+  }
+
+  /** Whether the display is showing anything, and so lighting the room. */
+  lights() {
+    return !this._hidden && this._level > 0 && this._material !== null;
+  }
+
+  /** The screen's centre and outward normal, world. */
+  screenFrame() {
+    this._dummy.updateMatrixWorld();
+    // The screen faces -Y in the display's own frame.
+    screenNormal.set(0, -1, 0).transformDirection(this._dummy.matrixWorld);
+    this._dummy.getWorldPosition(screenCentre);
+  }
+
+  /**
+   * The display as an area light, for `LightField`: a matte emitter at its
+   * nits, coloured by its picture's average, with a disc of its own area as
+   * the radius that softens its light and its shadows.
+   *
+   * @public
+   * @param {Object} record
+   * @returns {Boolean} whether it is lighting anything
+   */
+  readLight(record) {
+    if (!this.lights()) return false;
+    const average = DisplayLight.averageOf(this);
+    if (!average) return false;
+    const params = this._params || {};
+    const width = Math.max(Number(params.width) || 0, 0.001);
+    const height = Math.max(Number(params.height) || 0, 0.001);
+    const area = width * height;
+    const stated = Number(params.nits);
+    const nits = stated > 0 ? stated : DEFAULT_DISPLAY_PARAMS.nits;
+
+    this.screenFrame();
+    record.position.copy(screenCentre).addScaledVector(screenNormal, 0.01);
+    record.direction.copy(screenNormal).negate();
+    record.color.copy(average);
+    // Luminance times area is the candela straight out; on the field's scale.
+    record.intensity = nits * this._level * area * SCENE_PER_NIT;
+    record.range = AREA_RANGE;
+    record.cosOuter = 0;
+    record.cosInner = 0;
+    record.iris = -1;
+    record.lensRadius = Math.sqrt(area / Math.PI);
+    // Width along the display's x, height along its z, wound for the field:
+    // half-width cross half-height points away from the lit side.
+    record.rectX.set(width / 2, 0, 0).transformDirection(this._dummy.matrixWorld).multiplyScalar(width / 2);
+    record.rectY.set(0, 0, 1).transformDirection(this._dummy.matrixWorld).multiplyScalar(height / 2);
+    const mirrored = lookTarget.crossVectors(record.rectX, record.rectY).dot(screenNormal) > 0;
+    if (mirrored) record.rectX.negate();
+    // The picture's tile in the display atlas, 1-based, negative when the
+    // rectangle's x runs against the panel's.
+    const slot = DisplayLight.slotOf(this);
+    record.pictureSlot = slot < 0 ? 0 : (slot + 1) * (mirrored ? -1 : 1);
+    if (this._depthSlot >= 0 && this._depthRect) {
+      const cam = this._depthCam;
+      record.hasTile = true;
+      record.tile.copy(this._depthRect);
+      record.tileOrigin.copy(cam.position);
+      // The field reads the tile with x mirrored, as the movers' cameras are.
+      record.axisX.set(-1, 0, 0).applyQuaternion(cam.quaternion);
+      record.axisY.set(0, 1, 0).applyQuaternion(cam.quaternion);
+      record.tanHalf = Math.tan(THREE.MathUtils.degToRad(AREA_TILE_FOV / 2));
+    }
+    return true;
+  }
+
+  /**
+   * The depth tile this display wants this frame, for `Light.renderDepth`.
+   *
+   * @public
+   * @param {Number} near the atlas's near plane
+   * @param {Number} far the atlas's far plane
+   * @returns {Object|null} `{ camera, priority }`
+   */
+  depthRequest(near, far) {
+    if (!this.lights()) return null;
+    const cam = this._depthCam;
+    if (cam.near !== near || cam.far !== far) {
+      cam.near = near;
+      cam.far = far;
+      cam.updateProjectionMatrix();
+    }
+    this.screenFrame();
+    cam.position.copy(screenCentre).addScaledVector(screenNormal, 0.02);
+    cam.up.set(0, 0, 1).transformDirection(this._dummy.matrixWorld);
+    cam.lookAt(lookTarget.copy(cam.position).add(screenNormal));
+    cam.updateMatrixWorld();
+    return { camera: cam, priority: this._level };
+  }
+
+  /**
+   * @public
+   * @param {Number} slot the atlas slot, -1 none
+   * @param {THREE.Vector4|null} rect the tile in the atlas, uv
+   */
+  setDepthSlot(slot, rect) {
+    this._depthSlot = slot;
+    this._depthRect = rect;
+  }
+
+  /**
    * @public
    */
   sync() {
-    const feed = VideoRouter.feed();
-    const ready = !!(feed && feed.displayTexture && this._connectorAt());
+    const input = this._inputAt();
+    const feed = input ? VideoRouter.feedFor(input.id) : null;
+    const ready = !!(feed && feed.displayTexture);
     const generation = VideoRouter.generation();
     if (ready === this._ready && generation === this._syncGeneration) return;
     this._ready = ready;
@@ -637,6 +854,10 @@ class Display {
   static deleteInstance(instance) {
     if (!instance) return;
     instances.delete(instance);
+    LightField.unregister(instance);
+    Light.removeAreaDepthSource(instance);
+    DisplayLight.forget(instance);
+    VideoRouter.drop(instance);
     if (instance._material) instance._material.dispose();
     if (instance._body) instance._body.geometry.dispose();
     if (instance._screen) instance._screen.geometry.dispose();

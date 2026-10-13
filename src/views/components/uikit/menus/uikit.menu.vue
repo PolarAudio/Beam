@@ -87,7 +87,10 @@ export default {
             };
             window.addEventListener('keydown', shortcuCallback);
           }
-          item.more = item.shortcut ? `(${item.shortcut})` : '';
+          // `hint` shows a shortcut that something else already handles, such
+          // as Ctrl+C, without the menu listening for it too.
+          const keys = item.shortcut || item.hint;
+          item.more = keys ? `(${keys})` : '';
           return item;
         });
         return menu;

@@ -216,6 +216,42 @@ export function gridPitch(params) {
 }
 
 /**
+ * Luminous flux of one strip emitter at full white, in lumens: a WS2812B,
+ * whose datasheet gives about 1.3 cd on axis across its three dies, emitting
+ * as a Lambertian source (flux = pi x on-axis candela).
+ *
+ * @constant {Number}
+ */
+export const DEFAULT_EMITTER_LUMENS = 4;
+
+/**
+ * Face luminance of an LED tile at full white, in cd/m2: an indoor panel.
+ *
+ * @constant {Number}
+ */
+export const DEFAULT_PANEL_NITS = 1500;
+
+/**
+ * The fixture's luminous flux at full white, in lumens.
+ *
+ * `params.lumens` when the definition gives it. Otherwise a strip is its
+ * emitter count times `DEFAULT_EMITTER_LUMENS`, and a tile is
+ * `DEFAULT_PANEL_NITS` over its face, which as a Lambertian surface emits
+ * pi x luminance x area.
+ *
+ * @public
+ * @param {Object} params bar parameters
+ * @returns {Number} lumens
+ */
+export function barLumens(params) {
+  if (Number(params.lumens) > 0) return Number(params.lumens);
+  const count = Math.max(params.columns, 1) * Math.max(params.rows, 1);
+  if (!isPanel(params)) return count * DEFAULT_EMITTER_LUMENS;
+  const { stepX, stepY } = gridSteps(params);
+  return Math.PI * DEFAULT_PANEL_NITS * stepX * stepY * count;
+}
+
+/**
  * The face is length x width, with the emitters standing proud of it through
  * the height. Margins are measured from the body's own edges inwards, and the
  * pixels are then spread evenly across what is left, each in the middle of its

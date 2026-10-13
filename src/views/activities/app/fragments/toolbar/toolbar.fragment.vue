@@ -8,26 +8,42 @@
     <uk-spacer />
     <p>{{ saveState ? "" : "*" }} {{ project }}</p>
     <uk-spacer />
+    <p
+      v-if="sending"
+      class="sending"
+      :class="{ contested: otherSenders.length }"
+      title="Beam is sending DMX. Edit > Preferences > DMX to receive again."
+      @click="openPreferences('dmx')"
+    >
+      {{ sendingLabel }}
+    </p>
 
-    <visualizer-popup v-model="visualizerPopupState" />
+    <preferences-popup
+      v-model="preferencesPopupState"
+      :tab="preferencesTab"
+    />
     <license-popup v-model="licensePopupState" />
     <credits-popup v-model="creditsPopupState" />
     <newshow-popup v-model="newProjectPopupState" />
-    <artnet-popup v-model="artnetPopupState" />
-    <video-popup v-model="videoPopupState" />
+    <video-popup
+      v-model="videoPopupState"
+      :focus-id="videoFocusId"
+      :for-fixtures="videoForFixtures"
+    />
   </uk-flex>
 </template>
 
 <script>
 import EventBus from '@/plugins/eventbus';
+import Selection from '@/models/DMX/selection';
 import confirm from '@/plugins/confirm';
-import Preferences from '@/plugins/visualizer/preferences';
 import importGdtfFiles from '@/plugins/gdtf_import';
-import VisualizerPopup from './_popups/popup.visualizer.vue';
+import ViewMode from '@/plugins/view_mode';
+import Screenshot from '@/plugins/visualizer/screenshot';
+import PreferencesPopup from './_popups/popup.preferences.vue';
 import LicensePopup from './_popups/popup.license.vue';
 import CreditsPopup from './_popups/popup.credits.vue';
 import NewshowPopup from './_popups/popup.newshow.vue';
-import ArtnetPopup from './_popups/popup.artnet.vue';
 import VideoPopup from './_popups/popup.video.vue';
 
 export default {
@@ -37,11 +53,10 @@ export default {
     MODE: 3,
   },
   components: {
-    VisualizerPopup,
+    PreferencesPopup,
     LicensePopup,
     CreditsPopup,
     NewshowPopup,
-    ArtnetPopup,
     VideoPopup,
   },
   data() {
@@ -55,19 +70,23 @@ export default {
        * Current show savestate
        */
       saveState: true,
-      /**
-       * Art-Net settings popup state
-       */
-      artnetPopupState: false,
       videoPopupState: false,
+      /** The input the Video inputs window opens on, or null for its own choice. */
+      videoFocusId: null,
+      /** The devices the window was opened from, by fixture id. */
+      videoForFixtures: [],
+      /** Whether Beam is in sender mode, and who else is on its universes. */
+      sending: false,
+      otherSenders: [],
       /**
        * New project popup state
        */
       newProjectPopupState: false,
-      /**
-       * Visualizer popup state
-       */
-      visualizerPopupState: false,
+      /** Full window, full screen and stay on top. */
+      view: ViewMode.state,
+      /** Whether the Preferences window is open, and the tab it opens on. */
+      preferencesPopupState: false,
+      preferencesTab: 'visualizer',
       /**
        * License popup state
        */
@@ -104,7 +123,22 @@ export default {
               },
             },
             {
-              name: 'Import Showfile',
+              name: 'Save Project',
+              shortcut: 'Ctrl+S',
+              icon: 'save',
+              callback: () => {
+                this.saveShow();
+              },
+            },
+            {
+              name: 'Save Project As...',
+              icon: 'save',
+              callback: () => {
+                this.saveShowAs();
+              },
+            },
+            {
+              name: 'Import JSON Project',
               icon: 'folder',
               callback: () => {
                 this.loadFile();
@@ -115,14 +149,6 @@ export default {
               icon: 'folder',
               callback: () => {
                 this.importGdtf();
-              },
-            },
-            {
-              name: 'Save Project',
-              shortcut: 'Ctrl+S',
-              icon: 'save',
-              callback: () => {
-                this.saveShow();
               },
             },
             {
@@ -162,41 +188,62 @@ export default {
                 this.$show.redo();
               },
             },
-          ],
-        },
-        {
-          name: 'Preferences',
-          selected: false,
-          items: [
             {
-              name: 'Visualizer',
+              // The scene handles the keys itself; the menu only shows them.
+              name: 'Copy',
+              hint: 'Ctrl+C',
+              icon: 'copy',
+              callback: () => {
+                if (!Selection.items.length) return;
+                EventBus.emit('copy_requested', Selection.items.map((entry) => ({ ...entry })));
+              },
+            },
+            {
+              name: 'Paste',
+              hint: 'Ctrl+V',
+              icon: 'paste',
+              callback: () => {
+                EventBus.emit('paste_requested');
+              },
+            },
+            {
+              name: 'Preferences',
               shortcut: 'Ctrl+Shift+V',
               icon: 'visualizer',
               callback: () => {
-                this.displayVisualizerPopup();
+                this.openPreferences('visualizer');
               },
             },
+          ],
+        },
+        {
+          name: 'View',
+          selected: false,
+          items: [
             {
-              name: 'Art-Net',
-              shortcut: 'Ctrl+Shift+A',
-              icon: 'zoom',
-              callback: () => {
-                this.artnetPopupState = true;
-              },
+              name: 'Full window',
+              shortcut: 'F10',
+              icon: 'fit',
+              callback: () => ViewMode.toggleFullWindow(),
             },
             {
-              name: 'Video',
-              shortcut: 'Ctrl+Shift+I',
-              icon: 'visualizer',
-              callback: () => {
-                this.videoPopupState = true;
-              },
+              name: 'Full screen',
+              shortcut: 'F11',
+              icon: 'popout',
+              callback: () => ViewMode.toggleFullScreen(),
             },
             {
-              name: 'Reset to defaults',
-              icon: 'undo',
+              // The tick is the icon, set from the state by the watcher below.
+              id: 'stayOnTop',
+              name: 'Stay on top',
+              icon: ViewMode.state.stayOnTop ? 'tick' : 'undef',
+              callback: () => ViewMode.toggleStayOnTop(),
+            },
+            {
+              name: 'Copy view to clipboard',
+              icon: 'export',
               callback: () => {
-                this.resetToDefaults();
+                this.copyView();
               },
             },
           ],
@@ -247,6 +294,23 @@ export default {
       ],
     };
   },
+  computed: {
+    /** The sender-mode marker, naming anyone else on Beam's universes. */
+    sendingLabel() {
+      if (!this.otherSenders.length) return 'Sending DMX';
+      const others = this.otherSenders
+        .map(({ name, universes }) => `${name} on universe ${universes.join(', ')}`)
+        .join('; ');
+      return `Sending DMX. Also sending: ${others}`;
+    },
+  },
+  watch: {
+    'view.stayOnTop': function stayOnTopTick(on) {
+      this.menus.forEach((menu) => menu.items.forEach((item) => {
+        if (item.id === 'stayOnTop') item.icon = on ? 'tick' : 'undef';
+      }));
+    },
+  },
   mounted() {
     this.$show.on('saveState', (state) => {
       this.saveState = state;
@@ -269,16 +333,28 @@ export default {
         EventBus.emit('app_error', new Error(`Could not write ${target}.`));
       } else if (missing && missing.length) {
         EventBus.emit('app_error', new Error(
-          `Exported ${target}, but ${missing.length} item(s) the show uses could not be found `
+          `Exported ${target}, but ${missing.length} item(s) the project uses could not be found `
           + `and are not in it: ${missing.join(', ')}`,
         ));
       }
     });
+    // The Video inputs window opens from a device's Input list, and from its
+    // own shortcut, which has no menu entry to carry it.
+    EventBus.on('open_video_inputs', this.openVideoInputs);
+    window.addEventListener('keydown', this.onVideoInputsKey);
+    this.$show.on('videoCropsDropped', (names) => {
+      EventBus.emit('app_error', new Error(
+        'Video connectors are gone: a display or projector now shows a whole input. '
+        + `These showed part of a picture and now show all of it: ${names.join(', ')}`,
+      ));
+    });
     EventBus.on('app_ready', () => {
       this.project = this.$show.documentTitle;
     });
-    // The debug panel's button, so both ask the same question.
-    EventBus.on('reset_defaults', () => this.resetToDefaults());
+    EventBus.on('dmx_mode', ({ sending, otherSenders }) => {
+      this.sending = sending;
+      this.otherSenders = otherSenders || [];
+    });
     // Files dropped anywhere on the window. A .gdtf is imported; anything
     // else is refused here, because the default for a dropped file is to
     // navigate to it, which would replace the app and lose the show.
@@ -288,15 +364,32 @@ export default {
   beforeUnmount() {
     window.removeEventListener('dragover', this.onFileDragOver);
     window.removeEventListener('drop', this.onFileDrop);
+    window.removeEventListener('keydown', this.onVideoInputsKey);
+    EventBus.off('open_video_inputs', this.openVideoInputs);
   },
   methods: {
     /**
-     * Resets every preference and debug value to its default, after asking,
-     * and reloads so each module starts from its own constants.
-     *
-     * @public
-     * @async
+     * @param {Object} [from] `{ inputId, fixtureIds }` when a device's panel
+     *   opens it: the input to show and the devices it can set
      */
+    openVideoInputs(from = null) {
+      const { inputId = null, fixtureIds = [] } = from || {};
+      this.videoFocusId = typeof inputId === 'number' ? inputId : null;
+      this.videoForFixtures = Array.isArray(fixtureIds) ? [...fixtureIds] : [];
+      this.videoPopupState = true;
+    },
+    /** Ctrl+Shift+I opens the Video inputs window. */
+    onVideoInputsKey(event) {
+      if (event.ctrlKey && event.shiftKey && !event.altKey && event.code === 'KeyI') {
+        event.preventDefault();
+        this.openVideoInputs(null);
+      }
+      // The DMX tab's own shortcut, which the one Preferences entry cannot carry.
+      if (event.ctrlKey && event.shiftKey && !event.altKey && event.code === 'KeyA') {
+        event.preventDefault();
+        this.openPreferences('dmx');
+      }
+    },
     async importGdtf() {
       if (!window.library || !window.library.pickGdtf) return;
       await importGdtfFiles(await window.library.pickGdtf(), this.$show);
@@ -331,20 +424,6 @@ export default {
       }
       if (!gdtf.length || !window.library || !window.library.pathForFile) return;
       await importGdtfFiles(gdtf.map((file) => window.library.pathForFile(file)), this.$show);
-    },
-    async resetToDefaults() {
-      const go = await confirm({
-        title: 'Reset to defaults',
-        message: 'Reset all preferences and debug values to their defaults?',
-        detail: this.$show.isSaved
-          ? 'Beam reloads.'
-          : 'Beam reloads. This show has unsaved changes: save it first or they may be lost.',
-        yes: 'Reset',
-        no: 'Cancel',
-      });
-      if (!go) return;
-      await Preferences.reset();
-      window.location.reload();
     },
     /**
      * Load showfile from native file loader
@@ -399,6 +478,34 @@ export default {
       await this.$show.saveDocument();
     },
     /**
+     * Saves the show to a document the user picks.
+     *
+     * @public
+     * @async
+     */
+    async saveShowAs() {
+      await this.$show.saveDocumentAs();
+    },
+    /**
+     * Puts the 3D view on the clipboard as an image.
+     *
+     * @public
+     * @async
+     */
+    async copyView() {
+      try {
+        await Screenshot.copyView();
+      } catch (err) {
+        await confirm({
+          title: 'Copy view to clipboard',
+          message: 'The view could not be copied to the clipboard.',
+          detail: err.message,
+          yes: 'OK',
+          no: 'Close',
+        });
+      }
+    },
+    /**
      * Writes a frozen copy of the show, with everything it references, to a
      * file the user picks.
      *
@@ -426,7 +533,7 @@ export default {
       const go = await confirm({
         title: 'Refresh from Library',
         message: 'Replace the fixture profiles and objects this project carries with the ones in your library?',
-        detail: 'The show reloads with the library copies. Save to keep them in the file; '
+        detail: 'The project reloads with the library copies. Save to keep them in the file; '
           + 'close without saving to keep the old ones.',
         yes: 'Refresh',
         no: 'Cancel',
@@ -445,12 +552,14 @@ export default {
       }
     },
     /**
-     * Display visualizer popup
+     * Opens the Preferences window.
      *
      * @public
+     * @param {String} tab `visualizer` or `dmx`
      */
-    displayVisualizerPopup() {
-      this.visualizerPopupState = true;
+    openPreferences(tab) {
+      this.preferencesTab = tab;
+      this.preferencesPopupState = true;
     },
     /**
      * Display new project popup
@@ -507,6 +616,18 @@ export default {
 .tap_container:hover, .state_container:hover {
   background: var(--secondary-darker);
   cursor: pointer;
+}
+.sending {
+  padding: 2px 8px;
+  margin-right: 8px;
+  border-radius: 3px;
+  background: var(--accent-sea-green);
+  color: var(--primary-dark);
+  cursor: pointer;
+}
+.sending.contested {
+  background: #ce2d5e;
+  color: white;
 }
 .colored_dot {
   height: 10px;

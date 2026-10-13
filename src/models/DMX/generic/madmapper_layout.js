@@ -18,7 +18,9 @@
  */
 
 import * as THREE from 'three';
-import { profileBands, profileParts, bandGrid } from './madmapper';
+import {
+  profileBands, profileParts, bandGrid, exportMode,
+} from './madmapper';
 import { SCAN_AXES, isPanel } from './led_bar';
 import { DMX_UNIVERSE_LENGTH, channelAddress } from '../patch.model';
 import { labelOf } from '../item_naming';
@@ -621,7 +623,7 @@ function prepare(fixture, projection, definitionName, frame, perspective, option
     // component type per fixture and a head is rarely one thing: pan/tilt, its
     // emitters and its control channels each become a fixture of their own.
     const c = flatten(scenePoint(fixture));
-    const parts = profileParts(fixture.OFLData, fixture.mode);
+    const parts = profileParts(fixture.OFLData, exportMode(fixture));
     // Stacked rather than side by side, and the reason is selection. A rig is
     // laid out along its width: fixtures in a truss share a height and differ
     // in x. Spreading each fixture's islands in x too would put them among
@@ -851,7 +853,7 @@ function islandParts(members) {
   const whole = [];
   members.forEach((fixture) => {
     if (fixtureEnds(fixture)) { whole.push(fixture); return; }
-    profileParts(fixture.OFLData, fixture.mode).forEach((part) => {
+    profileParts(fixture.OFLData, exportMode(fixture)).forEach((part) => {
       if (!byPart.has(part.suffix)) byPart.set(part.suffix, []);
       byPart.get(part.suffix).push(fixture);
     });

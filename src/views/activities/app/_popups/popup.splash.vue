@@ -112,7 +112,7 @@ export default {
       type: Object,
       default() {
         return {
-          message: 'Loading Showfile',
+          message: 'Loading Project',
           percentage: 10,
         };
       },

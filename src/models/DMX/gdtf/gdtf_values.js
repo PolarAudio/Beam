@@ -48,6 +48,30 @@ export function dmxAt(dmx, bytes) {
   return out;
 }
 
+/**
+ * A DMX profile's output at a place along a function's DMX range.
+ *
+ * The point that applies is the last at or before the place; from it the
+ * output follows its cubic in the distance past it. Points stand at a DMX
+ * percentage and their cubics take the place as 0 to 1 and give a percentage,
+ * as GDTF Builder writes them: a point at 50 with CFC0 50 is half way out at
+ * half way along. Before the first point the output is 0.
+ *
+ * @param {Array<Object>} points `{ dmxPercentage, cfc0, cfc1, cfc2, cfc3 }`
+ * @param {Number} t the place along the range, 0 to 1
+ * @returns {Number} the share of the way from PhysicalFrom to PhysicalTo
+ */
+export function profileAt(points, t) {
+  let point = null;
+  for (let i = 0; i < points.length; i += 1) {
+    const at = points[i].dmxPercentage / 100;
+    if (at <= t && (!point || at >= point.dmxPercentage / 100)) point = points[i];
+  }
+  if (!point) return 0;
+  const d = t - point.dmxPercentage / 100;
+  return (((point.cfc3 * d + point.cfc2) * d + point.cfc1) * d + point.cfc0) / 100;
+}
+
 /** @returns {Number} the largest value a channel of this many bytes holds */
 export function dmxMax(bytes) {
   return 256 ** Math.max(1, bytes) - 1;

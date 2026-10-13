@@ -23,6 +23,7 @@
 
 import { COMMON_CONTROLS } from '../device_settings';
 import { ControlSet, orderOf, labelsOf } from '../device_control';
+import { PICTURE_DEFS } from '../picture_controls';
 
 /** Radians to degrees. The curve is authored in degrees and built in radians. */
 const DEG = 180 / Math.PI;
@@ -46,7 +47,9 @@ export const CONTROL_DEFS = [
   // Blanking a screen is the same act as closing a dowser: the picture is
   // there or it is not, so it reads as a shutter rather than a dimmer at nought.
   COMMON_CONTROLS.shutter('Blank', 'Showing'),
-  COMMON_CONTROLS.source('Source Select', 'connectors'),
+  COMMON_CONTROLS.source('Source Select', 'videoInputs'),
+  // What a panel or its processor can do to the picture it receives.
+  ...PICTURE_DEFS,
 ];
 
 /**
@@ -58,6 +61,9 @@ export const DISPLAY_CHANNELS = {
   DIMMER: 'dimmer',
   SHUTTER: 'shutter',
   SOURCE: 'source',
+  ROTATION: 'rotation',
+  MIRROR_H: 'mirrorH',
+  MIRROR_V: 'mirrorV',
 };
 
 /** Derived, so a parameter cannot be in one of these and missing from another. */
@@ -93,11 +99,10 @@ export const DEFAULT_DISPLAY_PARAMS = {
   /** The bezel and casing's colour, `#rrggbb`, part of the definition. */
   bodyColor: '#35383c',
   /**
-   * Peak brightness in nits.
+   * Peak brightness in nits (cd/m2): the luminance of full white.
    *
-   * Nothing reads it yet; the renderer will. It is the display's answer to a
-   * projector's lumens, and the reason an outdoor wall reads in daylight where
-   * a monitor does not.
+   * The display's answer to a projector's lumens, and the reason an outdoor
+   * wall reads in daylight where a monitor does not.
    */
   nits: 600,
   /**
@@ -138,6 +143,17 @@ export const DEFAULT_DISPLAY_PARAMS = {
    * simply spans less room.
    */
   curveAngle: 0,
+  /**
+   * Whether the panel is a mesh the room shows through: the emitters sit on
+   * opaque strips along the pixel rows, with open air between the strips, and
+   * the casing is a frame with no back.
+   */
+  seeThrough: false,
+  /**
+   * The open share of a see-through panel, 0-1, as manufacturers quote it.
+   * `null` makes each strip as tall as its emitters.
+   */
+  transparency: null,
   /**
    * Which channels this model actually has.
    *
@@ -380,6 +396,24 @@ export function pixelFill(params) {
 }
 
 /**
+ * How much of each pixel row a see-through panel's opaque strip covers, as a
+ * fraction of the row pitch; 0 for a solid panel.
+ *
+ * A strip carries its row's emitters, so it is never shorter than they are.
+ *
+ * @public
+ * @param {Object} params display parameters
+ * @returns {Number} 0-1
+ */
+export function stripShare(params) {
+  if (!params.seeThrough) return 0;
+  const emitter = Math.max(pixelFill(params).y, 0.001);
+  const open = Number(params.transparency);
+  if (params.transparency == null || !(open >= 0)) return Math.min(emitter, 1);
+  return Math.min(Math.max(1 - open, emitter), 1);
+}
+
+/**
  * The curve a display is bent on, resolved and made safe to build from.
  *
  * Given in degrees and returned as a radius and an arc in radians, which is
@@ -499,4 +533,5 @@ export default {
   emitterFill,
   unusualEmitter,
   displayCurve,
+  stripShare,
 };

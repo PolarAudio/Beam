@@ -93,6 +93,16 @@ export const MAX_WINDOW_MS = 120;
  */
 const LIVE_TIMEOUT_MS = 200;
 
+/**
+ * The fraction of its declared rate a stream must deliver to count as live.
+ *
+ * A producer with nothing left to send can keep sending a trickle, which
+ * passes the recency test above while the beam thins instead of going out. A
+ * quarter leaves room for dropped batches and a rate derived from the
+ * producer's own timing.
+ */
+const MIN_LIVE_FRACTION = 0.25;
+
 /** Monotonic milliseconds, wherever this is running. */
 function now() {
   return typeof performance !== 'undefined' ? performance.now() : Date.now();
@@ -118,6 +128,11 @@ class ProtocolBuffer {
     this.rate = 0; // play rate of the most recent batch
     this.received = 0; // total points ever received, for a readout
     this.lastPush = 0; // when points last actually arrived
+    // Two snapshots of `received`, a staleness interval apart; see achievedRate.
+    this.sampleAt = 0;
+    this.sampledReceived = 0;
+    this.prevSampleAt = 0;
+    this.prevSampled = 0;
   }
 
   /**
@@ -136,6 +151,14 @@ class ProtocolBuffer {
     if (this.stale()) this.clear();
     this.lastPush = now();
     this.received += n;
+    // Resample only after a whole interval, so the measured window is never
+    // the instant since the last batch.
+    if (!this.sampleAt || now() - this.sampleAt >= LIVE_TIMEOUT_MS) {
+      this.prevSampleAt = this.sampleAt;
+      this.prevSampled = this.sampledReceived;
+      this.sampleAt = now();
+      this.sampledReceived = this.received;
+    }
     // A single batch larger than the ring can only leave its tail visible, so
     // copy only the last RING_POINTS of it and let the older ones fall off --
     // the same thing the ring would do one point at a time, without the loop.
@@ -162,8 +185,8 @@ class ProtocolBuffer {
    *   is a fresh array of `count * POINT_STRIDE` values
    */
   frame(windowMs) {
-    // Nothing arriving means nothing lit: the beam goes out with the data.
-    if (this.stale()) return { rate: this.rate, points: EMPTY_POINTS, count: 0 };
+    // Nothing, or almost nothing, arriving means nothing lit.
+    if (this.starved()) return { rate: this.rate, points: EMPTY_POINTS, count: 0 };
     const ms = Math.min(Math.max(0, windowMs), MAX_WINDOW_MS);
     const wanted = Math.min(this.count, Math.ceil((this.rate * ms) / 1000));
     const out = new Uint16Array(wanted * POINT_STRIDE);
@@ -177,6 +200,20 @@ class ProtocolBuffer {
   }
 
   /**
+   * The rate points are actually landing at, over the last sample window.
+   *
+   * @public
+   * @returns {Number} points per second
+   */
+  achievedRate() {
+    // The declared rate stands until two snapshots a whole window apart exist.
+    if (!this.sampleAt || !this.prevSampleAt) return this.rate;
+    const span = this.sampleAt - this.prevSampleAt;
+    if (span < LIVE_TIMEOUT_MS) return this.rate;
+    return ((this.sampledReceived - this.prevSampled) * 1000) / span;
+  }
+
+  /**
    * Whether the stream has gone quiet.
    *
    * @public
@@ -186,10 +223,27 @@ class ProtocolBuffer {
     return !this.lastPush || now() - this.lastPush > LIVE_TIMEOUT_MS;
   }
 
+  /**
+   * Whether the beam should be dark: silent, or fed under MIN_LIVE_FRACTION of
+   * its declared rate. A stream with no declared rate is judged on recency alone.
+   *
+   * @public
+   * @returns {Boolean}
+   */
+  starved() {
+    if (this.stale()) return true;
+    if (!this.rate) return false;
+    return this.achievedRate() < this.rate * MIN_LIVE_FRACTION;
+  }
+
   /** Drops every point but keeps the last known rate. */
   clear() {
     this.head = 0;
     this.count = 0;
+    // The rate samples restart too, or a stream resuming after a gap would be
+    // read as starved across the gap.
+    this.sampleAt = 0;
+    this.prevSampleAt = 0;
   }
 }
 
@@ -405,11 +459,11 @@ class LaserStream {
       service: buffer.service,
       address: buffer.address,
       rate: buffer.rate,
-      // A dead stream holds nothing worth drawing, whatever is still in
-      // its ring -- so a fixture picking a source by itself does not settle on
-      // one that stopped sending an hour ago.
-      held: buffer.stale() ? 0 : buffer.count,
-      live: !buffer.stale(),
+      // A dead or starved stream holds nothing worth drawing, so a fixture
+      // picking a source by itself does not settle on one, and the readout
+      // agrees with what is drawn.
+      held: buffer.starved() ? 0 : buffer.count,
+      live: !buffer.starved(),
       received: buffer.received,
     }));
     const frames = [...this.ponk.values()].map((buffer) => ({

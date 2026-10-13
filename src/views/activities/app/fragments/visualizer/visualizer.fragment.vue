@@ -1,16 +1,19 @@
 <template>
-  <uk-flex
-    col
+  <div
     class="visualizer"
-    :class="{ hidden }"
+    :class="{ full_screen: view.fullScreen }"
   >
+    <!-- In full screen the toolbar is tucked away above the view and comes
+         down while the pointer is on this strip or on the toolbar itself. -->
+    <div
+      v-if="view.fullScreen"
+      class="reveal"
+    />
     <uk-flex
       class="header"
-      gap="12"
+      gap="4"
     >
-      <h3>Visualizer</h3>
       <uk-button
-        v-show="!hidden"
         :key="`translate-${gizmoMode}-${modeTick}`"
         square
         icon-only
@@ -23,7 +26,6 @@
         @click="setGizmoMode('translate')"
       />
       <uk-button
-        v-show="!hidden"
         :key="`rotate-${gizmoMode}-${modeTick}`"
         square
         icon-only
@@ -35,12 +37,23 @@
         color="var(--accent-blue)"
         @click="setGizmoMode('rotate')"
       />
+      <uk-button
+        :key="`scale-${gizmoMode}-${modeTick}`"
+        square
+        icon-only
+        label="Scale (S)"
+        :value="false"
+        toggleable
+        :disabled="!canScale"
+        :model-value="gizmoMode === 'scale'"
+        icon="scale"
+        color="var(--accent-blue)"
+        @click="setGizmoMode('scale')"
+      />
       <div
-        v-show="!hidden"
         class="tool_divider"
       />
       <uk-button
-        v-show="!hidden"
         v-model="snapEnabled"
         square
         icon-only
@@ -52,15 +65,28 @@
         @click="toggleSnap"
       />
       <uk-button
-        v-show="!hidden"
         square
         icon-only
         label="Fit to view"
         icon="fit"
         @click="$show.visualizerHandle.frameAll()"
       />
+      <!-- Parallel projection, as a technical drawing's plan or elevation.
+           Editing only: studio and recordings are perspective. -->
       <uk-button
-        v-show="!hidden"
+        :key="`ortho-${orthographic}-${modeTick}`"
+        square
+        icon-only
+        label="Orthographic"
+        :value="false"
+        toggleable
+        :disabled="studioActive"
+        :model-value="orthographic"
+        icon="ortho"
+        color="var(--accent-blue)"
+        @click="toggleOrthographic"
+      />
+      <uk-button
         v-model="houseLights"
         square
         icon-only
@@ -72,11 +98,9 @@
         @click="toggleHouseLights"
       />
       <div
-        v-show="!hidden"
         class="tool_divider"
       />
       <uk-button
-        v-show="!hidden"
         square
         icon-only
         label="Copy (Ctrl+C)"
@@ -85,7 +109,6 @@
         @click="copySelection"
       />
       <uk-button
-        v-show="!hidden"
         square
         icon-only
         label="Paste (Ctrl+V)"
@@ -94,7 +117,6 @@
         @click="pasteClipboard"
       />
       <uk-button
-        v-show="!hidden"
         square
         icon-only
         label="Delete (Del)"
@@ -107,57 +129,31 @@
            keeps one colour in both modes. A toggleable one lights up in its
            active state, which would say "recording" when it means "here". -->
       <uk-button
-        v-show="!hidden"
         square
         :label="studioActive ? 'To Editor' : 'To Studio'"
         @click="toggleStudio"
       />
       <uk-button
-        v-show="!hidden"
-        v-model="autoRotate"
         square
-        label="auto-rotate"
-        :value="false"
+        icon-only
+        :label="view.fullWindow ? 'Back to panels (F10)' : 'Full window (F10)'"
+        icon="fit"
+        :model-value="view.fullWindow"
         toggleable
-        icon="goborotation"
-        color="var(--accent-violet)"
-        @click="toggleAutoRotation"
-      />
-      <uk-button
-        v-show="!hidden"
-        v-model="autoFocus"
-        square
-        label="auto-focus"
         :value="false"
-        toggleable
-        icon="focus"
         color="var(--accent-blue)"
-        @click="toggleAutoFocus"
-      />
-      <uk-button
-        v-show="!hidden"
-        icon="hide"
-        style="margin-right: 8px"
-        label="Hide"
-        @click="toggleVisibility"
-      />
-      <uk-icon
-        v-show="hidden"
-        name="hide"
-        style="fill: var(--secondary-lighter); cursor: pointer"
-        @click="toggleVisibility"
+        @click="toggleFullWindow"
       />
     </uk-flex>
 
     <canvas
-      v-show="!hidden"
       id="visualizer"
       ref="visualizer"
       class="visualizer"
       :class="{ framed: studioActive }"
       :style="studioActive ? { '--record-aspect': studioAspect } : null"
     />
-  </uk-flex>
+  </div>
 </template>
 
 <script>
@@ -166,6 +162,7 @@ import EventBus from '@/plugins/eventbus';
 import Clipboard from '@/models/DMX/clipboard';
 import Selection from '@/models/DMX/selection';
 import Studio from '@/models/DMX/studio';
+import ViewMode from '@/plugins/view_mode';
 
 /**
  * How often the live camera's stored viewpoint is refreshed while orbiting.
@@ -183,6 +180,8 @@ export default {
   },
   data() {
     return {
+      /** Full window and full screen. */
+      view: ViewMode.state,
       /**
        * handle to visualizer instance
        */
@@ -190,23 +189,20 @@ export default {
       /**
        * handle to popup window
        */
-      popupHandle: null,
       /**
        * Visibility state
        */
-      hidden: false,
-      /**
-       * Autofocus state
-       */
-      autoFocus: false,
       snapEnabled: true,
       houseLights: true,
       /**
-       * Which transform tool the gizmo is in, 'translate' or 'rotate'. Held
+       * Which transform tool the gizmo is in: 'translate', 'rotate' or
+       * 'scale'. Held
        * here rather than read straight off the visualizer so the buttons have
        * something reactive to light up from.
        */
       gizmoMode: 'translate',
+      /** Whether the view is orthographic, mirrored for the button. */
+      orthographic: false,
       /**
        * Bumped on every mode click, purely to re-key the two mode buttons.
        * uk-button flips its own toggle on click, so without a remount the
@@ -215,10 +211,6 @@ export default {
       modeTick: 0,
       /** Interval keeping the live camera level with the view. */
       cameraSyncHandle: null,
-      /**
-       * Auto rotation state
-       */
-      autoRotate: false,
     };
   },
 
@@ -233,6 +225,20 @@ export default {
      */
     hasSelection() {
       return Selection.items.length > 0;
+    },
+    /**
+     * Whether the scale tool applies: the selection is one model from a
+     * file. Fixtures, created shapes and several items together do not scale
+     * by axis.
+     *
+     * @property {Boolean} canScale
+     */
+    canScale() {
+      if (Selection.items.length !== 1) return false;
+      const [entry] = Selection.items;
+      if (entry.kind !== 'object') return false;
+      const object = [...(this.$show.objects || [])].find((o) => o.uid === entry.uid);
+      return !!(object && object.isScalable);
     },
     /**
      * Whether there is anything to paste.
@@ -302,6 +308,9 @@ export default {
       const handle = this.$show.visualizerHandle;
       if (!handle) return;
       if (value) {
+        // Studio is perspective.
+        handle.orthographic = false;
+        this.orthographic = false;
         // Editor mode's live camera is always the editor camera, so what is on
         // screen now belongs to it.
         Studio.captureInto(Studio.SCENE_CAMERA_ID, handle.viewpoint);
@@ -368,13 +377,13 @@ export default {
     new ResizeObserver(
       this.$show.visualizerHandle.resize.bind(this.$show.visualizerHandle),
     ).observe(this.$refs.visualizer);
+    // After the visualizer, which is what loads the preferences.
+    ViewMode.start();
     EventBus.emit('visualizer_loaded', true);
-    this.autoFocus = this.$show.visualizerHandle.autoFocus;
     this.snapEnabled = this.$show.visualizerHandle.snapEnabled;
     this.houseLights = this.$show.visualizerHandle.houseLights;
-    this.autoRotate = this.$show.visualizerHandle.autoRotate;
     this.gizmoMode = this.$show.visualizerHandle.gizmoMode;
-    // T and R still switch tools, so the buttons follow the keys as well as
+    // T, R and S still switch tools, so the buttons follow the keys as well as
     // drive them.
     EventBus.on('gizmo_mode', this.setGizmoModeFromScene);
   },
@@ -399,6 +408,9 @@ export default {
       if (!this.hasSelection) return;
       EventBus.emit('copy_requested', Selection.items.map((entry) => ({ ...entry })));
     },
+    toggleFullWindow() {
+      ViewMode.toggleFullWindow();
+    },
     /**
      * Pastes whatever was last copied.
      *
@@ -418,91 +430,34 @@ export default {
       EventBus.emit('delete_requested', Selection.items.map((entry) => ({ ...entry })));
     },
     /**
-     * Switches the transform gizmo between its two tools.
+     * Switches the transform gizmo between its tools. The scene may refuse
+     * Scale for a selection that cannot take it, so the button shows what the
+     * scene settled on.
      *
      * @public
-     * @param {String} mode 'translate' or 'rotate'
+     * @param {String} mode 'translate', 'rotate' or 'scale'
      */
     setGizmoMode(mode) {
       this.modeTick += 1;
-      this.gizmoMode = mode;
       this.$show.visualizerHandle.gizmoMode = mode;
+      this.gizmoMode = this.$show.visualizerHandle.gizmoMode;
     },
     /**
      * Follows a tool change the scene made on its own, from the keyboard.
      *
      * @public
-     * @param {String} mode 'translate' or 'rotate'
+     * @param {String} mode 'translate', 'rotate' or 'scale'
      */
+    toggleOrthographic() {
+      const handle = this.$show.visualizerHandle;
+      if (!handle) return;
+      this.modeTick += 1;
+      handle.orthographic = !handle.orthographic;
+      this.orthographic = handle.orthographic;
+    },
     setGizmoModeFromScene(mode) {
       this.gizmoMode = mode;
     },
-    /**
-     * Opens visualizer in a popup window
-     *
-     * @public
-     */
-    popout() {
-      this.hide();
-      this.popupHandle = window.open('/visualizer', 'visualizerWindow', 'popup');
-      this.popupHandle.$show = this.$show;
-      this.popupHandle.onbeforeunload = this.show;
-    },
-    /**
-     * Toggles visualizer's visibility state on/off
-     *
-     * @public
-     */
-    toggleVisibility() {
-      if (this.hidden) {
-        this.show();
-      } else {
-        this.hide();
-      }
-      // Dirty trick but it should do for now.
-      EventBus.emit('visualizer_visibility', !this.hidden);
-    },
-    /**
-     * Toggles visualizer's visibility state off
-     *
-     * @public
-     */
-    hide() {
-      this.hidden = true;
-      this.$show.visualizerHandle.stopRender();
-    },
-    /**
-     * Toggles visualizer's visibility state on
-     *
-     * @public
-     */
-    show() {
-      this.hidden = false;
-      if (this.popupHandle) {
-        this.popupHandle.close();
-        this.popupHandle = null;
-      }
-      this.$show.visualizerHandle.startRender();
-      this.$nextTick(() => {
-        this.$show.visualizerHandle.resize();
-      });
-    },
-    /**
-     * Toggle camera auto-rotation
-     *
-     * @param {Boolean} value
-     * @public
-     */
-    toggleAutoRotation(value) {
-      this.$show.visualizerHandle.autoRotate = value;
-      if (!value) this.$show.visualizerHandle.recenter();
-    },
-    /**
-     * Toggle highlighted item autofocus
-     *
-     * @param {Boolean} value
-     * @public
-     */
     /**
      * Turns gizmo snapping on or off. The spacing lives in the visualizer
      * preferences; this is the part worth reaching for mid-layout.
@@ -513,9 +468,6 @@ export default {
     toggleSnap(value) {
       this.snapEnabled = value;
       this.$show.visualizerHandle.snapEnabled = value;
-    },
-    toggleAutoFocus(value) {
-      this.$show.visualizerHandle.autoFocus = value;
     },
     /**
      * Swaps between the two global light settings.
@@ -656,18 +608,11 @@ export default {
 }
 .visualizer {
   display: flex;
+  flex-direction: column;
   height: 100% !important;
   width: 100% !important;
   outline: none;
   border-left: var(--primary-dark);
-}
-.visualizer.hidden {
-  width: unset !important;
-}
-.visualizer.hidden h3 {
-  writing-mode: vertical-lr;
-  text-orientation: mixed;
-  transform: scale(-1);
 }
 .header {
   display: flex;
@@ -679,17 +624,34 @@ export default {
   border-bottom: 1px solid var(--primary-dark);
   background: var(--primary-light);
 }
+.visualizer.full_screen {
+  position: relative;
+}
+.full_screen .header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 20;
+  transform: translateY(-100%);
+  transition: transform 0.15s ease;
+}
+.reveal {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 6px;
+  z-index: 21;
+}
+.reveal:hover + .header,
+.full_screen .header:hover,
+.full_screen .header:focus-within {
+  transform: none;
+}
 .tool_divider {
   width: 1px;
   align-self: stretch;
-  margin: 6px 4px;
+  margin: 6px 6px;
   background: var(--primary-dark);
-}
-.visualizer.hidden .header {
-  height: 100%;
-  width: 40px;
-  text-align: left;
-  flex-direction: column-reverse;
-  padding: 10px 0px;
 }
 </style>

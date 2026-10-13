@@ -1,106 +1,276 @@
 import VideoFeed from './video_feed';
+import Preferences from './preferences';
 
 /**
- * @file The one video source the scene is showing, and who is watching it.
+ * @file Which feed fills each video input, and which inputs are in use.
  *
- * A connector says *which part* of a picture a device gets. This says *where
- * the picture comes from* -- and the two are deliberately separate, because a
- * connector's rectangle is show data while its binding to a real sender is a
- * fact about one machine. "DEV1 (MadMapper - Video-Output-1)" means nothing on
- * a different computer, and opening a show elsewhere is the normal case rather
- * than an edge one.
+ * An input is show data (`models/DMX/video_input.js`); a device names one by
+ * id. This module turns an input into a running feed: a file input opens its
+ * file, an NDI input opens the sender this machine has bound to it. The
+ * binding is a preference keyed by the input's `uid`, because a sender's name
+ * means nothing on another computer.
  *
- * **Nothing here opens a receiver on its own.** A feed is a network socket and
- * a 16 MB frame every 33 ms, and starting one behind a user's back is not this
- * module's decision to make. `select()` is called when someone picks a source in
- * Preferences > Video, and only then.
- *
- * This is deliberately *one* source rather than one per connector. That matches
- * how the video path was designed -- one canvas carved into regions, which is
- * MadMapper's own model -- and it is the whole reason connectors exist as a
- * name in the middle. Per-connector senders can come later without anything
- * that reads this having to change.
+ * **A feed is open only while a device uses its input.** Devices say which
+ * input they show with `use` and let go with `drop`, and the feed opens on the
+ * first user and closes after the last. A feed is a network receiver or a
+ * playing video, so an input nobody shows costs nothing.
  */
 
-/** The feed every device currently draws from, or null. */
-let current = null;
+/** Preference key: input uid to NDI sender name. */
+const BINDINGS_KEY = 'videoBindings';
 
-/** Its sender name, kept so re-selecting the same one is free. */
-let currentName = '';
-
-/** Bumped whenever the feed changes, so renderers know to rebuild materials. */
-let generation = 0;
-
-/** Called when the feed changes, so the scene can rebuild what draws it. */
-const listeners = new Set();
-
-/**
- * Turns a connector id into the connector, installed by the show.
- *
- * A renderer must not reach into the show and the show must not know what a
- * renderer wants, so the one object that knows both hands over a function.
- */
+/** The show's input lookup, installed by the show: id to input. */
 let resolver = () => null;
+/** Every input in the show, installed by the show. */
+let lister = () => [];
 
+/** Device to the input id it shows. */
+const users = new Map();
+/** Input uid to `{ name, feed, pending }`. */
+const open = new Map();
+
+let generation = 0;
+const listeners = new Set();
+let announcing = false;
+
+/**
+ * Tells listeners the feeds changed, once per turn of the event loop.
+ *
+ * Deferred because a listener redraws devices, and a device redrawing calls
+ * `use`, which can change the feeds again: done in place, that is re-entry.
+ */
 function announce() {
   generation += 1;
-  listeners.forEach((fn) => {
-    try {
-      fn(current);
-    } catch (err) {
-      // A listener that throws must not stop the others hearing about it.
-      // eslint-disable-next-line no-console
-      console.error('[video] router listener failed', err);
+  if (announcing) return;
+  announcing = true;
+  queueMicrotask(() => {
+    announcing = false;
+    listeners.forEach((fn) => {
+      try {
+        fn();
+      } catch (err) {
+        // A listener that throws must not stop the others hearing about it.
+        // eslint-disable-next-line no-console
+        console.error('[video] router listener failed', err);
+      }
+    });
+  });
+}
+
+/** This machine's sender for an input, or empty. */
+function binding(uid) {
+  const bindings = Preferences.get(BINDINGS_KEY) || {};
+  return bindings[uid] || '';
+}
+
+/** The feed name an input should have open now. */
+function feedNameOf(input) {
+  return input.feedName(binding(input.uid));
+}
+
+/** Closes an input's feed and forgets it. */
+function close(uid) {
+  const entry = open.get(uid);
+  open.delete(uid);
+  if (entry && entry.feed) entry.feed.close();
+}
+
+/**
+ * Opens the feed an input should have, replacing one opened for an older
+ * binding or file.
+ *
+ * @param {Object} input VideoInput
+ */
+async function ensure(input) {
+  const name = feedNameOf(input);
+  const entry = open.get(input.uid);
+  if (entry && entry.name === name) return;
+  if (entry) close(input.uid);
+  if (!name) {
+    announce();
+    return;
+  }
+  const slot = { name, feed: null, pending: true };
+  open.set(input.uid, slot);
+  let feed = null;
+  try {
+    feed = await VideoFeed.open(name);
+  } catch (err) {
+    feed = null;
+  }
+  // Superseded while it opened: a rebinding or the last user leaving.
+  if (open.get(input.uid) !== slot) {
+    if (feed) feed.close();
+    return;
+  }
+  slot.feed = feed;
+  slot.pending = false;
+  announce();
+}
+
+/** Opens what is used and closes what is not. */
+function reconcile() {
+  const needed = new Map();
+  users.forEach((id) => {
+    const input = resolver(id);
+    if (input) needed.set(input.uid, input);
+  });
+  let closed = false;
+  [...open.keys()].forEach((uid) => {
+    if (!needed.has(uid)) {
+      close(uid);
+      closed = true;
     }
   });
+  needed.forEach((input) => { ensure(input); });
+  if (closed) announce();
 }
 
 export default {
   /**
-   * Installs the connector lookup. Called once, by the show.
+   * Installs the show's inputs. Called by the show.
    *
    * @public
-   * @param {Function} fn (id) => VideoConnector or null
+   * @param {Function} find (id) => VideoInput or null
+   * @param {Function} all () => every VideoInput
    */
-  resolveWith(fn) {
-    resolver = fn || (() => null);
+  resolveWith(find, all) {
+    resolver = find || (() => null);
+    lister = all || (() => []);
   },
 
   /**
-   * The connector behind an id, or null for unbound.
+   * The input behind an id, or null.
    *
    * @public
    * @param {*} id
    * @returns {Object|null}
    */
-  connector(id) {
+  input(id) {
     if (id === null || id === undefined) return null;
     return resolver(id);
   },
 
+  /** @public @returns {Array} every input in the show */
+  inputs() {
+    return lister() || [];
+  },
+
   /**
-   * The feed the scene is showing, or null when nothing is selected.
+   * Says which input a device shows, or none.
    *
    * @public
+   * @param {Object} owner the device's renderer
+   * @param {*} id input id, or null
+   */
+  use(owner, id) {
+    const next = id === undefined ? null : id;
+    if (next === null) {
+      if (!users.has(owner)) return;
+      users.delete(owner);
+    } else {
+      if (users.get(owner) === next) return;
+      users.set(owner, next);
+    }
+    reconcile();
+  },
+
+  /**
+   * Forgets a device, as it is disposed.
+   *
+   * @public
+   * @param {Object} owner
+   */
+  drop(owner) {
+    this.use(owner, null);
+  },
+
+  /**
+   * The open feed for an input, or null while it opens, is unbound or unused.
+   *
+   * @public
+   * @param {*} id input id
    * @returns {Object|null}
    */
-  feed() {
-    return current;
+  feedFor(id) {
+    const input = this.input(id);
+    if (!input) return null;
+    const entry = open.get(input.uid);
+    return entry ? entry.feed : null;
   },
 
   /**
-   * Which sender is selected, for a panel that wants to say so.
+   * What an input is doing, for a list that says so.
    *
    * @public
-   * @returns {String}
+   * @param {Object} input VideoInput
+   * @returns {String} `live`, `waiting`, `unbound`, `missing` or `unused`
    */
-  name() {
-    return currentName;
+  statusOf(input) {
+    if (!input) return 'missing';
+    const name = feedNameOf(input);
+    if (!name) return 'unbound';
+    const entry = open.get(input.uid);
+    if (!entry) return 'unused';
+    if (entry.pending) return 'waiting';
+    if (!entry.feed) return 'missing';
+    return entry.feed.width ? 'live' : 'waiting';
   },
 
   /**
-   * Changes as the feed does, so a renderer can tell a rebuild is due without
-   * comparing textures.
+   * The devices showing an input.
+   *
+   * @public
+   * @param {*} id input id
+   * @returns {Array} the owners
+   */
+  usersOf(id) {
+    return [...users.entries()].filter(([, used]) => used === id).map(([owner]) => owner);
+  },
+
+  /**
+   * This machine's sender for an NDI input.
+   *
+   * @public
+   * @param {String} uid
+   * @returns {String}
+   */
+  binding(uid) {
+    return binding(uid);
+  },
+
+  /**
+   * Binds an NDI input to a sender on this machine, or unbinds it.
+   *
+   * @public
+   * @param {String} uid
+   * @param {String} sender
+   */
+  bind(uid, sender) {
+    const bindings = { ...(Preferences.get(BINDINGS_KEY) || {}) };
+    if (sender) bindings[uid] = sender;
+    else delete bindings[uid];
+    Preferences.set(BINDINGS_KEY, bindings);
+    this.refresh();
+  },
+
+  /**
+   * Re-reads every input: after a show loads, an input is edited, added or
+   * removed, or a binding changes.
+   *
+   * @public
+   */
+  refresh() {
+    reconcile();
+    open.forEach((entry, uid) => {
+      const input = (lister() || []).find((candidate) => candidate.uid === uid);
+      if (input) ensure(input);
+    });
+    announce();
+  },
+
+  /**
+   * Changes as feeds open and close, so a renderer can tell a rebuild is due.
    *
    * @public
    * @returns {Number}
@@ -110,56 +280,8 @@ export default {
   },
 
   /**
-   * Points the scene at a sender, opening it if need be.
-   *
-   * Reference counted through `VideoFeed`, so the slicing editor and the scene
-   * watching the same sender is one receiver rather than two.
-   *
    * @public
-   * @async
-   * @param {String} name sender name, or empty to show nothing
-   * @returns {Object|null} the feed
-   */
-  async select(name) {
-    if (name === currentName) return current;
-    const previous = current;
-    currentName = name || '';
-    current = name ? await VideoFeed.open(name) : null;
-    // Released after the new one is open, so watching the same sender twice
-    // never closes the receiver in between and re-opens it.
-    if (previous) previous.close();
-    announce();
-    return current;
-  },
-
-  /**
-   * Announces that a connector's rectangle changed, without changing the feed.
-   *
-   * Carving a slice while a display is showing it should move the picture on
-   * the display, which is most of what makes the editor worth having open.
-   *
-   * @public
-   */
-  touch() {
-    listeners.forEach((fn) => fn(current));
-  },
-
-  /**
-   * Lets go of whatever is open.
-   *
-   * @public
-   */
-  release() {
-    if (!current) return;
-    current.close();
-    current = null;
-    currentName = '';
-    announce();
-  },
-
-  /**
-   * @public
-   * @param {Function} fn called with the feed whenever it changes
+   * @param {Function} fn called whenever a feed opens, closes or changes
    * @returns {Function} call it to stop listening
    */
   listen(fn) {

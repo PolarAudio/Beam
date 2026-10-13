@@ -35,7 +35,7 @@
 
       <!-- Always present, empty until needed: see .create_warning. -->
       <p class="create_warning one_line">
-        {{ nameTaken ? `This show already has a "${name}". Pick another name.` : '' }}
+        {{ nameTaken ? `This project already has a "${name}". Pick another name.` : '' }}
       </p>
 
       <template v-if="isBar">
@@ -120,6 +120,15 @@
             label="Beam °"
             :min="10"
             :max="180"
+          />
+          <!-- The whole fixture at full white. 0 takes a typical figure:
+               4 lm per strip emitter, or 1500 nits over a tile's face. -->
+          <uk-num-input
+            v-model="barLumens"
+            class="field"
+            label="Lumens"
+            :min="0"
+            :max="1000000"
           />
           <uk-select-input
             v-model="orderIndex"
@@ -483,6 +492,23 @@
             label="%"
             :min="1"
             :max="100"
+          />
+        </uk-flex>
+        <!-- A mesh panel: emitters on strips along the rows, open between
+             them, in a frame with no back. Transparency is the open share as
+             quoted; 0 makes each strip as tall as its emitters. -->
+        <uk-flex :gap="8">
+          <uk-checkbox
+            v-model="screenSeeThrough"
+            label="See-through"
+          />
+          <uk-num-input
+            v-if="screenSeeThrough"
+            v-model="screenTransparency"
+            class="wide_field"
+            label="Transparency %"
+            :min="0"
+            :max="99"
           />
         </uk-flex>
 
@@ -897,6 +923,7 @@ export default {
       rows: DEFAULT_BAR_PARAMS.rows,
       emitterSize: DEFAULT_BAR_PARAMS.emitterSize * MM,
       beamAngle: DEFAULT_BAR_PARAMS.beamAngle,
+      barLumens: 0,
       orderIndex: Math.max(ORDERS.indexOf(DEFAULT_BAR_PARAMS.order), 0),
       orders: ORDERS,
       startCornerIndex: Math.max(CORNERS.indexOf(DEFAULT_BAR_PARAMS.startCorner), 0),
@@ -940,6 +967,8 @@ export default {
       screenHeight: DEFAULT_DISPLAY_PARAMS.height * MM,
       screenDepth: DEFAULT_DISPLAY_PARAMS.depth * MM,
       screenBezel: DEFAULT_DISPLAY_PARAMS.bezel * MM,
+      screenSeeThrough: DEFAULT_DISPLAY_PARAMS.seeThrough,
+      screenTransparency: 0,
       screenPixelsWide: DEFAULT_DISPLAY_PARAMS.pixelsWide,
       screenPixelsHigh: DEFAULT_DISPLAY_PARAMS.pixelsHigh,
       // An index into emitterOptions: Auto, Manual, then each package.
@@ -1200,6 +1229,10 @@ export default {
         emitterFill: this.fillForChoice(this.emitterChoice),
         curveAngle: this.screenCurveAngle,
         nits: this.nits,
+        seeThrough: this.screenSeeThrough,
+        transparency: this.screenSeeThrough && this.screenTransparency > 0
+          ? this.screenTransparency / 100
+          : null,
       };
     },
     /**
@@ -1542,6 +1575,7 @@ export default {
         rows: this.rows,
         emitterSize: this.emitterSize / MM,
         beamAngle: this.beamAngle,
+        lumens: this.barLumens > 0 ? this.barLumens : undefined,
         order: this.order,
         startCorner: this.startCorner,
         scanAxis: this.scanAxis,

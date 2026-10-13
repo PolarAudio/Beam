@@ -73,8 +73,8 @@ export const DEFAULT_FLOOR = {
   primitive: {
     type: 'plane',
     size: { x: 50, y: 50 },
-    // Light enough for a contact shadow to read on.
-    color: '#b9babb',
+    // About 10% reflectance, a dark stage floor.
+    color: '#595959',
   },
   position: { x: 0, y: 0, z: 0 },
   rotation: { x: 0, y: 0, z: 0 },

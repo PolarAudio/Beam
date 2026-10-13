@@ -1,4 +1,5 @@
 import { COMMON_CONTROLS } from '../device_settings';
+import { PICTURE_DEFS } from '../picture_controls';
 import {
   ControlSet, ControlDef, PercentType, RatioType, orderOf, labelsOf,
 } from '../device_control';
@@ -103,13 +104,13 @@ export const DEFAULT_PROJECTOR_PARAMS = {
    * honestly -- a machine given ten times the lumens looks ten times brighter,
    * because nothing here is normalised away.
    */
-  lumens: 10000,
+  lumens: 4000,
   /**
    * Full-on/full-off contrast.
    *
-   * Worth carrying even though nothing reads it yet: a projector's black is
-   * grey, and it washes whatever it is aimed at. That single number is most of
-   * what separates a projected image from a decal pasted on the model.
+   * A projector's black is its white over this, and it lights the whole frame:
+   * black washes whatever it is aimed at. That single number is most of what
+   * separates a projected image from a decal pasted on the model.
    */
   contrast: 2500,
   /**
@@ -175,11 +176,10 @@ export const DEFAULT_PROJECTOR_PARAMS = {
 /**
  * Where the lens sits, in the fixture's own space, in metres.
  *
- * The origin is the **centre of the body**, because that is what gets placed:
- * you put a box on a shelf or in a yoke, and the beam leaves it from wherever
- * the maker happened to put the glass. So the renderer draws the box about the
- * origin and hangs the barrel off the front face here, and the frustum starts
- * at the end of the barrel rather than at the fixture's position.
+ * The origin is on the **optical axis**: a projector at x = 0 throws a picture
+ * centred on x = 0, whatever side of the body the maker put the glass. The
+ * body is drawn offset from the origin by `bodyCentre`, and the frustum
+ * starts at the end of the barrel rather than at the fixture's position.
  *
  * **The axes are the scene's own, so that a projector at zero rotation stands
  * on its feet and throws horizontally.** +Z is up, matching the Z-up world; the
@@ -197,9 +197,25 @@ export function lensOrigin(params) {
   const depth = Number(params.depth) || DEFAULT_PROJECTOR_PARAMS.depth;
   const protrusion = Number(params.lensProtrusion) || 0;
   return {
-    x: Number(params.lensX) || 0,
+    x: 0,
     y: -(depth / 2 + protrusion),
-    z: Number(params.lensY) || 0,
+    z: 0,
+  };
+}
+
+/**
+ * Where the centre of the body sits, in the fixture's own space, in metres:
+ * the lens offset reversed, so the lens lands on the origin's axis.
+ *
+ * @public
+ * @param {Object} params projector parameters
+ * @returns {Object} `{ x, y, z }`
+ */
+export function bodyCentre(params) {
+  return {
+    x: -(Number(params.lensX) || 0),
+    y: 0,
+    z: -(Number(params.lensY) || 0),
   };
 }
 
@@ -420,7 +436,10 @@ export const CONTROL_DEFS = [
   new ControlDef(PROJECTOR_CHANNELS.SHIFT_V, 'Lens Shift V', new PercentType({
     initial: 0, limit: (params) => shiftLimit(params, 'V'),
   }), { capability: { type: 'BeamPosition' } }),
-  COMMON_CONTROLS.source('Source Select', 'connectors'),
+  COMMON_CONTROLS.source('Source Select', 'videoInputs'),
+  // What the projector does to the picture it receives: ceiling and rear
+  // modes, overscan, aspect, digital zoom.
+  ...PICTURE_DEFS,
 ];
 
 /** Derived, so a parameter cannot be in one of these and missing from another. */
@@ -512,6 +531,7 @@ export default {
   imageAspect,
   imageSizeAt,
   lensOrigin,
+  bodyCentre,
   throwAngles,
   throwFrustum,
   illuminanceAt,

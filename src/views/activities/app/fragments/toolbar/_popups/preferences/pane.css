@@ -1,0 +1,67 @@
+/* One line per setting: the name, then one control or a house up / house down
+   pair. The explanation is the row's tooltip. */
+.pane {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.section {
+  margin: 10px 0 4px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--primary-dark);
+  font-family: Roboto-Medium, sans-serif;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--secondary-light-alt);
+}
+.section:first-child {
+  margin-top: 0;
+}
+.row {
+  display: grid;
+  grid-template-columns: 1fr 120px 120px;
+  gap: 8px;
+  align-items: center;
+  min-height: 28px;
+}
+.row .span {
+  grid-column: 2 / 4;
+  justify-self: end;
+}
+.row .span.wide {
+  justify-self: stretch;
+}
+.label {
+  font-family: Roboto-Regular, sans-serif;
+  font-size: 12px;
+  color: var(--secondary-lighter);
+}
+.head {
+  font-size: 11px;
+  color: var(--secondary-light-alt);
+}
+.note {
+  margin: 0 0 4px;
+  font-family: Roboto-Regular, sans-serif;
+  font-size: 11px;
+  color: var(--secondary-lighter-alt);
+}
+/* The kit has no colour input, so this is the native one with its chrome
+   taken off: a swatch the height of the selects. */
+.colour_swatch {
+  width: 48px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--secondary-light);
+  border-radius: 3px;
+  background: none;
+  cursor: pointer;
+}
+.colour_swatch::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+.colour_swatch::-webkit-color-swatch {
+  border: none;
+  border-radius: 2px;
+}

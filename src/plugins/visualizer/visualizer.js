@@ -8,12 +8,12 @@ import Stats from 'stats.js';
 import ModelInstancer from './model_instancer';
 import SceneManager from './scene_manager';
 import AnimationManager from './animation_manager';
-import Controls from './controls';
+import Controls, { ORTHO_STANDOFF, ORTHO_REFERENCE_FOV, setOrthoHalfHeight } from './controls';
 import ViewCube from './view_cube';
 import Light from './light';
 import InfiniteGridHelper from './grid';
 import LEDField from './led_field';
-import LightField from './light_field';
+import LightField, { SCENE_PER_NIT } from './light_field';
 import LEDPanel from './led_panel';
 import DMXStore from './dmx_store';
 import SceneObjects from './scene_objects';
@@ -34,8 +34,6 @@ const LED_FIXTURE_BAR_CAPACITY = 256;
  */
 const LED_FIXTURE_LED_CAPACITY = 0;
 
-/** How far a press may travel and still count as a click on the gizmo. */
-const VIEW_CUBE_CLICK_SLOP_PX = 4;
 
 /**
  * How far a look-around drag turns the view: a screen height is a full turn.
@@ -49,22 +47,65 @@ const LOOK_TURN_PER_HEIGHT = Math.PI * 2;
 const LOOK_MIN_POLAR = Math.PI * 0.02;
 const LOOK_MAX_POLAR = Math.PI * 0.98;
 
-/** `PointerEvent.button` values the modified drags are hung off. */
+/** `PointerEvent.button` values the hand-held drags are hung off. */
 const MIDDLE_BUTTON = 1;
 const RIGHT_BUTTON = 2;
 
-/** What a shift-drag is doing: turning the view, or lifting the whole rig. */
+/**
+ * What a hand-held drag is doing: turning the view, lifting the whole rig, or
+ * panning it under the pointer.
+ */
 const DRAG_LOOK = 'look';
 const DRAG_LIFT = 'lift';
+const DRAG_PAN = 'pan';
+const DRAG_ORBIT = 'orbit';
+const DRAG_WALK = 'walk';
+
+/** Scratch for the walk: the grabbed point, its level, and where the ray meets it. */
+const walkGrab = new THREE.Vector3();
+const walkPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+const walkMeet = new THREE.Vector3();
+const walkStep = new THREE.Vector3();
+
+/** Scratch for the orbit's pivot and turns. */
+const orbitPivot = new THREE.Vector3();
+const orbitTurn = new THREE.Quaternion();
+const orbitAxis = new THREE.Vector3();
+const orbitForward = new THREE.Vector3();
+const orbitNdc = new THREE.Vector2();
+const orbitRay = new THREE.Raycaster();
+const WORLD_UP = new THREE.Vector3(0, 0, 1);
+
+/**
+ * How much nearer the wheel brings the camera to what is under the cursor,
+ * per pixel of wheel travel: a notch, about 100 pixels, closes 15% of the
+ * distance.
+ */
+const WHEEL_RATE = 0.0016;
+/** A wheel line, for a mouse that reports in lines, in pixels. */
+const WHEEL_LINE_PX = 33;
+/** The smallest and largest an orthographic view may be, half its height in metres. */
+const ORTHO_MIN_HALF = 0.02;
+const ORTHO_MAX_HALF = 1000;
+/** Scratch for the wheel's aim point, its step, and the view's forward. */
+const wheelPoint = new THREE.Vector3();
+const wheelStep = new THREE.Vector3();
+const wheelForward = new THREE.Vector3();
 
 /** Scratch for the look vector, so a drag allocates nothing per move. */
 const lookVector = new THREE.Vector3();
+/** Scratch for the pan's screen axes and step. */
+const panRight = new THREE.Vector3();
+const panUp = new THREE.Vector3();
+const panStep = new THREE.Vector3();
 import SceneEnv from './scene_env';
-import { hazeCycle, setHazeCycle } from './haze_noise';
 import {
   installAmbient, setHouseBrightness, setHouseState, setEnvironments,
+  houseLevelFor, onRoomChange, KEY_LIGHT_INTENSITY, KEY_LIGHT_POSITION,
 } from './ambient';
 import AmbientHazeEffect from './ambient_haze';
+import ReflectionsEffect from './reflections';
+import BeamHaloEffect from './beam_halo';
 import Perf from './perf_overlay';
 import Preferences from './preferences';
 import { refreshAddressFormat } from '../../models/DMX/address_format';
@@ -78,12 +119,14 @@ import VideoRouter from './video_router';
 import VideoDecode from './video_decode';
 import ProjectorDepth from './projector_depth';
 import ProjectorEffect from './projector_pass';
+import SurfaceAlbedo from './surface_albedo';
 import ContactShadows from './contact_shadows';
 import LaserEffect from './laser_pass';
 import Strobe from './strobe';
 import StrobeWashEffect from './strobe_wash';
-import { SelectionOutlineEffect, setSceneDepth as setOutlineDepth } from './selection_outline';
+import { SelectionOutlineEffect } from './selection_outline';
 import Recorder from './recorder';
+import Screenshot from './screenshot';
 import {
   EffectComposer,
   RenderPass,
@@ -92,6 +135,7 @@ import {
   ToneMappingEffect,
   ToneMappingMode,
   KernelSize,
+  BlendFunction,
 } from 'postprocessing';
 
 /**
@@ -102,6 +146,12 @@ import {
  * wrapped in a reactive Proxy break rendering.
  */
 let finalComposer = null;
+/** The passes that are given the camera, kept so a camera swap reaches them. */
+let renderPass = null;
+let laserPass = null;
+let reflectionsPass = null;
+let reflectionsEffect = null;
+let mainPass = null;
 
 /** The projection pass, module-scoped for the same reason the composer is. */
 let projectorEffect = null;
@@ -129,12 +179,14 @@ let bloomEffect = null;
  * stop, or the next change of haze would undo it.
  */
 let bloomManual = false;
+let toneMappingEffect = null;
 
 /**
  * Ambient haze pass, kept accessible so the debug panel and the house lights
  * can reach it. Module-scoped for the same reason the composer is.
  */
 let ambientHazeEffect = null;
+let beamHaloEffect = null;
 
 /**
  * Multisample count for the composer's render target.
@@ -225,6 +277,41 @@ function applyHelperVisibility() {
 const USE_BLOOM = true;
 
 /**
+ * The camera. Fixed, never adaptive: what is set looks the same every time
+ * it is looked at.
+ *
+ * Exposure is an EV at ISO 100, as a photographer sets it, and maps luminance
+ * to the tone curve: see `exposureForEV`. Higher EV is darker; one EV halves
+ * the picture. 5.25 is the calibration every fixture's look was tuned at;
+ * the regression set uses it. Each house state keeps its own EV: a lit room and a
+ * dark show want different exposures, as they do on a real camera.
+ *
+ * Glare is the lens's own spread of light: a few percent of everything
+ * bright, thrown wide, with no threshold -- a camera does not choose what
+ * to glare on. It replaced a bloom that followed the haze; the haze's
+ * spread of light is now the beams' halo, which is light in the air, not
+ * in the lens.
+ */
+const CAMERA_EV = 5.25;
+
+/**
+ * The tone curve's input scale for an EV at ISO 100.
+ *
+ * Saturation-based exposure: a luminance of 1.2 x 2^EV cd/m2 reaches 1.0, as
+ * photometric renderers (Frostbite, Filament) define it. The render buffer
+ * holds cd/m2 times `SCENE_PER_NIT`, which this undoes.
+ *
+ * @param {Number} ev
+ * @returns {Number}
+ */
+export function exposureForEV(ev) {
+  return 1 / (1.2 * (2 ** ev) * SCENE_PER_NIT);
+}
+const CAMERA_TONE_CURVE = 'ACES_FILMIC';
+const GLARE_STRENGTH = 0.04;
+const GLARE_RADIUS = 0.85;
+
+/**
  * Background shown while the house lights are up.
  *
  * rgb(60, 60, 60). Work light means a lit room, and a lit room does not have a
@@ -256,31 +343,6 @@ const DEFAULT_VIEW = {
 
 const HOUSE_LIGHTS_BACKGROUND = '#3c3c3c';
 
-/** Bloom response to fog density, which arrives as 0..1. */
-const BLOOM_BY_FOG = {
-  // Haze off is not glow off: a bright emitter still glares in any lens or eye.
-  // Density adds the extra spread the air contributes on top of that floor.
-  //
-  // The FLOOR is the number that matters. At no haze it is glare on genuinely
-  // bright things only -- intensity near pmndrs' own default of 1.0 and a
-  // threshold high enough that ordinary brightness does not bloom; a low
-  // threshold washes the whole image before any air is involved. Haze opens
-  // it up from there.
-  //
-  // The threshold barely moves with haze. Pools land at their real
-  // illuminance on the projector's lux scale, so a mover's pool is several
-  // times the gate, and a low gate fills the dark between a gobo's bars with
-  // glow. Haze adds strength and spread instead, the spread kept narrow: a
-  // pool a metre or two from its lamp runs to tens of thousands of lux, and
-  // a wide spread smears that over the whole frame as a grey veil.
-  //
-  // Deliberately NOT a preference. Bloom already answers to haze density, which
-  // is a scene control the user sets; a second control over the same quantity
-  // would be one the haze slider cannot reach.
-  intensity: { min: 0.70, max: 2.1 },
-  radius: { min: 0.30, max: 0.50 },
-  threshold: { min: 0.6, max: 0.4 },
-};
 
 /**
  * THREE.Vector3 round prototype override.
@@ -306,8 +368,12 @@ THREE.Vector3.prototype.round = function vector3RoundPolyfill(digits) {
  * @default
  */
 const DEFAULT_PREFERENCES = {
-  GLOBAL_BRIGHTNESS: 100,
-  BRIGHTNESS_HOUSE_OFF: 30,
+  HOUSE_LUX_UP: 300,
+  HOUSE_LUX_DOWN: 6,
+  // Incident-meter exposure for 300 lux at ISO 100: log2(300 x 100 / 250).
+  HOUSE_EV_UP: 7,
+  // Set for a bright projection in a dark room; the room stays near black.
+  HOUSE_EV_DOWN: 6.5,
 };
 
 // The haze defaults live in `preferences.js` only, and `SceneEnv` reads them.
@@ -370,9 +436,6 @@ class Visualizer {
     // A panel that reads `SceneEnv` before this shows zeros for the rest of
     // the session while the scene runs on the stored values.
     SceneEnv.adopt(Preferences.all());
-    // After the preferences are in, so the name is known, and unawaited so a
-    // sender that has gone off the network cannot hold up the whole visualizer.
-    this.restoreVideoSource();
     await ModelInstancer.init(`${import.meta.env.VITE_STATIC_URL}/visualizer/models/model_list.json`);
     this.prepareCamera();
     this.prepareRenderer();
@@ -408,13 +471,21 @@ class Visualizer {
     setEnvironments({ on: this._environmentHouseOn, off: this._environmentHouseOff });
     setHouseState(this._houseLights);
     this._brightnessUp = Visualizer.asBrightness(
-      source.globalBrightness,
-      DEFAULT_PREFERENCES.GLOBAL_BRIGHTNESS,
+      source.houseLuxUp,
+      DEFAULT_PREFERENCES.HOUSE_LUX_UP,
     );
     this._brightnessDown = Visualizer.asBrightness(
-      source.brightnessHouseOff,
-      DEFAULT_PREFERENCES.BRIGHTNESS_HOUSE_OFF,
+      source.houseLuxDown,
+      DEFAULT_PREFERENCES.HOUSE_LUX_DOWN,
     );
+    this._evUp = Visualizer.asBrightness(source.houseEVUp, DEFAULT_PREFERENCES.HOUSE_EV_UP);
+    this._evDown = Visualizer.asBrightness(source.houseEVDown, DEFAULT_PREFERENCES.HOUSE_EV_DOWN);
+    // The lux-to-level conversion depends on the environment, which loads
+    // asynchronously and can be changed; the level follows it.
+    if (!this._followsRoom) {
+      this._followsRoom = true;
+      onRoomChange(() => this.applyBrightness());
+    }
     this.applyBrightness();
     // One call, and the conversion from stored percentages lives in the room
     // rather than being repeated in four setters here.
@@ -422,6 +493,7 @@ class Visualizer {
     this.snapEnabled = source.snapEnabled !== false;
     this.snapSpacing = source.snapSpacing;
     this.showGrid = source.showGrid;
+    this.reflections = source.reflections;
     this.gridOpacity = source.gridOpacity;
     this.gridLineWidth = source.gridLineWidth;
     this.showAxes = source.showAxes;
@@ -517,6 +589,22 @@ class Visualizer {
   // eslint-disable-next-line class-methods-use-this
   get showGrid() {
     return helpers.gridVisible;
+  }
+
+  /**
+   * Whether glossy surfaces reflect what is on screen. Off, they reflect only
+   * the environment image, and the displays their rectangle.
+   *
+   * @type {Boolean}
+   */
+  set reflections(on) {
+    this._reflections = on !== false;
+    Preferences.set('reflections', this._reflections);
+    if (reflectionsEffect) reflectionsEffect.setOn(this._reflections);
+  }
+
+  get reflections() {
+    return this._reflections !== false;
   }
 
   /**
@@ -648,33 +736,12 @@ class Visualizer {
   }
 
   /**
-   * How much contour cycling is mixed into the scene haze, 0..100.
-   *
-   * Reaches every fixture type at once -- the cycling uniform is shared by
-   * reference, the way the haze volume is. Only the baked-volume path reads it,
-   * and only in its cycling mode (`HAZE_MODE` 2 in `haze_noise.js`); the setter
-   * is harmless otherwise. Deliberately not persisted yet: it is a tuning knob
-   * for judging the field, not a settled control.
-   *
-   * @type {Number} 0..100
-   */
-  // eslint-disable-next-line class-methods-use-this
-  set globalHazeCycle(value) {
-    setHazeCycle(Number.isFinite(value) ? Math.min(Math.max(value, 0), 100) / 100 : 0);
-  }
-
-  // eslint-disable-next-line class-methods-use-this
-  get globalHazeCycle() {
-    return hazeCycle() * 100;
-  }
-
-  /**
    * Global scene brightness
    *
    * @type {Number}
    */
   /**
-   * The brightness in force, as a percentage.
+   * The house light in force, in lux on the floor.
    *
    * Kept as the one name the rest of the app already used; it writes whichever
    * of the two rooms is showing.
@@ -696,11 +763,11 @@ class Visualizer {
    * @type {String}
    */
   get brightnessKey() {
-    return this._houseLights ? 'globalBrightness' : 'brightnessHouseOff';
+    return this._houseLights ? 'houseLuxUp' : 'houseLuxDown';
   }
 
   /**
-   * Brightness with the house lights up, as a percentage.
+   * House light with the house lights up, in lux on the floor.
    *
    * Held on the instance rather than read from Preferences on every access.
    * Preferences is a plain module, so nothing watching it can be told when it
@@ -711,8 +778,8 @@ class Visualizer {
    * @type {Number}
    */
   set houseLightsUp(value) {
-    this._brightnessUp = Visualizer.asBrightness(value, DEFAULT_PREFERENCES.GLOBAL_BRIGHTNESS);
-    Preferences.set('globalBrightness', this._brightnessUp);
+    this._brightnessUp = Visualizer.asBrightness(value, DEFAULT_PREFERENCES.HOUSE_LUX_UP);
+    Preferences.set('houseLuxUp', this._brightnessUp);
     if (this._houseLights) this.applyBrightness();
   }
 
@@ -721,14 +788,44 @@ class Visualizer {
   }
 
   /**
-   * Brightness with the house lights down, as a percentage.
+   * House light with the house lights down, in lux on the floor.
    *
    * @type {Number}
    */
   set houseLightsDown(value) {
-    this._brightnessDown = Visualizer.asBrightness(value, DEFAULT_PREFERENCES.BRIGHTNESS_HOUSE_OFF);
-    Preferences.set('brightnessHouseOff', this._brightnessDown);
+    this._brightnessDown = Visualizer.asBrightness(value, DEFAULT_PREFERENCES.HOUSE_LUX_DOWN);
+    Preferences.set('houseLuxDown', this._brightnessDown);
     if (!this._houseLights) this.applyBrightness();
+  }
+
+  /**
+   * Camera exposure with the house lights up, as EV at ISO 100.
+   *
+   * @type {Number}
+   */
+  set houseExposureUp(value) {
+    this._evUp = Visualizer.asBrightness(value, DEFAULT_PREFERENCES.HOUSE_EV_UP);
+    Preferences.set('houseEVUp', this._evUp);
+    if (this._houseLights) this.applyBrightness();
+  }
+
+  get houseExposureUp() {
+    return this._evUp;
+  }
+
+  /**
+   * Camera exposure with the house lights down, as EV at ISO 100.
+   *
+   * @type {Number}
+   */
+  set houseExposureDown(value) {
+    this._evDown = Visualizer.asBrightness(value, DEFAULT_PREFERENCES.HOUSE_EV_DOWN);
+    Preferences.set('houseEVDown', this._evDown);
+    if (!this._houseLights) this.applyBrightness();
+  }
+
+  get houseExposureDown() {
+    return this._evDown;
   }
 
   get houseLightsDown() {
@@ -814,14 +911,27 @@ class Visualizer {
    * @public
    */
   applyBrightness() {
-    this._globalBrightness = (this._houseLights ? this._brightnessUp : this._brightnessDown) / 100;
+    const lux = this._houseLights ? this._brightnessUp : this._brightnessDown;
+    this._globalBrightness = houseLevelFor(lux);
     if (this.globalLightHandle) {
-      this.globalLightHandle.intensity = this._globalBrightness * 0.25;
+      this.globalLightHandle.intensity = this._globalBrightness * KEY_LIGHT_INTENSITY;
     }
     // The environment is fill for the same room, so it follows the same
     // control rather than being a second thing to remember to turn down.
     setHouseBrightness(this._globalBrightness);
     if (ambientHazeEffect) ambientHazeEffect.setHouseBrightness(this._globalBrightness);
+    this.applyExposure();
+  }
+
+  /**
+   * Puts the house state's EV onto the camera.
+   *
+   * @public
+   */
+  applyExposure() {
+    if (!this.renderer) return;
+    const ev = this._houseLights ? this._evUp : this._evDown;
+    this.renderer.toneMappingExposure = exposureForEV(Number.isFinite(ev) ? ev : CAMERA_EV);
   }
 
   /**
@@ -1037,9 +1147,9 @@ class Visualizer {
    * @async
    */
   async main() {
-    this.globalLightHandle = new THREE.DirectionalLight('white', this._globalBrightness * 100);
+    this.globalLightHandle = new THREE.DirectionalLight('white', this._globalBrightness * KEY_LIGHT_INTENSITY);
     this.globalLightHandle.castShadow = false;
-    this.globalLightHandle.position.set(-10, -10, 10);
+    this.globalLightHandle.position.copy(KEY_LIGHT_POSITION);
 
     Light.prepareInstanciation(this.camera, SceneManager);
 
@@ -1073,6 +1183,8 @@ class Visualizer {
       // because that is what they will be drawing from.
       VideoDecode.decodeAll(this.renderer, VideoFeed.all());
       Display.syncAll();
+      // Each display's picture averaged, for the light it throws.
+      Display.updateLight(this.renderer);
       // Rebuild each laser's beam from the points its DAC has played since the
       // last frame. Stream-fed like the video devices, not DMX-driven, so it
       // updates here rather than through setChannel.
@@ -1100,9 +1212,16 @@ class Visualizer {
           // machine in a still room costs nothing. The atlas works that out
           // itself, per tile; see `DepthAtlas.render`.
           ProjectorDepth.render(this.renderer, SceneManager, projections);
+          projectorEffect.setAlbedo(SurfaceAlbedo.render(this.renderer, SceneManager, this.camera));
+        } else {
+          projectorEffect.setAlbedo(null);
         }
-        const feed = VideoRouter.feed();
-        projectorEffect.setProjections(projections, feed ? feed.displayTexture : null);
+        // Each projector its own input's picture.
+        projections.forEach((projection) => {
+          const feed = VideoRouter.feedFor(projection.inputId);
+          projection.picture = feed ? feed.displayTexture : null;
+        });
+        projectorEffect.setProjections(projections);
       }
     });
 
@@ -1214,29 +1333,6 @@ class Visualizer {
   }
 
   /**
-   * Reconnects to the video sender chosen last time, if it is still there.
-   *
-   * Silent when it is not: a machine that had a sender and now does not is the
-   * ordinary case for a laptop away from the rig, and it is not an error worth
-   * interrupting anyone over. Devices show their unbound state until a source
-   * is picked.
-   *
-   * @public
-   * @async
-   */
-  async restoreVideoSource() {
-    const wanted = Preferences.get('videoSource');
-    if (!wanted || !VideoFeed.available()) return;
-    try {
-      const sources = await VideoFeed.sources();
-      if (!sources.some((source) => source.name === wanted)) return;
-      await VideoRouter.select(wanted);
-    } catch (err) {
-      // Discovery failing is not worth a dialog; the picker will say so.
-    }
-  }
-
-  /**
    * Prepares WebGL renderer
    *
    * @public
@@ -1281,7 +1377,6 @@ class Visualizer {
     Perf.init(this.renderer);
     // Reported beside the timings: it is the number you read off while
     // moving around to work out how far away something is.
-    Perf.watchCamera(this.camera);
 
     // Anything the debug panel was left holding, put back. Here rather than
     // beside `Preferences.load()` because half of these targets -- the bloom,
@@ -1318,27 +1413,36 @@ class Visualizer {
       multisampling: MSAA_SAMPLES,
     });
 
-    finalComposer.addPass(new RenderPass(SceneManager, this.camera));
+    renderPass = new RenderPass(SceneManager, this.camera);
+    finalComposer.addPass(renderPass);
 
     if (USE_BLOOM) {
       bloomEffect = new BloomEffect({
-        intensity: BLOOM_BY_FOG.intensity.min,
-        luminanceThreshold: BLOOM_BY_FOG.threshold.min,
-        luminanceSmoothing: 0.4,
+        blendFunction: BlendFunction.ADD,
+        intensity: GLARE_STRENGTH,
+        luminanceThreshold: 0,
+        luminanceSmoothing: 0,
         mipmapBlur: true,
-        radius: BLOOM_BY_FOG.radius.min,
+        radius: GLARE_RADIUS,
         kernelSize: KernelSize.LARGE,
       });
     }
 
-    const toneMapping = new ToneMappingEffect({
-      mode: ToneMappingMode.ACES_FILMIC,
+    this.applyExposure();
+    toneMappingEffect = new ToneMappingEffect({
+      mode: ToneMappingMode[CAMERA_TONE_CURVE],
     });
+    const toneMapping = toneMappingEffect;
 
     // Before bloom and tone mapping: the air is part of the image, so it has
     // to be there when glare and the tone curve are worked out. It reads the
     // depth buffer, which is why it cannot be a plain material on geometry.
     ambientHazeEffect = new AmbientHazeEffect(this.camera);
+
+    // The beams' light scattered a second time, the glow beside each beam.
+    // Light in the air, so before the room's haze veils it and before bloom
+    // and the tone curve; it holds only the beams. See beam_halo.js.
+    beamHaloEffect = new BeamHaloEffect(this.camera);
 
     // Before the haze, because a projected image is light arriving at a surface
     // and the air in front of it should veil it like anything else. Before
@@ -1363,15 +1467,26 @@ class Visualizer {
     // The projector deliberately stays behind bloom: its brightness is
     // calibrated in lux against a real rig, and a glow would change how every
     // mapping show looks.
-    finalComposer.addPass(new EffectPass(this.camera, laserEffect));
+    laserPass = new EffectPass(this.camera, laserEffect);
+    finalComposer.addPass(laserPass);
+    // A pass of its own: the trace reads the frame at other pixels than its
+    // own, which a merged effect cannot. After the scene and the laser figure,
+    // before the projector, the air and the tone curve, so a reflection is
+    // veiled by the haze in front of it and goes through bloom like any light.
+    reflectionsEffect = new ReflectionsEffect(SceneManager, this.camera);
+    reflectionsPass = new EffectPass(this.camera, reflectionsEffect);
+    reflectionsEffect.pass = reflectionsPass;
+    reflectionsEffect.setOn(this._reflections !== false);
+    finalComposer.addPass(reflectionsPass);
     // Last, after the tone curve: the outline is a mark on the picture, not
     // light in the scene, and its orange is the orange it is drawn in.
     selectionOutlineEffect = new SelectionOutlineEffect(this.camera);
     const effects = bloomEffect
-      ? [projectorEffect, ambientHazeEffect, strobeWashEffect, bloomEffect, toneMapping]
-      : [projectorEffect, ambientHazeEffect, strobeWashEffect, toneMapping];
+      ? [projectorEffect, beamHaloEffect, ambientHazeEffect, strobeWashEffect, bloomEffect, toneMapping]
+      : [projectorEffect, beamHaloEffect, ambientHazeEffect, strobeWashEffect, toneMapping];
     effects.push(selectionOutlineEffect);
-    finalComposer.addPass(new EffectPass(this.camera, ...effects));
+    mainPass = new EffectPass(this.camera, ...effects);
+    finalComposer.addPass(mainPass);
 
     // A depth-reading effect -- the ambient haze, here -- makes the composer
     // build a third render target and blit the scene's depth into it every
@@ -1421,17 +1536,28 @@ class Visualizer {
    */
   applyFogToBloom() {
     // Renderers read haze from SceneEnv themselves; nothing to push here.
-    const density = SceneEnv.hazeAmount;
 
-    if (!bloomEffect) return;
-    // Hands off once the debug panel has set a value by hand, or every slider
-    // would be overwritten the next time the haze moved.
-    if (bloomManual) return;
-    const lerp = (range) => range.min + (range.max - range.min) * density;
+  }
 
-    bloomEffect.intensity = lerp(BLOOM_BY_FOG.intensity);
-    bloomEffect.mipmapBlurPass.radius = lerp(BLOOM_BY_FOG.radius);
-    bloomEffect.luminanceMaterial.threshold = lerp(BLOOM_BY_FOG.threshold);
+  /**
+   * The camera's exposure and tone curve, for comparing settings; not stored.
+   *
+   * @public
+   * @param {Object} camera `{ ev, curve }`, curve a `ToneMappingMode` name
+   */
+  setCamera({ ev, curve } = {}) {
+    if (Number.isFinite(ev)) this.renderer.toneMappingExposure = exposureForEV(ev);
+    if (curve && toneMappingEffect && ToneMappingMode[curve] !== undefined) {
+      toneMappingEffect.mode = ToneMappingMode[curve];
+    }
+  }
+
+  /** @public @returns {Object} the camera as set */
+  get cameraSettings() {
+    const mode = toneMappingEffect ? toneMappingEffect.mode : null;
+    const curve = Object.keys(ToneMappingMode).find((k) => ToneMappingMode[k] === mode) || null;
+    const ev = Math.log2(1 / (1.2 * SCENE_PER_NIT * this.renderer.toneMappingExposure));
+    return { ev, curve };
   }
 
   /**
@@ -1443,8 +1569,11 @@ class Visualizer {
     const width = this.domElement.offsetWidth;
     const height = this.domElement.clientHeight;
     const aspect = width / height;
-    this.camera = new THREE.PerspectiveCamera(45, aspect, 0.01, 1000);
+    this.camera = new THREE.PerspectiveCamera(ORTHO_REFERENCE_FOV, aspect, 0.01, 1000);
     this.camera.up.set(0, 0, 1);
+    this.perspectiveCamera = this.camera;
+    // Made on first use, and kept: see `orthographic`.
+    this.orthoCamera = null;
     // Only where the camera sits for the instant before a show is framed:
     // `frameDefault` decides the real opening view from what the show actually
     // contains, rather than from a rig that happened to be here once.
@@ -1465,41 +1594,72 @@ class Visualizer {
     // Never proxied: the visualizer handle hangs off the reactive show, so
     // anything assigned to it is wrapped, and three reads Object3D internals
     // that a proxy cannot hand back unchanged.
-    this.viewCube = markRaw(new ViewCube(this.camera, this.domElement));
-    this.domElement.addEventListener('pointermove', (event) => {
-      const over = this.viewCube.handlePointerMove(event);
-      this.domElement.style.cursor = over ? 'pointer' : '';
-    });
-    this.domElement.addEventListener('pointerleave', () => this.viewCube.clearHover());
-    // A press on the gizmo is left to travel: OrbitControls orbits on any drag
-    // over the canvas, and the cube mirrors the camera, so dragging it round
-    // needs no code of its own. Only a press that goes nowhere is a face
-    // click, which is decided on release.
-    this.domElement.addEventListener('pointerdown', (event) => {
-      this.viewCubeDownAt = this.viewCube.handleClick(event)
-        ? { x: event.clientX, y: event.clientY }
-        : null;
-    }, true);
-
-    this.domElement.addEventListener('pointerup', (event) => {
-      const down = this.viewCubeDownAt;
-      this.viewCubeDownAt = null;
-      if (!down) return;
-      const travelled = Math.hypot(event.clientX - down.x, event.clientY - down.y);
-      if (travelled > VIEW_CUBE_CLICK_SLOP_PX) return;
-      const hit = this.viewCube.handleClick(event);
-      if (!hit) return;
-      // The event still has to reach OrbitControls so it can end its drag
-      // cleanly; the scene's own picking is told to sit this one out instead,
-      // otherwise clicking the gizmo would also clear the selection behind it.
-      Controls.ignoreNextPointerUp = true;
-      if (hit.view) Controls.setView(hit.view);
-      else Controls.setViewDirection(hit.direction);
-    }, true);
+    this.viewCube = markRaw(new ViewCube(this.camera, this.domElement, {
+      pick: (hit) => {
+        if (hit.view) Controls.setView(hit.view);
+        else Controls.setViewDirection(hit.direction);
+      },
+      orbit: (dx, dy) => this.orbitBy(dx, dy),
+    }));
   }
 
   /**
-   * The two drags shift adds: turn the view, and lift the whole rig.
+   * Turns the view about the orbit centre by a pointer drag, as dragging the
+   * scene does: the same rate and direction, and the same limits. The cube
+   * sits on its own canvas, so its drags do not reach the orbit control.
+   *
+   * @public
+   * @param {Number} dx pixels across
+   * @param {Number} dy pixels down
+   */
+  orbitBy(dx, dy) {
+    const orbit = Controls.controlHandle;
+    if (!orbit) return;
+    cancelAnimationFrame(Controls.rafID);
+    Controls.flying = false;
+    const rate = ((2 * Math.PI) / (this.domElement.clientHeight || 1)) * (orbit.rotateSpeed || 1);
+    const offset = this.camera.position.clone().sub(orbit.target);
+    const radius = offset.length();
+    if (radius < 1e-6) return;
+    const minPolar = Math.max(orbit.minPolarAngle || 0, 1e-3);
+    const maxPolar = Math.min(orbit.maxPolarAngle ?? Math.PI, Math.PI - 1e-3);
+    const azimuth = Math.atan2(offset.y, offset.x) - dx * rate;
+    const polar = THREE.MathUtils.clamp(Math.acos(offset.z / radius) - dy * rate, minPolar, maxPolar);
+    offset.set(
+      radius * Math.sin(polar) * Math.cos(azimuth),
+      radius * Math.sin(polar) * Math.sin(azimuth),
+      radius * Math.cos(polar),
+    );
+    this.camera.position.copy(orbit.target).add(offset);
+    this.camera.lookAt(orbit.target);
+    orbit.update();
+  }
+
+  /**
+   * The drags held by hand: the middle-drag pan, and the two shift adds --
+   * turn the view, and lift the whole rig.
+   *
+   * Every one of them holds the pointer while it runs (pointer lock): the
+   * cursor is hidden and the drag reads the mouse's own movement, so it has
+   * no screen edge to stop at. On release the cursor is back where it was
+   * pressed.
+   *
+   * A right-drag orbits about whatever is under the pointer when it is
+   * pressed, and that point stays under the pointer -- see `orbitAbout`. The
+   * controls' own orbit turns about their target, which sits on the optical
+   * axis: off screen once the lens is shifted.
+   *
+   * Ctrl and middle-drag walks: the camera moves along the floor at its
+   * height and angle, and the spot grabbed stays under the pointer -- see
+   * `walkTo`. Grabbed near the horizon, a short drag covers a long way;
+   * near the feet, a little. This is the way down a long street.
+   *
+   * A middle-drag slides the picture in screen space, as if it were 2D: a
+   * lens shift. The camera neither moves nor turns, so nothing changes but
+   * where the picture sits in the panel -- see `shiftLens`. In studio mode,
+   * where the picture is the recording and a shift would not be kept, it pans
+   * the camera in the screen plane instead, the grabbed point under the
+   * pointer.
    *
    * Shift and right-drag turns the view without moving the camera; shift and
    * middle-drag translates it vertically. Both are held by hand because the
@@ -1532,11 +1692,46 @@ class Visualizer {
     this.lookingFrom = null;
 
     window.addEventListener('pointerdown', (event) => {
-      if (!event.shiftKey || event.target !== this.domElement) return;
-      const mode = (event.button === RIGHT_BUTTON && DRAG_LOOK)
-        || (event.button === MIDDLE_BUTTON && DRAG_LIFT);
+      if (event.target !== this.domElement) return;
+      let mode = null;
+      if (event.shiftKey) {
+        mode = (event.button === RIGHT_BUTTON && DRAG_LOOK)
+          || (event.button === MIDDLE_BUTTON && DRAG_LIFT);
+      } else if (event.button === RIGHT_BUTTON) {
+        mode = DRAG_ORBIT;
+        const press = { clientX: event.clientX, clientY: event.clientY, currentTarget: this.domElement };
+        if (!Controls.scenePointAt(press, orbitPivot)) {
+          // At the sky: a point along the pointer's ray, as far as the target.
+          const rect = this.domElement.getBoundingClientRect();
+          orbitNdc.set(
+            (((event.clientX - rect.left) / (rect.width || 1)) * 2) - 1,
+            (-((event.clientY - rect.top) / (rect.height || 1)) * 2) + 1,
+          );
+          orbitRay.setFromCamera(orbitNdc, this.camera);
+          orbitRay.ray.at(this.camera.position.distanceTo(this.controls.target), orbitPivot);
+        }
+      } else if (event.button === MIDDLE_BUTTON && (event.ctrlKey || event.metaKey)) {
+        if (this.grabFloor(event)) {
+          mode = DRAG_WALK;
+          this.walkCursor = { x: event.clientX, y: event.clientY };
+        }
+      } else if (event.button === MIDDLE_BUTTON) {
+        mode = DRAG_PAN;
+        // A camera pan moves at the depth of what is under the pointer, so
+        // that is what follows it exactly.
+        if (this.recordFrame) {
+          Controls.setPivotFromPointer({
+            clientX: event.clientX,
+            clientY: event.clientY,
+            currentTarget: this.domElement,
+          });
+        }
+      }
       if (!mode) return;
+      cancelAnimationFrame(Controls.rafID);
+      Controls.flying = false;
       this.lookingFrom = { x: event.clientX, y: event.clientY, mode };
+      this.holdPointer();
       event.stopPropagation();
       event.preventDefault();
     }, true);
@@ -1544,19 +1739,49 @@ class Visualizer {
     window.addEventListener('pointermove', (event) => {
       if (!this.lookingFrom) return;
       const height = this.domElement.clientHeight || 1;
-      const dx = ((event.clientX - this.lookingFrom.x) / height) * LOOK_TURN_PER_HEIGHT;
-      const dy = ((event.clientY - this.lookingFrom.y) / height) * LOOK_TURN_PER_HEIGHT;
-      const pixels = event.clientY - this.lookingFrom.y;
+      // Held, the cursor does not move, and the mouse's movement is the drag.
+      const held = document.pointerLockElement === this.domElement;
+      const pixelsX = held ? event.movementX : event.clientX - this.lookingFrom.x;
+      const pixels = held ? event.movementY : event.clientY - this.lookingFrom.y;
+      const dx = (pixelsX / height) * LOOK_TURN_PER_HEIGHT;
+      const dy = (pixels / height) * LOOK_TURN_PER_HEIGHT;
       this.lookingFrom.x = event.clientX;
       this.lookingFrom.y = event.clientY;
-      if (this.lookingFrom.mode === DRAG_LOOK) this.lookAround(dx, dy);
+      if (this.lookingFrom.mode === DRAG_WALK) {
+        // The pointer is held still, so where it would be is kept here.
+        this.walkCursor.x += pixelsX;
+        this.walkCursor.y += pixels;
+        this.walkTo(this.walkCursor);
+      } else if (this.lookingFrom.mode === DRAG_LOOK && this.orthographic) {
+        this.orbitAbout(this.controls.target.clone(), pixelsX, pixels);
+      } else if (this.lookingFrom.mode === DRAG_LOOK) this.lookAround(dx, dy);
+      else if (this.lookingFrom.mode === DRAG_ORBIT) this.orbitAbout(orbitPivot, pixelsX, pixels);
+      else if (this.lookingFrom.mode === DRAG_PAN && this.recordFrame) this.panView(pixelsX, pixels);
+      else if (this.lookingFrom.mode === DRAG_PAN) this.shiftLens(pixelsX, pixels);
       else this.liftView(pixels);
       event.stopPropagation();
     }, true);
 
     window.addEventListener('pointerup', () => {
+      if (!this.lookingFrom) return;
       this.lookingFrom = null;
+      if (document.pointerLockElement === this.domElement) document.exitPointerLock();
     }, true);
+  }
+
+  /**
+   * Holds the pointer for a camera drag. Where it cannot be held the drag
+   * still runs, from the cursor's position, and stops at the screen's edge.
+   *
+   * @private
+   */
+  holdPointer() {
+    try {
+      const held = this.domElement.requestPointerLock();
+      if (held && held.catch) held.catch(() => {});
+    } catch (err) {
+      // Not available here; the drag reads the cursor instead.
+    }
   }
 
   /**
@@ -1593,12 +1818,11 @@ class Visualizer {
   /**
    * Lifts the camera and its target together, straight up the world.
    *
-   * A plain middle-drag walks the floor, which is right for crossing a room
-   * and useless for rising above it. This is the vertical move, on its own
-   * gesture rather than traded against the first.
+   * A plain middle-drag pans in the screen plane, which tilts with the view.
+   * This is the move straight up the world, whatever the view's angle.
    *
    * The rate is the one `OrbitControls` pans at -- the world distance a pixel
-   * covers at the target's depth -- so a lift and a walk move ground under the
+   * covers at the target's depth -- so a lift and a pan move ground under the
    * pointer at the same speed. Dragging down raises the camera, the same
    * grab-the-world direction as the pan.
    *
@@ -1607,12 +1831,327 @@ class Visualizer {
    */
   liftView(pixels) {
     const height = this.domElement.clientHeight || 1;
-    const distance = this.camera.position.distanceTo(this.controls.target);
-    const perPixel = (2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2)
-      * distance) / height;
+    const perPixel = this.orthographic
+      ? (2 * (this.camera.top / (this.camera.zoom || 1))) / height
+      : (2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2)
+        * this.camera.position.distanceTo(this.controls.target)) / height;
     const lift = pixels * perPixel;
     this.camera.position.z += lift;
     this.controls.target.z += lift;
+    this.controls.update();
+  }
+
+  /**
+   * The wheel: moves the camera toward whatever is under the cursor, or away
+   * from it, along the cursor's own line of sight.
+   *
+   * The point under the cursor stays under it and the view keeps its angle.
+   * Each step covers a share of the distance left, so the camera can get as
+   * close as wanted and never passes through. Pointing at the sky, it aims at
+   * the orbit target's depth. The target is then put at the depth of the
+   * point aimed at, on the view's axis, so the view cube's drag and the
+   * controls' own sums have something sensible to turn about.
+   *
+   * @public
+   */
+  prepareWheel() {
+    this.domElement.addEventListener('wheel', (event) => {
+      event.preventDefault();
+      cancelAnimationFrame(Controls.rafID);
+      Controls.flying = false;
+      const pixels = event.deltaY * (event.deltaMode === 1 ? WHEEL_LINE_PX : 1);
+      this.wheelToward(event, pixels);
+    }, { passive: false });
+  }
+
+  /**
+   * One wheel move, toward the point under the pointer.
+   *
+   * @public
+   * @param {Object} event wheel event
+   * @param {Number} pixels wheel travel, positive away from the scene
+   */
+  wheelToward(event, pixels) {
+    const press = { clientX: event.clientX, clientY: event.clientY, currentTarget: this.domElement };
+    const rect = this.domElement.getBoundingClientRect();
+    orbitNdc.set(
+      (((event.clientX - rect.left) / (rect.width || 1)) * 2) - 1,
+      (-((event.clientY - rect.top) / (rect.height || 1)) * 2) + 1,
+    );
+    if (this.orthographic) {
+      this.zoomOrtho(orbitNdc, pixels);
+      return;
+    }
+    orbitRay.setFromCamera(orbitNdc, this.camera);
+    if (!Controls.scenePointAt(press, wheelPoint)) {
+      orbitRay.ray.at(Math.max(this.camera.position.distanceTo(this.controls.target), 1), wheelPoint);
+    }
+    const distance = this.camera.position.distanceTo(wheelPoint);
+    if (!(distance > 1e-6)) return;
+    // Nearer by a share of what is left; further by the share that undoes it.
+    const keep = Math.exp(pixels * WHEEL_RATE);
+    const next = Math.min(distance * keep, this.controls.maxDistance || Infinity);
+    wheelStep.subVectors(wheelPoint, this.camera.position).multiplyScalar(1 - next / distance);
+    this.camera.position.add(wheelStep);
+    this.camera.updateMatrixWorld();
+    wheelForward.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
+    const depth = Math.max(wheelForward.dot(wheelStep.subVectors(wheelPoint, this.camera.position)), 0.05);
+    this.controls.target.copy(this.camera.position).addScaledVector(wheelForward, depth);
+    this.controls.update();
+  }
+
+  /**
+   * The wheel in orthographic: moving nearer changes nothing there, so the
+   * frustum is made smaller or larger instead, about the point under the
+   * cursor, which stays where it is on screen.
+   *
+   * @private
+   * @param {THREE.Vector2} ndc the cursor, -1..1
+   * @param {Number} pixels wheel travel, positive away from the scene
+   */
+  zoomOrtho(ndc, pixels) {
+    const camera = this.camera;
+    camera.updateMatrixWorld();
+    const before = new THREE.Vector3(ndc.x, ndc.y, 0).unproject(camera);
+    const half = camera.top / (camera.zoom || 1);
+    const next = THREE.MathUtils.clamp(half * Math.exp(pixels * WHEEL_RATE), ORTHO_MIN_HALF, ORTHO_MAX_HALF);
+    setOrthoHalfHeight(camera, next * (camera.zoom || 1));
+    camera.updateMatrixWorld();
+    const after = new THREE.Vector3(ndc.x, ndc.y, 0).unproject(camera);
+    const shift = before.sub(after);
+    camera.position.add(shift);
+    this.controls.target.add(shift);
+    this.controls.update();
+  }
+
+  /**
+   * Whether the view is orthographic: parallel projection, as a technical
+   * drawing's elevation or plan, with nothing shrinking with distance.
+   *
+   * Setting it swaps the camera for the other kind, looking the same way at
+   * the same orbit target, with the picture the same size there: the
+   * orthographic frustum is as tall as the perspective view at the target.
+   * Studio and recording are perspective only, so it cannot be set while a
+   * recording frame is held.
+   *
+   * @type {Boolean}
+   */
+  get orthographic() {
+    return !!(this.camera && this.camera.isOrthographicCamera);
+  }
+
+  set orthographic(on) {
+    const want = !!on;
+    if (want === this.orthographic || !this.camera || !this.controls) return;
+    if (want && this.recordFrame) return;
+    Controls.cancelFly();
+    const from = this.camera;
+    const { target } = this.controls;
+    from.updateMatrixWorld();
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(from.quaternion);
+    const tan = Math.tan(THREE.MathUtils.degToRad(ORTHO_REFERENCE_FOV) / 2);
+    const width = this.domElement.offsetWidth || 1;
+    const height = this.domElement.clientHeight || 1;
+    const aspect = width / height;
+    const view = from.view && from.view.enabled ? { ...from.view } : null;
+
+    let to;
+    if (want) {
+      if (!this.orthoCamera) {
+        this.orthoCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, ORTHO_STANDOFF * 10);
+        this.orthoCamera.up.set(0, 0, 1);
+      }
+      to = this.orthoCamera;
+      const half = Math.max(from.position.distanceTo(target), 0.05) * tan;
+      to.top = half;
+      to.bottom = -half;
+      to.left = -half * aspect;
+      to.right = half * aspect;
+      to.zoom = 1;
+      to.position.copy(target).addScaledVector(forward, -ORTHO_STANDOFF);
+    } else {
+      to = this.perspectiveCamera;
+      const distance = (from.top / (from.zoom || 1)) / tan;
+      to.aspect = aspect;
+      to.position.copy(target).addScaledVector(forward, -distance);
+    }
+    to.quaternion.copy(from.quaternion);
+    // The lens shift goes with the view.
+    if (view) {
+      from.clearViewOffset();
+      to.setViewOffset(view.fullWidth, view.fullHeight, view.offsetX, view.offsetY, view.width, view.height);
+    } else if (to.view && to.view.enabled) {
+      to.clearViewOffset();
+    }
+    to.updateProjectionMatrix();
+    to.updateMatrixWorld();
+    this.useCamera(to);
+    this.controls.update();
+  }
+
+  /**
+   * Hands a camera to everything that draws or moves through one.
+   *
+   * @private
+   * @param {THREE.Camera} camera
+   */
+  useCamera(camera) {
+    this.camera = camera;
+    Controls.cameraHandle = camera;
+    if (Controls.handle) Controls.handle.camera = camera;
+    this.controls.object = camera;
+    Light.setCamera(camera);
+    if (this.viewCube) this.viewCube.camera = camera;
+    [renderPass, laserPass, reflectionsPass, mainPass].forEach((pass) => {
+      if (pass) pass.mainCamera = camera;
+    });
+    [ambientHazeEffect, beamHaloEffect, projectorEffect, laserEffect, selectionOutlineEffect,
+      reflectionsEffect].forEach((effect) => {
+      if (effect) effect.camera = camera;
+    });
+  }
+
+  /**
+   * Keeps an orthographic camera at its standoff behind the orbit target.
+   * Along its own axis an orthographic camera can stand anywhere without the
+   * picture changing, so this costs nothing to look at and keeps the scene
+   * clear of the near plane whatever the moves before it did.
+   *
+   * @private
+   */
+  keepOrthoStandoff() {
+    if (!this.orthographic) return;
+    const forward = orbitForward.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
+    this.camera.position.copy(this.controls.target).addScaledVector(forward, -ORTHO_STANDOFF);
+  }
+
+  /**
+   * The editor's perspective field of view, whichever camera is in use.
+   *
+   * @type {Number} degrees
+   */
+  get fov() {
+    return this.perspectiveCamera ? this.perspectiveCamera.fov : ORTHO_REFERENCE_FOV;
+  }
+
+  /**
+   * Picks the spot a walk holds on to: what is under the pointer, on a level
+   * plane through it -- the floor, or the top of whatever stands there.
+   *
+   * @private
+   * @param {Object} event the press
+   * @returns {Boolean} false at the sky, where there is nothing to hold
+   */
+  grabFloor(event) {
+    const press = { clientX: event.clientX, clientY: event.clientY, currentTarget: this.domElement };
+    if (!Controls.scenePointAt(press, walkGrab)) return false;
+    walkPlane.constant = -walkGrab.z;
+    return true;
+  }
+
+  /**
+   * Moves the camera along the floor so the grabbed spot sits under the
+   * pointer. Only the camera's place changes, never its height or angle. A
+   * pointer above the horizon, or one that would reach past the farthest the
+   * camera may be, leaves the camera where it is.
+   *
+   * @public
+   * @param {Object} cursor `{ x, y }`, client pixels
+   */
+  walkTo(cursor) {
+    const rect = this.domElement.getBoundingClientRect();
+    orbitNdc.set(
+      (((cursor.x - rect.left) / (rect.width || 1)) * 2) - 1,
+      (-((cursor.y - rect.top) / (rect.height || 1)) * 2) + 1,
+    );
+    this.camera.updateMatrixWorld();
+    orbitRay.setFromCamera(orbitNdc, this.camera);
+    if (!orbitRay.ray.intersectPlane(walkPlane, walkMeet)) return;
+    if (this.camera.position.distanceTo(walkMeet) > (this.controls.maxDistance || Infinity)) return;
+    walkStep.subVectors(walkGrab, walkMeet);
+    walkStep.z = 0;
+    this.camera.position.add(walkStep);
+    this.controls.target.add(walkStep);
+    this.controls.update();
+  }
+
+  /**
+   * Turns the camera rigidly about a point: yaw about the world's up, pitch
+   * about the camera's own horizontal. The point keeps its place in the
+   * camera's frame, so it stays under the pointer, and the horizon stays
+   * level. The rate and directions are the orbit control's; pitch stops short
+   * of straight up and straight down.
+   *
+   * @public
+   * @param {Object} pivot THREE.Vector3, world
+   * @param {Number} pixelsX horizontal drag since the last move
+   * @param {Number} pixelsY vertical drag since the last move
+   */
+  orbitAbout(pivot, pixelsX, pixelsY) {
+    const rate = ((2 * Math.PI) / (this.domElement.clientHeight || 1)) * (this.controls.rotateSpeed || 1);
+    const turn = (axis, angle) => {
+      orbitTurn.setFromAxisAngle(axis, angle);
+      this.camera.position.sub(pivot).applyQuaternion(orbitTurn).add(pivot);
+      this.controls.target.sub(pivot).applyQuaternion(orbitTurn).add(pivot);
+      this.camera.quaternion.premultiply(orbitTurn);
+    };
+    turn(WORLD_UP, -pixelsX * rate);
+    // Pitch about the camera's horizontal, unless it would carry the view
+    // past the limits the orbit control keeps.
+    orbitAxis.set(1, 0, 0).applyQuaternion(this.camera.quaternion);
+    const pitch = -pixelsY * rate;
+    orbitTurn.setFromAxisAngle(orbitAxis, pitch);
+    orbitForward.set(0, 0, -1).applyQuaternion(this.camera.quaternion).applyQuaternion(orbitTurn);
+    const polar = Math.acos(THREE.MathUtils.clamp(orbitForward.z, -1, 1));
+    if (polar > LOOK_MIN_POLAR && polar < LOOK_MAX_POLAR) turn(orbitAxis, pitch);
+    this.camera.updateMatrixWorld();
+    this.controls.update();
+  }
+
+  /**
+   * Slides the picture by a drag, in screen pixels: a lens shift.
+   *
+   * The camera's frustum is offset rather than the camera moved, so every
+   * pixel is projected exactly as before and only the window onto the picture
+   * moves. Picking, zoom and every pass read the same projection, so they keep
+   * lining up. Any flight of the camera clears it -- a view-cube face, a
+   * frame, a recalled view -- since those aim the camera afresh.
+   *
+   * @public
+   * @param {Number} pixelsX horizontal drag since the last move
+   * @param {Number} pixelsY vertical drag since the last move
+   */
+  shiftLens(pixelsX, pixelsY) {
+    const width = this.domElement.clientWidth || 1;
+    const height = this.domElement.clientHeight || 1;
+    const { view } = this.camera;
+    const shifted = view && view.enabled;
+    const x = (shifted ? (view.offsetX * width) / view.fullWidth : 0) - pixelsX;
+    const y = (shifted ? (view.offsetY * height) / view.fullHeight : 0) - pixelsY;
+    this.camera.setViewOffset(width, height, x, y, width, height);
+  }
+
+  /**
+   * Moves the camera and its target together in the screen plane, so the
+   * scene follows the pointer at the target's depth and the view keeps its
+   * angle.
+   *
+   * @public
+   * @param {Number} pixelsX horizontal drag since the last move
+   * @param {Number} pixelsY vertical drag since the last move
+   */
+  panView(pixelsX, pixelsY) {
+    const height = this.domElement.clientHeight || 1;
+    const distance = this.camera.position.distanceTo(this.controls.target);
+    const perPixel = (2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2)
+      * distance) / height;
+    this.camera.updateMatrixWorld();
+    panRight.setFromMatrixColumn(this.camera.matrixWorld, 0);
+    panUp.setFromMatrixColumn(this.camera.matrixWorld, 1);
+    panStep.copy(panRight).multiplyScalar(-pixelsX * perPixel)
+      .addScaledVector(panUp, pixelsY * perPixel);
+    this.camera.position.add(panStep);
+    this.controls.target.add(panStep);
     this.controls.update();
   }
 
@@ -1623,21 +2162,17 @@ class Visualizer {
    */
   prepareControls() {
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-    // Pan along the ground, which is how you cross a room. Three's default,
-    // true, slides the camera up the screen on a vertical drag instead.
-    this.controls.screenSpacePanning = false;
-    // Zoom towards whatever is under the pointer instead of towards the orbit
-    // target. This is the single thing that makes the camera feel aimed rather
-    // than fought: with a fixed pivot you slide *past* the fixture you are
-    // closing on, because the point you are converging towards is somewhere
-    // behind it. Off by default in three.
-    this.controls.zoomToCursor = true;
+    // The wheel is done by hand -- see `prepareWheel`. The controls' zoom
+    // closes on their target, and stops dead once it is reached.
+    this.controls.enableZoom = false;
     // Weight. Without damping every drag stops dead on mouse-up, which reads as
     // twitchy on a large scene; the update loop that makes it work is already
     // running below.
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
-    this.controls.minDistance = 0.2;
+    // Below the wheel's own nearest target depth, so the controls never push
+    // the camera back off something it has been brought close to.
+    this.controls.minDistance = 0.01;
     // Far enough out for a building being mapped: a hundred metres is inside
     // a big room.
     this.controls.maxDistance = 400;
@@ -1647,18 +2182,22 @@ class Visualizer {
     // the gimbal flip at straight-up.
     this.controls.maxPolarAngle = Math.PI * 0.98;
     // Left is reserved for picking and rubber-band selection, so the camera
-    // moves on the other two: middle pans, right orbits.
+    // moves on the other two, both by hand in `prepareLookAround`: right
+    // orbits about the point under the pointer, middle shifts the picture.
+    // The controls keep the wheel.
     this.controls.mouseButtons = {
       LEFT: null,
-      MIDDLE: THREE.MOUSE.PAN,
-      RIGHT: THREE.MOUSE.ROTATE,
+      MIDDLE: null,
+      RIGHT: null,
     };
 
     this.prepareLookAround();
+    this.prepareWheel();
     this.controls.autoRotate = this.autoRotate;
     this.controls.autoRotateSpeed = 2.5
     AnimationManager.add(() => {
       this.controls.update();
+      this.keepOrthoStandoff();
     });
   }
 
@@ -1690,7 +2229,25 @@ class Visualizer {
       // Sized to the drawing buffer, so the depth texture it carries lines up
       // with `gl_FragCoord` in the beam shader without a scale factor.
       if (finalComposer) finalComposer.setSize(width, height);
-      this.camera.aspect = aspect;
+      if (this.orthographic) {
+        const half = this.camera.top;
+        this.camera.left = -half * aspect;
+        this.camera.right = half * aspect;
+      } else {
+        this.camera.aspect = aspect;
+      }
+      // A lens shift is kept in proportion to the panel.
+      const { view } = this.camera;
+      if (view && view.enabled) {
+        this.camera.setViewOffset(
+          width,
+          height,
+          (view.offsetX * width) / view.fullWidth,
+          (view.offsetY * height) / view.fullHeight,
+          width,
+          height,
+        );
+      }
       this.camera.updateProjectionMatrix();
     }
   }
@@ -1711,7 +2268,14 @@ class Visualizer {
    *         target: {x: Number, y: Number, z: Number}}}
    */
   get viewpoint() {
-    const p = this.camera.position;
+    // Orthographic: where a perspective camera would stand to show the same,
+    // so a viewpoint is always one a studio camera can use.
+    const p = this.orthographic && this.controls
+      ? this.controls.target.clone().addScaledVector(
+        orbitForward.set(0, 0, -1).applyQuaternion(this.camera.quaternion),
+        -Controls.orthoDistance(),
+      )
+      : this.camera.position;
     const t = this.controls ? this.controls.target : { x: 0, y: 0, z: 0 };
     return {
       position: { x: p.x, y: p.y, z: p.z },
@@ -1721,12 +2285,21 @@ class Visualizer {
 
   set viewpoint(value) {
     if (!value || !this.camera) return;
+    // A recalled view is aimed afresh, so any lens shift goes with it.
+    Controls.clearLensShift();
     const { position, target } = value;
     if (position) this.camera.position.set(position.x, position.y, position.z);
     if (target && this.controls) this.controls.target.set(target.x, target.y, target.z);
     // `update` is what re-derives the camera's orientation from the target, so
     // without it the camera moves but goes on facing wherever it faced before.
     if (this.controls) this.controls.update();
+    // Orthographic: the distance becomes the frustum's size.
+    if (this.orthographic && this.controls) {
+      const distance = this.camera.position.distanceTo(this.controls.target);
+      setOrthoHalfHeight(this.camera, distance * Math.tan(THREE.MathUtils.degToRad(ORTHO_REFERENCE_FOV) / 2));
+      this.keepOrthoStandoff();
+      this.controls.update();
+    }
   }
 
   /**
@@ -1757,6 +2330,18 @@ class Visualizer {
    * @param {Number} value
    */
   // eslint-disable-next-line class-methods-use-this
+  /**
+   * Switches the beams' halo, for comparing with and without and as a
+   * rollback. Not stored.
+   *
+   * @public
+   * @param {Boolean} on
+   */
+  // eslint-disable-next-line class-methods-use-this
+  setBeamHalo(on) {
+    if (beamHaloEffect) beamHaloEffect.on = !!on;
+  }
+
   setBloom(key, value) {
     if (!bloomEffect) return;
     bloomManual = true;
@@ -1823,6 +2408,8 @@ class Visualizer {
    */
   beginRecordingFrame({ width, height, fov }) {
     if (!this.renderer || !this.camera) return;
+    // A recording is perspective.
+    this.orthographic = false;
     const previous = this.recordFrame;
     if (!previous) {
       this.beforeRecord = {
@@ -1836,6 +2423,8 @@ class Visualizer {
     // hitch the footage for no reason.
     const resized = !previous || previous.width !== width || previous.height !== height;
     this.recordFrame = { width, height, fov };
+    // The recording is never shifted.
+    Controls.clearLensShift();
 
     if (resized) {
       this.renderer.setPixelRatio(1);
@@ -1944,7 +2533,6 @@ class Visualizer {
       // end against each other, which is right. A beam is air, not a wall.
       if (finalComposer && finalComposer.stableDepthTexture) {
         Light.setSceneDepth(finalComposer.stableDepthTexture, this.camera);
-        setOutlineDepth(finalComposer.stableDepthTexture, this.camera);
       }
       if (finalComposer) {
         finalComposer.render();
@@ -1957,12 +2545,14 @@ class Visualizer {
     // The finished picture, before anything is drawn over it. The recorder
     // takes it only when its own clock has reached the next frame slot.
     Recorder.frameDrawn();
+    Screenshot.frameDrawn(this.renderer.domElement);
 
     // Over the finished image, and after Perf.end() so their own cost is not
-    // counted against the scene it is reporting on. Not while recording: the
-    // move gizmo and the view cube are aids, and would sit in the footage.
+    // counted against the scene it is reporting on. The move gizmo is not
+    // drawn while recording: it is an aid, and would sit in the footage. The
+    // view cube has its own canvas, so it is never in the footage.
     if (!helpers.recording) Controls.renderGizmo(this.renderer);
-    if (this.viewCube && !helpers.recording) this.viewCube.render(this.renderer);
+    if (this.viewCube) this.viewCube.render(this.renderer);
   }
 }
 

@@ -65,7 +65,7 @@
                 <img
                   v-if="step.gobo"
                   class="block_gobo"
-                  :class="{ stand_in: !step.gobo.named }"
+                  :class="{ stand_in: !step.gobo.named, light: !!step.gobo.light }"
                   :src="step.gobo.url"
                   alt=""
                   draggable="false"
@@ -134,7 +134,6 @@
  * trackpad's own momentum. A mouse wheel's notch is one value, speeding up
  * while the wheel keeps turning, as in every other number field.
  */
-import Preferences from '@/plugins/visualizer/preferences';
 import {
   RANGE_KINDS, stackRanges, valueToOffset, offsetToValue,
 } from '@/models/DMX/channel_ranges';
@@ -303,7 +302,7 @@ export default {
      * drag, or a value being typed.
      */
     hold() {
-      if (!this.ranges || !this.ranges.length || !Preferences.get('channelRangeGuide')) return;
+      if (!this.ranges || !this.ranges.length) return;
       clearTimeout(this.lingerTimer);
       if (this.shown) return;
       if (openField && openField !== this) openField.closeGuide();
@@ -866,6 +865,12 @@ export default {
   border-radius: 50%;
   background: #fff;
   object-fit: contain;
+}
+/* A fixture file's own image is light on its own metal, with a transparent
+   holder round it: drawn on the panel as it is. Over white, the soft edge of
+   its disc let the white through as a ring. */
+.channel_guide .block_gobo.light {
+  background: transparent;
 }
 /* A pattern Beam chose because the profile names none: ringed with a dash,
    so it is not taken for the fixture's own. */

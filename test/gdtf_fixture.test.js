@@ -16,7 +16,8 @@ import { zipSync, strToU8 } from 'fflate';
 import { DOMParser } from '@xmldom/xmldom';
 import readGdtf from '@/models/DMX/gdtf/gdtf_reader';
 import Fixture from '@/models/DMX/fixture.model';
-import { buildMadMapperFixture } from '@/models/DMX/generic/madmapper';
+import { buildMadMapperFixture, buildMadMapperLibrary, showDefinitions } from '@/models/DMX/generic/madmapper';
+import { buildMadMapperLayout, PROJECTIONS, PROTOCOLS } from '@/models/DMX/generic/madmapper_layout';
 import { fixtureIslands } from '@/models/DMX/fixture_islands';
 
 let failures = 0;
@@ -69,6 +70,31 @@ check('listing fine byte', listing.availableChannels.Dimmer.fineChannelAliases, 
 check('islands: dimmer folds its fine byte', fixtureIslands(listing, listing.modes[1]).map((island) => island.widths), [[16], [8, 8, 8]]);
 const mmfl = buildMadMapperFixture(listing, { mode: listing.modes[1], product: 'Par', group: 'Beam' });
 check('MadMapper fixture written', typeof mmfl === 'string' && mmfl.includes('Dimmer'), true);
+const { definitions } = showDefinitions([fixture]);
+check('show export: channels by name', definitions[0].mode.channels, ['Dimmer', 'Dimmer fine', 'Red', 'Green', 'Blue']);
+check('show export: no object names', buildMadMapperLibrary(definitions).includes('[object Object]'), false);
+const named = [];
+buildMadMapperLayout({
+  fixtures: [{
+    id: 'f1',
+    name: 'Par',
+    address: 0,
+    channels: fixture.channels,
+    position: { x: 0, y: 0, z: 0 },
+    rotationRad: { x: 0, y: 0, z: 0 },
+    manufacturer: 'Beam',
+    model: 'Par',
+    modeName: fixture.modeName,
+    mode: fixture.mode,
+    OFLData: fixture.OFLData,
+    fixtureType,
+    alignmentPixelSize: 0,
+  }],
+  projection: PROJECTIONS.FRONT,
+  definitionName: (f, part) => { named.push(part); return 'Beam - Par'; },
+  protocol: PROTOCOLS.ARTNET,
+});
+check('layout: every island placed', named, [0, 1]);
 
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');
 process.exit(failures ? 1 : 0);

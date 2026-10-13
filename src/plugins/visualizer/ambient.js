@@ -5,6 +5,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 // eslint-disable-next-line import/no-unresolved, import/extensions
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
+import { LUX_SCALE } from './light_field';
 
 /**
  * @file The room's ambient light.
@@ -84,6 +85,26 @@ const AMBIENT_AT_FULL_HOUSE_IMAGE = 0.5;
  */
 const PREFILTER_SIGMA = 0.04;
 
+/**
+ * The key light: a directional light at this position, aimed at the origin,
+ * at this three.js intensity when the house level is 1.
+ */
+export const KEY_LIGHT_INTENSITY = 0.25;
+export const KEY_LIGHT_POSITION = new THREE.Vector3(-10, -10, 10);
+
+/** What a white matte floor returns per unit of key light: cosine over pi. */
+const KEY_ON_FLOOR = KEY_LIGHT_POSITION.clone().normalize().z / Math.PI;
+
+/**
+ * What a white matte floor returns under each environment at intensity 1, by
+ * texture. A radiance image has no absolute scale, so its level is measured
+ * rather than assumed.
+ */
+const floorResponse = new WeakMap();
+
+/** Called whenever the lux-to-level conversion changes. */
+const roomListeners = new Set();
+
 /** The procedural studio, and the default for both states. */
 export const BUILT_IN_ROOM = 'room';
 
@@ -144,8 +165,10 @@ const VENUE = {
 const state = {
   /** Environment intensity at full house, 0..1-ish. */
   ceiling: AMBIENT_AT_FULL_HOUSE,
-  /** House-lights brightness, 0..1. */
+  /** House level: a multiplier on the environment and the key light. */
   house: 1,
+  /** What a white matte floor returns under the current environment at intensity 1. */
+  floor: 0,
   /** Whether the house lights are up, which picks the environment. */
   houseOn: true,
   /** The scene being lit, once installed. */
@@ -231,14 +254,97 @@ function generator() {
   return pmrem;
 }
 
+/**
+ * The environment intensity at house level 1.
+ *
+ * Per environment: see `ceilingFor`. A user who has moved the debug slider
+ * keeps their value, so this only supplies the default.
+ */
+function currentCeiling() {
+  const spec = state.houseOn ? state.specs.on : state.specs.off;
+  return state.ceilingSet ? state.ceiling : ceilingFor(spec);
+}
+
 /** Pushes the current fill onto the scene. */
 function apply() {
   if (!state.scene) return;
-  // The ceiling is per environment: see `ceilingFor`. A user who has moved the
-  // debug slider keeps their value, so this only supplies the default.
-  const spec = state.houseOn ? state.specs.on : state.specs.off;
-  const ceiling = state.ceilingSet ? state.ceiling : ceilingFor(spec);
-  state.scene.environmentIntensity = ceiling * state.house;
+  state.scene.environmentIntensity = currentCeiling() * state.house;
+}
+
+/**
+ * Renders a white matte floor under an environment at intensity 1 and reads
+ * back what it returns, in linear scene units.
+ *
+ * @param {Object} texture a prefiltered environment
+ * @returns {Number}
+ */
+function measureFloor(texture) {
+  if (floorResponse.has(texture)) return floorResponse.get(texture);
+  const { renderer } = state;
+  const scene = new THREE.Scene();
+  scene.environment = texture;
+  scene.environmentIntensity = 1;
+  scene.environmentRotation.copy(state.scene.environmentRotation);
+  const geometry = new THREE.PlaneGeometry(1, 1);
+  const material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, metalness: 0 });
+  // A plane faces +Z, which is up in this scene.
+  scene.add(new THREE.Mesh(geometry, material));
+  const camera = new THREE.OrthographicCamera(-0.1, 0.1, 0.1, -0.1, 0.01, 10);
+  camera.position.set(0, 0, 2);
+  camera.up.set(0, 1, 0);
+  camera.lookAt(0, 0, 0);
+  const target = new THREE.WebGLRenderTarget(4, 4, { type: THREE.FloatType });
+  const previous = renderer.getRenderTarget();
+  const { toneMapping } = renderer;
+  const pixels = new Float32Array(4 * 4 * 4);
+  try {
+    renderer.toneMapping = THREE.NoToneMapping;
+    renderer.setRenderTarget(target);
+    renderer.render(scene, camera);
+    renderer.readRenderTargetPixels(target, 0, 0, 4, 4, pixels);
+  } finally {
+    renderer.setRenderTarget(previous);
+    renderer.toneMapping = toneMapping;
+    target.dispose();
+    geometry.dispose();
+    material.dispose();
+  }
+  // Pixel (1, 1): inside the plane, away from the target's edge.
+  const at = (1 * 4 + 1) * 4;
+  const value = (pixels[at] + pixels[at + 1] + pixels[at + 2]) / 3;
+  floorResponse.set(texture, value);
+  return value;
+}
+
+function roomChanged() {
+  roomListeners.forEach((listener) => listener());
+}
+
+/**
+ * @function onRoomChange
+ * @brief Calls back whenever the lux-to-level conversion changes.
+ *
+ * @param {Function} listener
+ */
+export function onRoomChange(listener) {
+  roomListeners.add(listener);
+}
+
+/**
+ * @function houseLevelFor
+ * @brief The house level that puts an illuminance on a white floor.
+ *
+ * Lux on the floor is how a room's light is quoted. The environment and the
+ * key light together are scaled so that a white matte floor has the luminance
+ * that illuminance gives it, lux / pi, on the buffer's scale.
+ *
+ * @param {Number} lux
+ * @returns {Number} a multiplier for the environment and the key light
+ */
+export function houseLevelFor(lux) {
+  const full = state.floor * currentCeiling() + KEY_LIGHT_INTENSITY * KEY_ON_FLOOR;
+  const asked = Math.max(Number(lux) || 0, 0);
+  return full > 0 ? (asked * LUX_SCALE) / Math.PI / full : 0;
 }
 
 /**
@@ -335,7 +441,9 @@ function applyEnvironment() {
     // A later change has already been asked for; this answer is stale.
     if (mine !== state.token) return;
     state.scene.environment = texture || null;
+    state.floor = texture ? measureFloor(texture) : 0;
     apply();
+    roomChanged();
   });
 }
 
@@ -397,15 +505,15 @@ export function environments() {
 }
 
 /**
- * How bright the house lights are, 0..1.
+ * The house level, from `houseLevelFor`.
  *
  * The environment is fill, so it follows the same control the key light does
  * rather than being a second thing to remember to turn down.
  *
- * @param {Number} value 0..1
+ * @param {Number} value
  */
 export function setHouseBrightness(value) {
-  state.house = Math.min(Math.max(Number(value) || 0, 0), 1);
+  state.house = Math.max(Number(value) || 0, 0);
   apply();
 }
 
@@ -422,6 +530,7 @@ export function setAmbientCeiling(value) {
   state.ceilingSet = true;
   state.ceiling = Math.min(Math.max(Number(value) || 0, 0), 2);
   apply();
+  roomChanged();
 }
 
 export function ambientCeiling() {

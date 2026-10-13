@@ -26,7 +26,7 @@
     "dispatch": {
      "1 Yoke_Pan": "23af36a14aae9f90",
      "3 Head_Tilt": "e5499587f099a3ed",
-     "5 Base_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "5 Base_PositionMSpeed": "6fa710c38d3f0a50",
      "6 Beam_Shutter1": "3a850eb7a81522b4",
      "7 Beam_Dimmer": "eba76b6734f4c134",
      "12 Head_Zoom": "43ec65b3136c5d01",
@@ -44,15 +44,15 @@
      "34 Head_Prism1": "d73a288f63f15b88",
      "35 Head_Prism1PosRotate": "84034036354292c1",
      "37 Head_Frost1": "67d9518ffbd49c5a",
-     "38 Head_Blade3B": "da39a3ee5e6b4b0d",
-     "40 Head_Blade3A": "da39a3ee5e6b4b0d",
-     "42 Head_Blade1B": "da39a3ee5e6b4b0d",
-     "44 Head_Blade1A": "da39a3ee5e6b4b0d",
-     "46 Head_Blade4B": "da39a3ee5e6b4b0d",
-     "48 Head_Blade4A": "da39a3ee5e6b4b0d",
-     "50 Head_Blade2B": "da39a3ee5e6b4b0d",
-     "52 Head_Blade2A": "da39a3ee5e6b4b0d",
-     "54 Head_ShaperRot": "da39a3ee5e6b4b0d",
+     "38 Head_Blade3B": "e2eeaa82dacd8934",
+     "40 Head_Blade3A": "e392b660a41b1f41",
+     "42 Head_Blade1B": "6a13f5cac295261d",
+     "44 Head_Blade1A": "1617aa230204822a",
+     "46 Head_Blade4B": "bbb589e5cdae25c7",
+     "48 Head_Blade4A": "9ac2d0d20e7cccae",
+     "50 Head_Blade2B": "32a58792ac87fc50",
+     "52 Head_Blade2A": "562ffc6be34e3b40",
+     "54 Head_ShaperRot": "7f207de72d12b32f",
      "56 Base_Control1": "da39a3ee5e6b4b0d"
     }
    },
@@ -75,7 +75,7 @@
     "dispatch": {
      "1 Yoke_Pan": "23af36a14aae9f90",
      "3 Head_Tilt": "e5499587f099a3ed",
-     "5 Base_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "5 Base_PositionMSpeed": "6fa710c38d3f0a50",
      "6 Beam_Shutter1": "3a850eb7a81522b4",
      "7 Beam_Dimmer": "865cc4fa45955576",
      "11 Head_Zoom": "d6ee8951668a9f8a",
@@ -93,15 +93,15 @@
      "24 Head_Prism1": "d73a288f63f15b88",
      "25 Head_Prism1PosRotate": "1e0b602644330048",
      "26 Head_Frost1": "67d9518ffbd49c5a",
-     "27 Head_Blade3B": "da39a3ee5e6b4b0d",
-     "28 Head_Blade3A": "da39a3ee5e6b4b0d",
-     "29 Head_Blade1B": "da39a3ee5e6b4b0d",
-     "30 Head_Blade1A": "da39a3ee5e6b4b0d",
-     "31 Head_Blade4B": "da39a3ee5e6b4b0d",
-     "32 Head_Blade4A": "da39a3ee5e6b4b0d",
-     "33 Head_Blade2B": "da39a3ee5e6b4b0d",
-     "34 Head_Blade2A": "da39a3ee5e6b4b0d",
-     "35 Head_ShaperRot": "da39a3ee5e6b4b0d",
+     "27 Head_Blade3B": "5bc38c8faf7eccb7",
+     "28 Head_Blade3A": "7835a414a43a25c5",
+     "29 Head_Blade1B": "2f0b5795471fb91f",
+     "30 Head_Blade1A": "a09fd608fabad6ca",
+     "31 Head_Blade4B": "b2bd8dbbba2c8385",
+     "32 Head_Blade4A": "17751a7a3dd45453",
+     "33 Head_Blade2B": "8f92f4913eae1554",
+     "34 Head_Blade2A": "5a73f7562b6ac8d2",
+     "35 Head_ShaperRot": "254c1104977e2395",
      "36 Base_Control1": "da39a3ee5e6b4b0d"
     }
    },
@@ -124,7 +124,7 @@
     "dispatch": {
      "1 Yoke_Pan": "235818c6b7f76753",
      "2 Head_Tilt": "2ab99dac2d736417",
-     "3 Base_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "3 Base_PositionMSpeed": "6fa710c38d3f0a50",
      "4 Beam_Shutter1": "3a850eb7a81522b4",
      "5 Beam_Dimmer": "865cc4fa45955576",
      "9 Head_Zoom": "d6ee8951668a9f8a",
@@ -142,15 +142,15 @@
      "22 Head_Prism1": "d73a288f63f15b88",
      "23 Head_Prism1PosRotate": "1e0b602644330048",
      "24 Head_Frost1": "67d9518ffbd49c5a",
-     "25 Head_Blade3B": "da39a3ee5e6b4b0d",
-     "26 Head_Blade3A": "da39a3ee5e6b4b0d",
-     "27 Head_Blade1B": "da39a3ee5e6b4b0d",
-     "28 Head_Blade1A": "da39a3ee5e6b4b0d",
-     "29 Head_Blade4B": "da39a3ee5e6b4b0d",
-     "30 Head_Blade4A": "da39a3ee5e6b4b0d",
-     "31 Head_Blade2B": "da39a3ee5e6b4b0d",
-     "32 Head_Blade2A": "da39a3ee5e6b4b0d",
-     "33 Head_ShaperRot": "da39a3ee5e6b4b0d",
+     "25 Head_Blade3B": "5bc38c8faf7eccb7",
+     "26 Head_Blade3A": "7835a414a43a25c5",
+     "27 Head_Blade1B": "2f0b5795471fb91f",
+     "28 Head_Blade1A": "a09fd608fabad6ca",
+     "29 Head_Blade4B": "b2bd8dbbba2c8385",
+     "30 Head_Blade4A": "17751a7a3dd45453",
+     "31 Head_Blade2B": "8f92f4913eae1554",
+     "32 Head_Blade2A": "5a73f7562b6ac8d2",
+     "33 Head_ShaperRot": "254c1104977e2395",
      "34 Head_Control1": "da39a3ee5e6b4b0d"
     }
    }
@@ -282,7 +282,7 @@
      "116 Beam_ColorAdd_W": "4d641f85f3d418c3",
      "6 Yoke_PanRotate": "da39a3ee5e6b4b0d",
      "7 Head_TiltRotate": "da39a3ee5e6b4b0d",
-     "5 Base_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "5 Base_PositionMSpeed": "84637ac58430e627",
      "8 Head_Shutter1": "dbbe353e1fb21c04",
      "9 Head_Dimmer": "865cc4fa45955576",
      "10 Head_ColorMacro1": "da39a3ee5e6b4b0d",
@@ -313,7 +313,7 @@
     "dispatch": {
      "1 Yoke_Pan": "14742453d624db45",
      "3 Head_Tilt": "c83e338e67f69466",
-     "5 Base_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "5 Base_PositionMSpeed": "84637ac58430e627",
      "6 Yoke_PanRotate": "da39a3ee5e6b4b0d",
      "7 Head_TiltRotate": "da39a3ee5e6b4b0d",
      "8 Head_ColorAdd_R": "9894270e0b1f87cb",
@@ -350,7 +350,7 @@
     "dispatch": {
      "1 Yoke_Pan": "e95ea3b1f40e6b56",
      "2 Head_Tilt": "53b1897583a2a3d4",
-     "3 Base_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "3 Base_PositionMSpeed": "84637ac58430e627",
      "4 Yoke_PanRotate": "da39a3ee5e6b4b0d",
      "5 Head_TiltRotate": "da39a3ee5e6b4b0d",
      "6 Head_ColorAdd_R": "9894270e0b1f87cb",
@@ -392,7 +392,7 @@
     "dispatch": {
      "1 Yoke_Pan": "05e270faef9df3ac",
      "3 Head_Tilt": "08b0ea847ce00361",
-     "5 Head_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "5 Head_PositionMSpeed": "517e4d76a02f0fbd",
      "6 Head_Dimmer": "eba76b6734f4c134",
      "8 Head_Shutter1": "bde054a645e672c6",
      "9 Beam_1_ColorAdd_WW": "bddcff4e0165b0ac",
@@ -434,7 +434,7 @@
     "dispatch": {
      "1 Yoke_Pan": "05e270faef9df3ac",
      "3 Head_Tilt": "08b0ea847ce00361",
-     "5 Head_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "5 Head_PositionMSpeed": "517e4d76a02f0fbd",
      "6 Head_Dimmer": "eba76b6734f4c134",
      "8 Head_Shutter1": "bde054a645e672c6",
      "9 Head_CTC": "6ad244bae7f741c0",
@@ -476,7 +476,7 @@
     "dispatch": {
      "1 Yoke_Pan": "05e270faef9df3ac",
      "3 Head_Tilt": "08b0ea847ce00361",
-     "5 Head_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "5 Head_PositionMSpeed": "517e4d76a02f0fbd",
      "6 Head_Dimmer": "eba76b6734f4c134",
      "8 Head_Shutter1": "bde054a645e672c6",
      "9 Beam_1_ColorAdd_WW": "bddcff4e0165b0ac",
@@ -516,7 +516,7 @@
     "dispatch": {
      "1 Yoke_Pan": "05e270faef9df3ac",
      "3 Head_Tilt": "08b0ea847ce00361",
-     "5 Head_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "5 Head_PositionMSpeed": "517e4d76a02f0fbd",
      "6 Head_Dimmer": "865cc4fa45955576",
      "7 Head_Shutter1": "bde054a645e672c6",
      "8 Beam_1_ColorAdd_WW": "2612dbb923551861",
@@ -556,7 +556,7 @@
     "dispatch": {
      "1 Yoke_Pan": "05e270faef9df3ac",
      "3 Head_Tilt": "08b0ea847ce00361",
-     "5 Head_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "5 Head_PositionMSpeed": "517e4d76a02f0fbd",
      "6 Head_Dimmer": "865cc4fa45955576",
      "7 Head_Shutter1": "bde054a645e672c6",
      "8 Head_CTC": "6ad244bae7f741c0",
@@ -596,7 +596,7 @@
     "dispatch": {
      "1 Yoke_Pan": "05e270faef9df3ac",
      "3 Head_Tilt": "08b0ea847ce00361",
-     "5 Head_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "5 Head_PositionMSpeed": "517e4d76a02f0fbd",
      "6 Head_Dimmer": "eba76b6734f4c134",
      "8 Head_Shutter1": "bde054a645e672c6",
      "9 Beam_1_ColorAdd_WW": "bddcff4e0165b0ac",
@@ -628,7 +628,7 @@
     "dispatch": {
      "1 Yoke_Pan": "05e270faef9df3ac",
      "3 Head_Tilt": "08b0ea847ce00361",
-     "5 Head_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "5 Head_PositionMSpeed": "517e4d76a02f0fbd",
      "6 Head_Dimmer": "865cc4fa45955576",
      "7 Head_Shutter1": "bde054a645e672c6",
      "8 Beam_1_ColorAdd_WW": "2612dbb923551861",
@@ -734,8 +734,8 @@
      "lumens": 10193.5,
      "power": 1480,
      "zoom": [
-      32,
-      32
+      52,
+      52
      ],
      "pan": null,
      "tilt": null,
@@ -864,8 +864,8 @@
      "lumens": 10193.5,
      "power": 1480,
      "zoom": [
-      32,
-      32
+      52,
+      52
      ],
      "pan": null,
      "tilt": null,
@@ -1062,7 +1062,7 @@
      "9 Body_Focus1": "1e3b44a372c1d465",
      "10 Yoke_Pan": "c69ebbe64f6f6b8d",
      "12 Body_Tilt": "a1b4ebf907860b7d",
-     "14 Body_Function": "da39a3ee5e6b4b0d",
+     "14 Body_Function": "8e49f3e1226535d6",
      "15 Body_FixtureGlobalReset": "da39a3ee5e6b4b0d",
      "16 Body_LampControl": "da39a3ee5e6b4b0d"
     }
@@ -1095,10 +1095,10 @@
      "9 Body_Focus1": "1e3b44a372c1d465",
      "10 Yoke_Pan": "c69ebbe64f6f6b8d",
      "12 Body_Tilt": "a1b4ebf907860b7d",
-     "14 Body_Function": "da39a3ee5e6b4b0d",
+     "14 Body_Function": "8e49f3e1226535d6",
      "15 Body_FixtureGlobalReset": "da39a3ee5e6b4b0d",
      "16 Body_LampControl": "da39a3ee5e6b4b0d",
-     "17 Body_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "17 Body_PositionMSpeed": "80e07cbab4ab5f26",
      "18 Body_ColorWheelSelectMSpeed": "da39a3ee5e6b4b0d",
      "19 Body_BeamTime": "da39a3ee5e6b4b0d",
      "20 Body_GoboTime": "da39a3ee5e6b4b0d"
@@ -1256,8 +1256,8 @@
      "lumens": 11800,
      "power": 200,
      "zoom": [
-      60,
-      60
+      80,
+      80
      ],
      "pan": null,
      "tilt": null,
@@ -1276,8 +1276,8 @@
      "lumens": 11800,
      "power": 200,
      "zoom": [
-      60,
-      60
+      80,
+      80
      ],
      "pan": null,
      "tilt": null,
@@ -1297,8 +1297,8 @@
      "lumens": 11800,
      "power": 200,
      "zoom": [
-      60,
-      60
+      80,
+      80
      ],
      "pan": null,
      "tilt": null,
@@ -1319,8 +1319,8 @@
      "lumens": 11800,
      "power": 200,
      "zoom": [
-      60,
-      60
+      80,
+      80
      ],
      "pan": null,
      "tilt": null,
@@ -1384,7 +1384,7 @@
      "20 Head_AnimationWheel1": "da39a3ee5e6b4b0d",
      "21 Base_ColorMixMSpeed": "da39a3ee5e6b4b0d",
      "22 Base_ColorMacro1": "da39a3ee5e6b4b0d",
-     "23 Base_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "23 Base_PositionMSpeed": "76d372851f7722c7",
      "24 Base_Control1": "da39a3ee5e6b4b0d"
     }
    },
@@ -1426,7 +1426,7 @@
      "22 Head_AnimationWheel1": "da39a3ee5e6b4b0d",
      "23 Base_ColorMixMSpeed": "da39a3ee5e6b4b0d",
      "24 Base_ColorMacro1": "da39a3ee5e6b4b0d",
-     "25 Base_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "25 Base_PositionMSpeed": "76d372851f7722c7",
      "26 Base_Control1": "da39a3ee5e6b4b0d"
     }
    },
@@ -1468,7 +1468,7 @@
      "33 Head_AnimationWheel1": "da39a3ee5e6b4b0d",
      "34 Base_ColorMixMSpeed": "da39a3ee5e6b4b0d",
      "35 Base_ColorMacro1": "da39a3ee5e6b4b0d",
-     "36 Base_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "36 Base_PositionMSpeed": "76d372851f7722c7",
      "37 Base_Control1": "da39a3ee5e6b4b0d"
     }
    },
@@ -1510,7 +1510,7 @@
      "33 Head_AnimationWheel1": "da39a3ee5e6b4b0d",
      "34 Base_ColorMixMSpeed": "da39a3ee5e6b4b0d",
      "35 Base_ColorMacro1": "da39a3ee5e6b4b0d",
-     "36 Base_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "36 Base_PositionMSpeed": "76d372851f7722c7",
      "37 Base_Control1": "da39a3ee5e6b4b0d"
     }
    },
@@ -1552,7 +1552,7 @@
      "22 Head_AnimationWheel1": "da39a3ee5e6b4b0d",
      "23 Base_ColorMixMSpeed": "da39a3ee5e6b4b0d",
      "24 Base_ColorMacro1": "da39a3ee5e6b4b0d",
-     "25 Base_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "25 Base_PositionMSpeed": "76d372851f7722c7",
      "26 Base_Control1": "da39a3ee5e6b4b0d"
     }
    },
@@ -1594,7 +1594,7 @@
      "20 Head_AnimationWheel1": "da39a3ee5e6b4b0d",
      "21 Base_ColorMixMSpeed": "da39a3ee5e6b4b0d",
      "22 Base_ColorMacro1": "da39a3ee5e6b4b0d",
-     "23 Base_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "23 Base_PositionMSpeed": "76d372851f7722c7",
      "24 Base_Control1": "da39a3ee5e6b4b0d"
     }
    }
@@ -2510,7 +2510,7 @@
      "4 Yoke_Pan": "14742453d624db45",
      "6 Head_Tilt": "8c9f7b94901fc870",
      "8 Base_Control1": "da39a3ee5e6b4b0d",
-     "9 Head_Color1": "f68a8d3f33961746",
+     "9 Head_Color1": "f161b326f8fdecb6",
      "10 Head_ColorAdd_R": "e3188cb5cfc788b2",
      "11 Head_ColorAdd_G": "c65195e87ef7bc79",
      "12 Head_ColorAdd_B": "2c541d4e8c8bfcd3",
@@ -2541,7 +2541,7 @@
      "4 Yoke_Pan": "14742453d624db45",
      "6 Head_Tilt": "8c9f7b94901fc870",
      "8 Base_Control1": "da39a3ee5e6b4b0d",
-     "9 Beams_Color1": "f68a8d3f33961746",
+     "9 Beams_Color1": "f161b326f8fdecb6",
      "10 Beams_ColorAdd_R": "e3188cb5cfc788b2",
      "11 Beams_ColorAdd_G": "c65195e87ef7bc79",
      "12 Beams_ColorAdd_B": "2c541d4e8c8bfcd3",
@@ -2554,7 +2554,7 @@
      "19 Base_EffectsSync": "da39a3ee5e6b4b0d",
      "20 Auras_Shutter1": "ad7f8d4cdd6f5e7b",
      "21 Auras_Dimmer": "26be260aa0bb41ea",
-     "22 Auras_Color2": "645e8b7b9bbb5dc2",
+     "22 Auras_Color2": "e6e7678793d5360d",
      "23 Auras_ColorAdd_R": "e3188cb5cfc788b2",
      "24 Auras_ColorAdd_G": "c65195e87ef7bc79",
      "25 Auras_ColorAdd_B": "2c541d4e8c8bfcd3"
@@ -2601,15 +2601,15 @@
      "15 Head_Iris": "f72c23694db391b1",
      "16 Head_Zoom": "80a315bd6b164dd9",
      "18 Head_Focus1": "8129d4eeea58748a",
-     "20 Head_Blade4A": "da39a3ee5e6b4b0d",
-     "21 Head_Blade4Rot": "da39a3ee5e6b4b0d",
-     "22 Head_Blade3A": "da39a3ee5e6b4b0d",
-     "23 Head_Blade3Rot": "da39a3ee5e6b4b0d",
-     "24 Head_Blade2A": "da39a3ee5e6b4b0d",
-     "25 Head_Blade2Rot": "da39a3ee5e6b4b0d",
-     "26 Head_Blade1A": "da39a3ee5e6b4b0d",
-     "27 Head_Blade1Rot": "da39a3ee5e6b4b0d",
-     "28 Head_ShaperRot": "da39a3ee5e6b4b0d",
+     "20 Head_Blade4A": "30f1d46674251a67",
+     "21 Head_Blade4Rot": "1f42160174b511c6",
+     "22 Head_Blade3A": "9b8d1cc657243d9e",
+     "23 Head_Blade3Rot": "073e5bb10b31950e",
+     "24 Head_Blade2A": "3e80110e369d8abc",
+     "25 Head_Blade2Rot": "db66ff5dde9dbef2",
+     "26 Head_Blade1A": "9792a26fa6fc23bd",
+     "27 Head_Blade1Rot": "b64aa8c674ae2ac8",
+     "28 Head_ShaperRot": "b861be91c474da07",
      "29 Yoke_Pan": "14742453d624db45",
      "31 Head_Tilt": "14e0de6388d070af",
      "33 Base_Control1": "da39a3ee5e6b4b0d",
@@ -2658,15 +2658,15 @@
      "9 Head_Gobo1Pos": "d5bbf167c3205e0e",
      "11 Head_AnimationWheel1": "bd96f9a4bad6a17e",
      "12 Head_AnimationWheel1Pos": "da39a3ee5e6b4b0d",
-     "13 Head_Blade2A": "da39a3ee5e6b4b0d",
-     "14 Head_Blade2Rot": "da39a3ee5e6b4b0d",
-     "15 Head_Blade1A": "da39a3ee5e6b4b0d",
-     "16 Head_Blade1Rot": "da39a3ee5e6b4b0d",
-     "17 Head_Blade4A": "da39a3ee5e6b4b0d",
-     "18 Head_Blade4Rot": "da39a3ee5e6b4b0d",
-     "19 Head_Blade3A": "da39a3ee5e6b4b0d",
-     "20 Head_Blade3Rot": "da39a3ee5e6b4b0d",
-     "21 Head_ShaperRot": "da39a3ee5e6b4b0d",
+     "13 Head_Blade2A": "3e80110e369d8abc",
+     "14 Head_Blade2Rot": "53dc111efc618eb9",
+     "15 Head_Blade1A": "9792a26fa6fc23bd",
+     "16 Head_Blade1Rot": "0fb6b125d64809ed",
+     "17 Head_Blade4A": "30f1d46674251a67",
+     "18 Head_Blade4Rot": "c6cee6a071b8cca0",
+     "19 Head_Blade3A": "9b8d1cc657243d9e",
+     "20 Head_Blade3Rot": "54351a0fb2183fe3",
+     "21 Head_ShaperRot": "02ca2b0aa15e5aa5",
      "22 Head_Frost1": "b971ff1f3dad2a9e",
      "23 Head_Prism1": "8ff84f046d53cb34",
      "24 Head_Prism1Pos": "da39a3ee5e6b4b0d",
@@ -2706,15 +2706,15 @@
      "10 Head_Gobo1Pos": "d5bbf167c3205e0e",
      "12 Head_AnimationWheel1": "bd96f9a4bad6a17e",
      "13 Head_AnimationWheel1Pos": "da39a3ee5e6b4b0d",
-     "14 Head_Blade2A": "da39a3ee5e6b4b0d",
-     "15 Head_Blade2Rot": "da39a3ee5e6b4b0d",
-     "16 Head_Blade1A": "da39a3ee5e6b4b0d",
-     "17 Head_Blade1Rot": "da39a3ee5e6b4b0d",
-     "18 Head_Blade4A": "da39a3ee5e6b4b0d",
-     "19 Head_Blade4Rot": "da39a3ee5e6b4b0d",
-     "20 Head_Blade3A": "da39a3ee5e6b4b0d",
-     "21 Head_Blade3Rot": "da39a3ee5e6b4b0d",
-     "22 Head_ShaperRot": "da39a3ee5e6b4b0d",
+     "14 Head_Blade2A": "3e80110e369d8abc",
+     "15 Head_Blade2Rot": "53dc111efc618eb9",
+     "16 Head_Blade1A": "9792a26fa6fc23bd",
+     "17 Head_Blade1Rot": "0fb6b125d64809ed",
+     "18 Head_Blade4A": "30f1d46674251a67",
+     "19 Head_Blade4Rot": "c6cee6a071b8cca0",
+     "20 Head_Blade3A": "9b8d1cc657243d9e",
+     "21 Head_Blade3Rot": "54351a0fb2183fe3",
+     "22 Head_ShaperRot": "02ca2b0aa15e5aa5",
      "23 Head_Frost1": "b971ff1f3dad2a9e",
      "24 Head_Prism1": "8ff84f046d53cb34",
      "25 Head_Prism1Pos": "da39a3ee5e6b4b0d",
@@ -2814,7 +2814,7 @@
     "dispatch": {
      "1 Yoke_Pan": "c69ebbe64f6f6b8d",
      "3 Head_Tilt": "b80f95af4b79e967",
-     "5 Base_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "5 Base_PositionMSpeed": "5b554350c6c32321",
      "6 Base_Control1": "da39a3ee5e6b4b0d",
      "7 Head_Color1": "e539a2aa87c90a1f",
      "9 Head_Color2": "6115ed3fc50526a5",
@@ -2839,15 +2839,15 @@
      "31 Head_Zoom": "3b6bf7525845aa1b",
      "33 Head_Focus1": "de4a1e61af4a4a2c",
      "35 Head_NoFeature": "da39a3ee5e6b4b0d",
-     "36 Head_ShaperRot": "da39a3ee5e6b4b0d",
-     "37 Head_Blade1A": "da39a3ee5e6b4b0d",
-     "38 Head_Blade1Rot": "da39a3ee5e6b4b0d",
-     "39 Head_Blade4A": "da39a3ee5e6b4b0d",
-     "40 Head_Blade4Rot": "da39a3ee5e6b4b0d",
-     "41 Head_Blade3A": "da39a3ee5e6b4b0d",
-     "42 Head_Blade3Rot": "da39a3ee5e6b4b0d",
-     "43 Head_Blade2A": "da39a3ee5e6b4b0d",
-     "44 Head_Blade2Rot": "da39a3ee5e6b4b0d",
+     "36 Head_ShaperRot": "f88a80b98461fa2e",
+     "37 Head_Blade1A": "0108de86c9fdbe79",
+     "38 Head_Blade1Rot": "748014ee307f8efa",
+     "39 Head_Blade4A": "0a18fca3cfb153c4",
+     "40 Head_Blade4Rot": "d3bcc75e746b5d3d",
+     "41 Head_Blade3A": "29786933d56ae5c9",
+     "42 Head_Blade3Rot": "fb0d28896e8ee3ed",
+     "43 Head_Blade2A": "0e9aaa8adfd5e0d3",
+     "44 Head_Blade2Rot": "09676a19d5bbae50",
      "45 Head_ShaperMacros": "da39a3ee5e6b4b0d",
      "46 Base_ShaperMacrosSpeed": "da39a3ee5e6b4b0d",
      "47 Head_Shutter1": "1ab145b464aa8afa",
@@ -2873,7 +2873,7 @@
     "dispatch": {
      "1 Yoke_Pan": "c69ebbe64f6f6b8d",
      "3 Head_Tilt": "b80f95af4b79e967",
-     "5 Base_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "5 Base_PositionMSpeed": "5b554350c6c32321",
      "6 Base_Control1": "da39a3ee5e6b4b0d",
      "7 Head_Color1": "d2523bd6710b00d1",
      "8 Head_Color2": "293397324a7f9235",
@@ -2898,15 +2898,15 @@
      "27 Head_Zoom": "4bb86f94a9cc2a14",
      "28 Head_Focus1": "1e3b44a372c1d465",
      "29 Head_NoFeature": "da39a3ee5e6b4b0d",
-     "30 Head_ShaperRot": "da39a3ee5e6b4b0d",
-     "31 Head_Blade1A": "da39a3ee5e6b4b0d",
-     "32 Head_Blade1Rot": "da39a3ee5e6b4b0d",
-     "33 Head_Blade4A": "da39a3ee5e6b4b0d",
-     "34 Head_Blade4Rot": "da39a3ee5e6b4b0d",
-     "35 Head_Blade3A": "da39a3ee5e6b4b0d",
-     "36 Head_Blade3Rot": "da39a3ee5e6b4b0d",
-     "37 Head_Blade2A": "da39a3ee5e6b4b0d",
-     "38 Head_Blade2Rot": "da39a3ee5e6b4b0d",
+     "30 Head_ShaperRot": "f88a80b98461fa2e",
+     "31 Head_Blade1A": "0108de86c9fdbe79",
+     "32 Head_Blade1Rot": "748014ee307f8efa",
+     "33 Head_Blade4A": "0a18fca3cfb153c4",
+     "34 Head_Blade4Rot": "d3bcc75e746b5d3d",
+     "35 Head_Blade3A": "29786933d56ae5c9",
+     "36 Head_Blade3Rot": "fb0d28896e8ee3ed",
+     "37 Head_Blade2A": "0e9aaa8adfd5e0d3",
+     "38 Head_Blade2Rot": "09676a19d5bbae50",
      "39 Head_ShaperMacros": "da39a3ee5e6b4b0d",
      "40 Base_ShaperMacrosSpeed": "da39a3ee5e6b4b0d",
      "41 Head_Shutter1": "1ab145b464aa8afa",
@@ -2939,7 +2939,7 @@
     "dispatch": {
      "1 Yoke_Pan": "abf038f6485b96f3",
      "3 Head_Tilt": "63885796c1cb6234",
-     "5 Base_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "5 Base_PositionMSpeed": "5b554350c6c32321",
      "6 Base_Control1": "da39a3ee5e6b4b0d",
      "7 Head_ColorMacro1": "da39a3ee5e6b4b0d",
      "8 Head_ColorAdd_R": "5ed68987a0d3719c",
@@ -2972,7 +2972,7 @@
     "dispatch": {
      "1 Yoke_Pan": "abf038f6485b96f3",
      "3 Head_Tilt": "63885796c1cb6234",
-     "5 Base_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "5 Base_PositionMSpeed": "5b554350c6c32321",
      "6 Base_Control1": "da39a3ee5e6b4b0d",
      "7 Head_ColorMacro1": "da39a3ee5e6b4b0d",
      "8 Head_ColorAdd_R": "786d203bcba0bb52",
@@ -3018,7 +3018,7 @@
     "dispatch": {
      "1 Yoke_Pan": "c69ebbe64f6f6b8d",
      "3 Head_Tilt": "9f8b6752cdda9b77",
-     "5 Base_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "5 Base_PositionMSpeed": "5b554350c6c32321",
      "6 Base_Control1": "da39a3ee5e6b4b0d",
      "7 Head_ColorSub_C": "e838247e9c988909",
      "8 Head_ColorSub_M": "a93073bd363fbaf5",
@@ -3069,7 +3069,7 @@
     "dispatch": {
      "1 Yoke_Pan": "c69ebbe64f6f6b8d",
      "3 Head_Tilt": "9f8b6752cdda9b77",
-     "5 Base_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "5 Base_PositionMSpeed": "5b554350c6c32321",
      "6 Base_Control1": "da39a3ee5e6b4b0d",
      "7 Head_ColorSub_C": "e838247e9c988909",
      "8 Head_ColorSub_M": "a93073bd363fbaf5",
@@ -3128,7 +3128,7 @@
     "dispatch": {
      "1 Yoke_Pan": "c69ebbe64f6f6b8d",
      "3 Head_Tilt": "764b269fff99d237",
-     "5 Base_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "5 Base_PositionMSpeed": "517e4d76a02f0fbd",
      "6 Base_Control1": "da39a3ee5e6b4b0d",
      "7 Background_Color1": "8ec990127cec7c01",
      "8 Background_ColorAdd_R": "5ed68987a0d3719c",
@@ -3261,7 +3261,7 @@
     "dispatch": {
      "1 Yoke_Pan": "c69ebbe64f6f6b8d",
      "3 Head_Tilt": "764b269fff99d237",
-     "5 Base_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "5 Base_PositionMSpeed": "517e4d76a02f0fbd",
      "6 Base_Control1": "da39a3ee5e6b4b0d",
      "7 Background_Color1": "8ec990127cec7c01",
      "8 Background_ColorAdd_R": "5ed68987a0d3719c",
@@ -3375,7 +3375,7 @@
     "dispatch": {
      "1 Yoke_Pan": "c69ebbe64f6f6b8d",
      "3 Head_Tilt": "764b269fff99d237",
-     "5 Base_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "5 Base_PositionMSpeed": "517e4d76a02f0fbd",
      "6 Base_Control1": "da39a3ee5e6b4b0d",
      "7 Background_Color1": "8ec990127cec7c01",
      "8 Background_ColorAdd_R": "5ed68987a0d3719c",
@@ -3495,7 +3495,7 @@
     "dispatch": {
      "1 Yoke_Pan": "c69ebbe64f6f6b8d",
      "3 Head_Tilt": "764b269fff99d237",
-     "5 Base_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "5 Base_PositionMSpeed": "517e4d76a02f0fbd",
      "6 Base_Control1": "da39a3ee5e6b4b0d",
      "7 Background_Color1": "8ec990127cec7c01",
      "8 Background_ColorAdd_R": "5ed68987a0d3719c",
@@ -3596,7 +3596,7 @@
     "dispatch": {
      "1 Yoke_Pan": "c69ebbe64f6f6b8d",
      "3 Head_Tilt": "764b269fff99d237",
-     "5 Base_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "5 Base_PositionMSpeed": "517e4d76a02f0fbd",
      "6 Base_Control1": "da39a3ee5e6b4b0d",
      "7 Background_Color1": "8ec990127cec7c01",
      "8 Background_ColorAdd_R": "5ed68987a0d3719c",
@@ -3653,7 +3653,7 @@
     "dispatch": {
      "1 Yoke_Pan": "c69ebbe64f6f6b8d",
      "3 Head_Tilt": "764b269fff99d237",
-     "5 Base_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "5 Base_PositionMSpeed": "517e4d76a02f0fbd",
      "6 Base_Control1": "da39a3ee5e6b4b0d",
      "7 Background_Color1": "8ec990127cec7c01",
      "8 Background_ColorAdd_R": "786d203bcba0bb52",
@@ -3697,7 +3697,7 @@
     "dispatch": {
      "1 Yoke_Pan": "c69ebbe64f6f6b8d",
      "3 Head_Tilt": "764b269fff99d237",
-     "5 Base_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "5 Base_PositionMSpeed": "517e4d76a02f0fbd",
      "6 Base_Control1": "da39a3ee5e6b4b0d",
      "7 Head_Color1": "8ec990127cec7c01",
      "8 Zone1_ColorAdd_R": "5ed68987a0d3719c",
@@ -3749,7 +3749,7 @@
     "dispatch": {
      "1 Yoke_Pan": "c69ebbe64f6f6b8d",
      "3 Head_Tilt": "764b269fff99d237",
-     "5 Base_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "5 Base_PositionMSpeed": "517e4d76a02f0fbd",
      "6 Base_Control1": "da39a3ee5e6b4b0d",
      "7 Head_Color1": "8ec990127cec7c01",
      "8 All Pixels_ColorAdd_R": "786d203bcba0bb52",
@@ -3793,7 +3793,7 @@
     "dispatch": {
      "1 Yoke_Pan": "c69ebbe64f6f6b8d",
      "3 Head_Tilt": "764b269fff99d237",
-     "5 Base_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "5 Base_PositionMSpeed": "517e4d76a02f0fbd",
      "6 Base_Control1": "da39a3ee5e6b4b0d",
      "7 Head_Color1": "8ec990127cec7c01",
      "8 All Pixels_ColorAdd_R": "5ed68987a0d3719c",
@@ -3837,7 +3837,7 @@
     "dispatch": {
      "1 Yoke_Pan": "c69ebbe64f6f6b8d",
      "3 Head_Tilt": "764b269fff99d237",
-     "5 Base_PositionMSpeed": "da39a3ee5e6b4b0d",
+     "5 Base_PositionMSpeed": "517e4d76a02f0fbd",
      "6 Base_Control1": "da39a3ee5e6b4b0d",
      "7 Head_Color1": "8ec990127cec7c01",
      "8 All Pixels_ColorAdd_R": "5ed68987a0d3719c",
@@ -3917,6 +3917,70 @@
      "84 Lens3_ColorAdd_B": "244203f6bbb7f5e1",
      "87 Lens3_ColorAdd_B": "244203f6bbb7f5e1",
      "90 Lens3_ColorAdd_B": "244203f6bbb7f5e1"
+    }
+   }
+  }
+ },
+ "Tomshine@80W_LED_Gobo_Moving_Head.gdtf": {
+  "wheels": {
+   "Color Wheel": "Color Color Color Color Color Color Color Color",
+   "Gobo Wheel": "Open Gobo Gobo Gobo Gobo Gobo Gobo Gobo"
+  },
+  "modes": {
+   "11-channel": {
+    "inputs": {
+     "category": "Moving Head",
+     "lumens": 1750,
+     "power": 80,
+     "zoom": [
+      11,
+      11
+     ],
+     "pan": 540,
+     "tilt": 230,
+     "speed": [
+      null,
+      null
+     ]
+    },
+    "dispatch": {
+     "1 Yoke_Pan": "2e804193def16f41",
+     "3 Head_Tilt": "0d61758ae86a3825",
+     "5 Head_PositionMSpeed": "9578af721fe5bc30",
+     "6 Head_Dimmer": "78927dbf612e4619",
+     "7 Head_Shutter1": "db95eccb45b9baff",
+     "8 Head_Color1": "717c7c66694c31b8",
+     "9 Head_Gobo1": "db623e0edcee8be4",
+     "10 Head_Effects1": "da39a3ee5e6b4b0d",
+     "11 Head_FixtureGlobalReset": "da39a3ee5e6b4b0d"
+    }
+   },
+   "9-channel": {
+    "inputs": {
+     "category": "Moving Head",
+     "lumens": 1750,
+     "power": 80,
+     "zoom": [
+      11,
+      11
+     ],
+     "pan": 540,
+     "tilt": 230,
+     "speed": [
+      null,
+      null
+     ]
+    },
+    "dispatch": {
+     "1 Yoke_Pan": "a43df4e67bfda56e",
+     "2 Head_Tilt": "c769c2c6daaf4ed4",
+     "3 Head_PositionMSpeed": "9578af721fe5bc30",
+     "4 Head_Dimmer": "78927dbf612e4619",
+     "5 Head_Shutter1": "db95eccb45b9baff",
+     "6 Head_Color1": "717c7c66694c31b8",
+     "7 Head_Gobo1": "db623e0edcee8be4",
+     "8 Head_Effects1": "da39a3ee5e6b4b0d",
+     "9 Head_FixtureGlobalReset": "da39a3ee5e6b4b0d"
     }
    }
   }

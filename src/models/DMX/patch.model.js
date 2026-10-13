@@ -626,6 +626,50 @@ class PatchMap {
   }
 
   /**
+   * Fills a universe from the values the patched fixtures hold now.
+   *
+   * The inverse of `writeUniverse`: what Beam sends in sender mode, so the
+   * real fixtures do what the virtual ones show. Channels no fixture holds are
+   * zero.
+   *
+   * @public
+   * @param {Number} universe universe number, counted from 0
+   * @param {Uint8Array} out 512 bytes to fill
+   */
+  readUniverse(universe, out) {
+    out.fill(0);
+    const first = universe * DMX_UNIVERSE_LENGTH;
+    const last = first + DMX_UNIVERSE_LENGTH - 1;
+    for (let i = this.seekRun(first); i < this._runs.length; i += 1) {
+      const run = this._runs[i];
+      if (run.start > last) break;
+      const from = Math.max(run.start, first);
+      const to = Math.min(run.end, last);
+      if (run.takesRange && run.fixture.channels && run.fixture.channels.values) {
+        // A bar's channels are a byte range in wire order: the inverse of
+        // `writeRunBulk`, as one copy.
+        const index = this.indexIn(run, from);
+        if (index >= 0) {
+          const offset = from % DMX_UNIVERSE_LENGTH;
+          const room = run.pixelSize > 1
+            ? Math.floor((DMX_UNIVERSE_LENGTH - offset) / run.pixelSize) * run.pixelSize
+            : DMX_UNIVERSE_LENGTH - offset;
+          const count = Math.min(run.chCount - index, room, to - from + 1);
+          if (count > 0) {
+            out.set(run.fixture.channels.values.subarray(index, index + count), offset);
+          }
+        }
+        // eslint-disable-next-line no-continue
+        continue;
+      }
+      for (let address = from; address <= to; address += 1) {
+        const index = this.indexIn(run, address);
+        if (index >= 0) out[address - first] = run.fixture.channelValue(index);
+      }
+    }
+  }
+
+  /**
    * Every universe the patched rig actually occupies.
    *
    * Read off the run list, which is already the patch in address order, so a

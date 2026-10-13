@@ -3,7 +3,7 @@
 attribute vec3 direction;   //beam direction
 attribute vec3 color;       //beam color
 attribute float intensity;  //beam intensity
-attribute vec3 angle;       //x half-angle of the field, y unused, z inner cone over the field
+attribute vec3 angle;       //x half-angle of the field, y 1 / focus distance (1/m, 0 infinity), z inner cone over the field
 attribute vec3 wpos;        //beam position
 attribute vec2 depthSlot;   //x atlas slot of this beam's depth tile, -1 for none; y how far the iris is open, 1 fully
 attribute vec4 gobo;        //two gobos as (texture layer, angle); layer 0 open
@@ -27,6 +27,7 @@ varying float vAngle;           //Half-angle of the beam's field, degrees
 varying float vInner;           //Inner cone radius over the field's, where the falloff starts
 varying float vSlope;           //Cone slope, dRadius/dz, of the cone drawn
 varying float vLensRadius;      //Radius of the cone at the lens, in metres
+flat varying float vInvFocus;        //1 / the lens's focus distance, 1/m, 0 infinity
 varying float vZFar;            //Local z of the cone's far rim
 flat varying vec4 vTile;             //Depth tile rect in the atlas, z < 0 for no tile
 varying vec3 vAxisX;            //The beam frame's x axis, world, unit
@@ -35,6 +36,7 @@ flat varying vec4 vGobo;             //The gobos in the beam, see the attribute
 flat varying vec4 vPrism;            //The prism in the beam, see the attribute
 flat varying vec4 vColorB;           //Colour past a colour wheel split; w the split
 flat varying float vIris;            //How far the iris is open, 1 fully
+flat varying float vShaperRow;       //This light's row of the shaper table: its instance
 varying float vSpread;          //Drawn cone radius over the field's: 1, or more with a prism
 
 /**
@@ -51,13 +53,15 @@ vec3 computeRadiusVertexScaleFactor(vec3 vector, float radialScale, float spread
   // which end it belongs to, which a vertex index cannot once caps are in.
   if(vector.z > length * 0.5) {
     // The far ring, in world units, is the start ring plus what the field
-    // spreads over the length: the drawn cone is the field, the stated
-    // angle, which is where the pool on the floor ends and where the
-    // fragment shader's falloff reaches nothing. The start ring is topRadius
-    // scaled by the instance; the spread is not, so it is divided back out
-    // of the local radius the instance matrix will scale. The far ring sits
-    // at 1.5 times the cylinder length, see the z scale below.
-    float grow = tan(radians(angle.x)) * spread * (length * 1.5) / radialScale;
+    // spreads over the length, plus what the lens's blur grows by past twice
+    // the focus distance: the lit beam is the image, lens radius times
+    // |1 - z / focus| wider each way, and the drawn cone is the hull that
+    // holds it at every depth. The start ring is topRadius scaled by the
+    // instance; the spread is not, so it is divided back out of the local
+    // radius the instance matrix will scale. The far ring sits at 1.5 times
+    // the cylinder length, see the z scale below.
+    float grow = tan(radians(angle.x)) * spread * (length * 1.5) / radialScale
+      + topRadius * angle.y * (length * 1.5);
     float scaleFactor = 1.0 + grow / topRadius;
     return vector * vec3(scaleFactor, scaleFactor, 1.5);
   }
@@ -79,10 +83,12 @@ void main() {
   // field. Both come from the same penumbra the floor pool's SpotLight
   // gets, see `writeBeamProfile`.
   vInner = clamp(angle.z, 0.0, 0.99);
+  vInvFocus = max(angle.y, 0.0);
   vGobo = gobo;
   vPrism = prism;
   vColorB = colorB;
   vIris = depthSlot.y;
+  vShaperRow = float(gl_InstanceID);
 
   // A prism throws copies of the beam out past the field by its spread, so
   // the drawn cone widens to hold them; otherwise the cone is the field.

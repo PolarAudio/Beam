@@ -42,6 +42,7 @@
           :items="listItems"
           :selected-id="activeKind === 'fixtures' ? selectedRowId : undefined"
           filterable
+          open-folders
           @select="selectItem"
         >
           <template #filters>
@@ -398,6 +399,7 @@
 <script>
 import { markRaw } from 'vue';
 import PopupMixin from '@/views/mixins/popup.mixin';
+import fetchJson from '@/plugins/fetch_json';
 import { DMX_UNIVERSE_LENGTH, channelAddress } from '@/models/DMX/patch.model';
 import { buildMadMapperFixture } from '@/models/DMX/generic/madmapper';
 import Fixture from '@/models/DMX/fixture.model';
@@ -529,7 +531,7 @@ export default {
   emits: ['placed'],
   data() {
     return {
-      headerData: { title: 'Add to show' },
+      headerData: { title: 'Add to scene' },
       createPopupState: false,
       createObjectPopupState: false,
       importObjectPopupState: false,
@@ -1097,6 +1099,17 @@ export default {
               copy.fixtureType = fixtureType || null;
               const fixture = this.$show.fixturePool.addRaw(copy);
               this.$show.patchFixture(fixture);
+              // Placed on the floor, not through it: a fixture whose body reaches
+              // below its origin -- a display, a projector -- is lifted until it
+              // rests on the floor. A height set above that stays as it is.
+              const model = fixture._3DModel;
+              const sunk = model ? (Number(model.floorOffset) || 0) - fixture.position.z : 0;
+              if (sunk > 0) {
+                fixture.position = {
+                  ...fixture.position,
+                  z: Math.round((fixture.position.z + sunk) * 100) / 100,
+                };
+              }
               // Collected rather than left empty: this list is returned, and
               // something has to name what was added.
               fixtures.push(fixture);
@@ -1366,13 +1379,13 @@ export default {
       if (!item || !item.gdtf) return;
       const used = this.selectedInUse;
       let inShow = '';
-      if (used === 1) inShow = '1 fixture in this show uses it. ';
-      else if (used > 1) inShow = `${used} fixtures in this show use it. `;
+      if (used === 1) inShow = '1 fixture in this project uses it. ';
+      else if (used > 1) inShow = `${used} fixtures in this project use it. `;
       const yes = await confirm({
         title: 'Remove from library',
         message: `Remove ${item.name} from your library?`,
         detail: `File: ${item.fixture.split('/').pop()}.gdtf\n${inShow}`
-          + 'It is no longer offered to add; this show and saved shows that use it keep '
+          + 'It is no longer offered to add; this project and saved projects that use it keep '
           + 'working. Importing the file again brings it back.',
         yes: 'Remove',
         no: 'Keep',
@@ -1920,7 +1933,7 @@ export default {
       // stands for a hundred channels and counts as one.
       const data = generated
         ? JSON.parse(JSON.stringify(generated))
-        : normaliseMatrixProfile((await this.$http.get(`${import.meta.env.VITE_STATIC_URL}fixtures/${manufacturer.name}/${fixture}`)).data);
+        : normaliseMatrixProfile(await fetchJson(`${import.meta.env.VITE_STATIC_URL}fixtures/${manufacturer.name}/${fixture}`));
       Object.assign(this.fixture, {
         share: null,
         OFLData: data,

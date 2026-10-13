@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import axios from 'axios';
+import fetchJson from '@/plugins/fetch_json';
 import { markRaw } from 'vue';
 import {
   EventEmitter,
@@ -10,7 +10,7 @@ import {
 
 import PatchSingleton from './patch.model';
 import migrateShowData, { SHOWFILE_VERSION } from './showfile.migrate';
-import VideoConnector from './video_connector';
+import VideoInput, { migrateVideo, withTestCard, INPUT_KINDS } from './video_input';
 import FixturePool from './fixture.pool.model';
 import Group from './group.model';
 import Structure from './structure.model';
@@ -22,8 +22,9 @@ import {
   expandLedBarProfile, withoutLedBarChannels,
 } from './generic/led_bar';
 import { kindById } from './generic/fixture_kind';
-import DefinitionStore, { SHOW_SCOPE, showKey } from './definition_store';
+import DefinitionStore, { SHOW_SCOPE, SHOW_SCOPE_LABEL, showKey } from './definition_store';
 import VideoRouter from '../../plugins/visualizer/video_router';
+import Preferences from '../../plugins/visualizer/preferences';
 import SceneObjects from '../../plugins/visualizer/scene_objects';
 import Studio from './studio';
 import { normaliseMatrixProfile } from './ofl_matrix';
@@ -96,8 +97,7 @@ function foldModelKey(key) {
  */
 async function fetchProfile(profileKey) {
   try {
-    const res = await axios.get(`${import.meta.env.VITE_STATIC_URL}fixtures/${profileKey}.json`);
-    const profile = res.data;
+    const profile = await fetchJson(`${import.meta.env.VITE_STATIC_URL}fixtures/${profileKey}.json`);
     // The least a profile needs for the parser to survive it. A 404 served as
     // HTML has none of these, which is the point.
     const usable = profile
@@ -223,17 +223,14 @@ class Show extends EventEmitter {
      */
     this.objects = [];
     /**
-     * Named regions of a video feed that devices are patched to.
-     *
-     * Not scene items: a connector has no position and nothing draws it, so it
-     * is closer to a universe than to a fixture and stays out of the item
-     * list. See `video_connector.js`.
+     * The pictures this show receives: NDI streams and files. A display or
+     * projector names one by id. Not scene items: an input has no position
+     * and nothing draws it. See `video_input.js`.
      */
-    this.videoConnectors = [];
-    // Installed once, on the array itself rather than its contents: the popup
-    // edits connectors in place and pushes new ones, and the lookup reads the
-    // live array each time, so it never needs re-installing.
-    this.publishVideoConnectors();
+    this.videoInputs = withTestCard([]);
+    // Installed once: the lookups read the live array each time, so inputs
+    // added or removed later are found without re-installing.
+    this.publishVideoInputs();
     /** Library models available to place, by key. Read once per load. */
     this.objectLibrary = {};
     /** Saved structure definitions, keyed by name, for placing again. */
@@ -336,9 +333,9 @@ class Show extends EventEmitter {
       // nothing references any more is not part of this show.
       definitions: this.pruneDefinitions().toJSON(),
       fixtures: this.fixturePool.fixtures.map(withListOrder),
-      // The rectangles, and deliberately not which sender fills them: that is
-      // a fact about one machine, and this file opens on others.
-      videoConnectors: this.videoConnectors.map((connector) => connector.showData),
+      // The inputs, and deliberately not which sender fills an NDI one: that
+      // is a fact about one machine, and this file opens on others.
+      videoInputs: this.videoInputs.map((input) => input.showData),
       // Views, not cameras: five numbers each, applied to the one camera the
       // visualizer has. They belong to the show because they are about this
       // scene -- a locked view onto a rig is how you see that a material
@@ -426,18 +423,60 @@ class Show extends EventEmitter {
   }
 
   /**
-   * Lets the scene turn a connector id into the connector itself.
+   * Lets the scene turn an input id into the input itself.
    *
    * Installed here because this is the only object that knows both -- a
    * renderer must not reach into the show, and the show must not know what a
-   * renderer wants. One function, set once, and `video_router.js` holds it.
+   * renderer wants. Set once, and `video_router.js` holds it.
    *
    * @public
    */
-  publishVideoConnectors() {
-    VideoRouter.resolveWith((id) => (
-      (this.videoConnectors || []).find((connector) => connector.id === id) || null
-    ));
+  publishVideoInputs() {
+    VideoRouter.resolveWith(
+      (id) => (this.videoInputs || []).find((input) => input.id === id) || null,
+      () => this.videoInputs || [],
+    );
+  }
+
+  /**
+   * Adds a video input to the show.
+   *
+   * @public
+   * @param {Object} data `{ kind, file, name }`
+   * @returns {Object} the VideoInput
+   */
+  addVideoInput(data = {}) {
+    const input = new VideoInput({ ...data, builtIn: false });
+    // Before the test card, which stays last; see `withTestCard`.
+    const card = this.videoInputs.findIndex((candidate) => candidate.builtIn);
+    this.videoInputs.splice(card < 0 ? this.videoInputs.length : card, 0, input);
+    this.touch();
+    VideoRouter.refresh();
+    return input;
+  }
+
+  /**
+   * Removes a video input. Devices that showed it show nothing.
+   *
+   * @public
+   * @param {Number} id
+   */
+  removeVideoInput(id) {
+    const at = this.videoInputs.findIndex((input) => input.id === id);
+    if (at < 0 || this.videoInputs[at].builtIn) return;
+    this.videoInputs.splice(at, 1);
+    this.touch();
+    VideoRouter.refresh();
+  }
+
+  /**
+   * Marks an input's name or file changed.
+   *
+   * @public
+   */
+  videoInputChanged() {
+    this.touch();
+    VideoRouter.refresh();
   }
 
   /**
@@ -496,7 +535,7 @@ class Show extends EventEmitter {
     SceneObjects.clear();
     // Nothing to dispose: a connector holds no scene node and no GPU
     // resource, only numbers.
-    this.videoConnectors = [];
+    this.videoInputs = withTestCard([]);
     this.definitions = new DefinitionStore();
     this.isSaved = true;
   }
@@ -595,7 +634,8 @@ class Show extends EventEmitter {
   }
 
   /**
-   * Saves the show to a document the user picks.
+   * Saves the show to a document the user picks. The dialog opens on the
+   * current document when there is one.
    *
    * @public
    * @async
@@ -603,7 +643,7 @@ class Show extends EventEmitter {
    */
   async saveDocumentAs() {
     if (typeof window === 'undefined' || !window.documentStore) return false;
-    const target = await window.documentStore.saveAs(this.projectName);
+    const target = await window.documentStore.saveAs(this.documentPath || this.projectName);
     // Cancelling a save dialog is an ordinary answer, not a failure.
     if (!target) return false;
     return this.writeDocument(target);
@@ -643,7 +683,7 @@ class Show extends EventEmitter {
    * own parameters and has nothing to collect.
    *
    * @public
-   * @returns {Object} `{ profiles, objects }`, each an array of keys
+   * @returns {Object} `{ profiles, objects, media }`, each an array of keys
    */
   referencedResources() {
     const profiles = new Set(this.fixturePool.fixtures
@@ -652,7 +692,11 @@ class Show extends EventEmitter {
     const objects = new Set(this.objects
       .filter((object) => !object.isInline && object.model)
       .map((object) => object.model));
-    return { profiles: [...profiles], objects: [...objects] };
+    const media = (this.videoInputs || [])
+      // The built-in test card ships with Beam, so an export need not carry it.
+      .filter((input) => input.kind === INPUT_KINDS.FILE && input.file && !input.builtIn)
+      .map((input) => input.file);
+    return { profiles: [...profiles], objects: [...objects], media };
   }
 
   /**
@@ -774,7 +818,9 @@ class Show extends EventEmitter {
    * @async
    */
   async loadShowData(rawShowData, options = {}) {
-    const showData = migrateShowData(rawShowData);
+    // Connectors and a single video file become inputs; see `migrateVideo`.
+    const video = migrateVideo(migrateShowData(rawShowData), Preferences.get('videoSource'));
+    const { showData } = video;
     // A document may carry its own copy of a GDTF fixture, so what was read
     // for the last one does not stand for this one.
     this.gdtfTypes = new Map();
@@ -818,8 +864,10 @@ class Show extends EventEmitter {
     this.loading.message = 'Restoring structures';
     this.prepareStructures(showData);
 
-    this.videoConnectors = (showData.videoConnectors || [])
-      .map((data) => new VideoConnector(data));
+    const inputs = (showData.videoInputs || []).map((data) => new VideoInput(data));
+    this.videoInputs = withTestCard(inputs);
+    // This machine's sender carries over to the input it now fills.
+    if (video.binding) VideoRouter.bind(video.binding.uid, video.binding.sender);
 
     // Cameras belong to the show, so the one arriving replaces the one that
     // was open. A file with no cameras empties the list rather than leaving
@@ -856,6 +904,11 @@ class Show extends EventEmitter {
         this.visualizerHandle.frameDefault();
       }
     }
+
+    VideoRouter.refresh();
+    // Said once, when the show opens: these devices showed part of a picture
+    // and now show all of it.
+    if (video.lostCrop.length) this.emit('videoCropsDropped', video.lostCrop);
   }
 
   /**
@@ -2295,8 +2348,7 @@ class Show extends EventEmitter {
    */
   async preloadManufacturers() {
     try {
-      const res = await axios.get(`${import.meta.env.VITE_STATIC_URL}fixtures/manufacturers.json`);
-      this.manufacturers = res.data || {};
+      this.manufacturers = (await fetchJson(`${import.meta.env.VITE_STATIC_URL}fixtures/manufacturers.json`)) || {};
     } catch (err) {
       this.manufacturers = {};
     }
@@ -2310,14 +2362,14 @@ class Show extends EventEmitter {
    * @returns {String}
    */
   manufacturerName(slug) {
+    if (slug === SHOW_SCOPE) return SHOW_SCOPE_LABEL;
     return (this.manufacturers[slug] || {}).name || slug || '';
   }
 
   async preloadFixtureList() {
     try {
-      const res = await axios.get(`${import.meta.env.VITE_STATIC_URL}fixtures/fixture_list.json`);
       /** The shipped index as fetched, which every refresh starts from. */
-      this.shippedFixtureList = res.data;
+      this.shippedFixtureList = await fetchJson(`${import.meta.env.VITE_STATIC_URL}fixtures/fixture_list.json`);
     } catch (err) {
       console.log('could not fetch fixture list.');
       this.shippedFixtureList = [];

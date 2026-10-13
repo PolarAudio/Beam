@@ -440,7 +440,9 @@ function makeBeamMaterial() {
         // why a beam pointing away from you still reads brighter than the same
         // beam crossing your view. Two Henyey-Greenstein lobes give all three.
         vec3 travel = normalize(vWorld - beamOrigin);
-        vec3 toEye = normalize(cameraPosition - vWorld);
+        vec3 toEye = isOrthographic
+          ? vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2])
+          : normalize(cameraPosition - vWorld);
         float cosTheta = dot(travel, toEye);
         float lobes = mix(hg(cosTheta, PHASE_FORWARD), hg(cosTheta, PHASE_BACKWARD),
           PHASE_BACK_WEIGHT);
@@ -1133,8 +1135,14 @@ class Laser {
         service = at > MAX_SERVICES ? -1 : at;
       }
       laser._serviceId = service === null ? 1 : service;
-      // Replaced by the resolved one once the hub answers; null until then.
-      laser._address = address;
+      // Written only when the asked-for address changes. The hub answers with
+      // the address the device is really bound to and tags batches with it,
+      // so overwriting it every frame would leave a laser on the default
+      // address looking up its stream under the wrong key.
+      if (laser._addressAsked !== address) {
+        laser._addressAsked = address;
+        laser._address = address;
+      }
       list.push({
         uid: (handle && handle.uid) || `laser-${i}`, name, protocol, address, service,
       });

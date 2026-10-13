@@ -6,9 +6,11 @@ import { Effect, BlendFunction } from 'postprocessing';
  * which is otherwise drawn exactly as it is unselected.
  *
  * Each frame the selected things are drawn flat into a mask, and the outline
- * effect paints the band just outside the mask's edge. A part hidden behind
- * other geometry is left out of the mask, so the line follows what can be
- * seen, as a modelling program's does.
+ * effect paints the band just outside the mask's edge. The mask is the whole
+ * silhouette, hidden parts included: masking only what can be seen let
+ * anything in front cut a hole in it, and the hole's edge outlined that thing
+ * as if it were selected. A selected thing behind a wall shows its outline
+ * through the wall.
  *
  * Renderers say what is selected in one of two ways. A plain object, a
  * projector's body or a bar's box, is outlined through `setOutlined` with the
@@ -23,13 +25,6 @@ const OUTLINE_COLOUR = '#ff8c1a';
 
 /** How far the line reaches out from the edge, in pixels. */
 const OUTLINE_WIDTH = 2;
-
-/**
- * How far behind the visible surface, in metres, a selected surface may be
- * and still count as seen: the depth it is tested against is a resolved,
- * multisampled buffer, which is not exactly its own depth.
- */
-const DEPTH_TOLERANCE = 0.05;
 
 const MASK_VERTEX = /* glsl */`
   #ifdef USE_HIGHLIGHT
@@ -50,15 +45,6 @@ const MASK_VERTEX = /* glsl */`
 `;
 
 const MASK_FRAGMENT = /* glsl */`
-  #include <packing>
-
-  uniform sampler2D sceneDepth;
-  uniform bool hasDepth;
-  uniform vec2 resolution;
-  uniform float cameraNear;
-  uniform float cameraFar;
-  uniform float tolerance;
-
   #ifdef USE_HIGHLIGHT
     varying float vSelected;
   #endif
@@ -67,15 +53,6 @@ const MASK_FRAGMENT = /* glsl */`
     #ifdef USE_HIGHLIGHT
       if (vSelected < 0.5) discard;
     #endif
-    // Hidden behind something else: not part of what is seen.
-    if (hasDepth) {
-      float stored = texture2D(sceneDepth, gl_FragCoord.xy / resolution).x;
-      if (stored > 0.0 && stored < 1.0) {
-        float seen = perspectiveDepthToViewZ(stored, cameraNear, cameraFar);
-        float here = perspectiveDepthToViewZ(gl_FragCoord.z, cameraNear, cameraFar);
-        if (here < seen - tolerance) discard;
-      }
-    }
     gl_FragColor = vec4(1.0);
   }
 `;
@@ -88,27 +65,9 @@ const OUTLINE_FRAGMENT = /* glsl */`
   uniform vec2 outlineTexel;
   uniform bool outlineActive;
 
-  // Whether a pixel is part of the selection. The mask leaves odd single
-  // pixels out along the selection's own inner edges, where one part stands
-  // in front of another and the resolved scene depth at that pixel is the
-  // nearer part's; a pixel the mask missed but that its neighbours mostly
-  // cover is taken as covered, so those gaps are not outlined. A real opening
-  // is wider than a pixel and keeps its line.
-  bool outlineCovered(vec2 uv) {
-    if (texture2D(outlineMask, uv).r > 0.5) return true;
-    int around = 0;
-    for (int x = -1; x <= 1; x++) {
-      for (int y = -1; y <= 1; y++) {
-        if (x == 0 && y == 0) continue;
-        if (texture2D(outlineMask, uv + vec2(float(x), float(y)) * outlineTexel).r > 0.5) around++;
-      }
-    }
-    return around >= 5;
-  }
-
   void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) {
     outputColor = inputColor;
-    if (!outlineActive || outlineCovered(uv)) return;
+    if (!outlineActive || texture2D(outlineMask, uv).r > 0.5) return;
     // Inside the reach of the mask's edge: the line.
     float edge = 0.0;
     for (int x = -OUTLINE_REACH; x <= OUTLINE_REACH; x++) {
@@ -121,20 +80,9 @@ const OUTLINE_FRAGMENT = /* glsl */`
   }
 `;
 
-/** Shared by every mask material. */
-const maskUniforms = {
-  sceneDepth: { value: null },
-  hasDepth: { value: false },
-  resolution: { value: new THREE.Vector2(1, 1) },
-  cameraNear: { value: 0.1 },
-  cameraFar: { value: 1000 },
-  tolerance: { value: DEPTH_TOLERANCE },
-};
-
 const maskMaterial = (highlight) => new THREE.ShaderMaterial({
   vertexShader: MASK_VERTEX,
   fragmentShader: MASK_FRAGMENT,
-  uniforms: maskUniforms,
   defines: highlight ? { USE_HIGHLIGHT: '' } : {},
   side: THREE.DoubleSide,
   depthTest: false,
@@ -173,21 +121,6 @@ export function setOutlined(owner, state, meshes = []) {
  */
 export function addInstancedSource(source) {
   if (!instancedSources.includes(source)) instancedSources.push(source);
-}
-
-/**
- * Hands the mask the depth of what is seen, so a part behind something
- * else is left out.
- *
- * @public
- * @param {THREE.DepthTexture} texture the composer's scene depth
- * @param {THREE.Camera} camera for its near and far planes
- */
-export function setSceneDepth(texture, camera) {
-  maskUniforms.sceneDepth.value = texture;
-  maskUniforms.hasDepth.value = !!texture;
-  maskUniforms.cameraNear.value = camera.near;
-  maskUniforms.cameraFar.value = camera.far;
 }
 
 /** Scratch for the renderer state the mask render borrows. */
@@ -234,7 +167,6 @@ export class SelectionOutlineEffect extends Effect {
       this.target.setSize(width, height);
       this.uniforms.get('outlineTexel').value.set(1 / width, 1 / height);
     }
-    maskUniforms.resolution.value.set(width, height);
 
     const previousTarget = renderer.getRenderTarget();
     const previousAlpha = renderer.getClearAlpha();

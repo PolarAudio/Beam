@@ -61,6 +61,23 @@ contextBridge.exposeInMainWorld('artnet', {
    * @returns {Promise<{sources: Array, conflicts: Array}>}
    */
   sources: () => ipcRenderer.invoke('dmx:sources'),
+  /**
+   * Turns sender mode on or off: inbound frames are held back and Beam sends
+   * sACN instead.
+   *
+   * @param {Boolean} enabled
+   * @param {Object} [opts] `{ protocol: 'sacn'|'artnet', target }`, the target
+   *   an Art-Net address, broadcast when empty
+   * @returns {Promise<Boolean>} whether Beam is now sending
+   */
+  setSending: (enabled, opts) => ipcRenderer.invoke('dmx:set-sending', enabled, opts),
+  /**
+   * Sends one universe while in sender mode.
+   *
+   * @param {Number} universe Beam universe, counted from 0
+   * @param {Uint8Array} data 512 slots
+   */
+  send: (universe, data) => ipcRenderer.send('dmx:send', universe, data),
 });
 
 /**
@@ -252,6 +269,19 @@ contextBridge.exposeInMainWorld('library', {
    */
   addEnvironment: () => ipcRenderer.invoke('library:addEnvironment'),
   /**
+   * Image and video files a video source may be: the open document's, the
+   * library's and the shipped ones, one per file name.
+   *
+   * @returns {Promise<Array>} `{ key, name, kind, origin, url }`
+   */
+  media: () => ipcRenderer.invoke('library:media'),
+  /**
+   * Asks for an image or video file and copies it into `Library/Media`.
+   *
+   * @returns {Promise<Object>} `{ ok, entry }` or `{ ok: false, reason }`
+   */
+  addMedia: () => ipcRenderer.invoke('library:addMedia'),
+  /**
    * GDTF fixtures in `Library/Profiles`, metadata only. The bytes are served
    * as `library://profiles/<file>`.
    *
@@ -364,6 +394,20 @@ contextBridge.exposeInMainWorld('videoRecorder', {
   abort: (id) => ipcRenderer.invoke('video:abort', id),
   /** Shows a finished recording in Explorer. @returns {Promise<Boolean>} */
   reveal: (target) => ipcRenderer.invoke('video:reveal', target),
+});
+
+/** The window itself: full screen and stay on top, for the View menu. */
+contextBridge.exposeInMainWorld('appWindow', {
+  /** @returns {Promise<Boolean>} whether the window is now full screen */
+  setFullScreen: (on) => ipcRenderer.invoke('window:set-full-screen', on),
+  /** @returns {Promise<Boolean>} */
+  isFullScreen: () => ipcRenderer.invoke('window:is-full-screen'),
+  /** @returns {Promise<Boolean>} whether the window now stays on top */
+  setAlwaysOnTop: (on) => ipcRenderer.invoke('window:set-always-on-top', on),
+  /** Calls back with true or false whenever full screen changes, whoever changed it. */
+  onFullScreen: (callback) => {
+    ipcRenderer.on('window:full-screen', (_event, on) => callback(on));
+  },
 });
 
 contextBridge.exposeInMainWorld('documentStore', {

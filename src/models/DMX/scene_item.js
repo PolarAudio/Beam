@@ -130,3 +130,65 @@ export function rowId(kind, id) {
   if (kind === SCENE_ITEM_KINDS.FIXTURE) return id;
   return `${kind}:${id}`;
 }
+
+/**
+ * A member reference as a structure writes it.
+ *
+ * `{ kind, id }`, because ids are per-kind and a structure may hold fixtures and
+ * objects at once -- `structure.model.js`.
+ *
+ * @public
+ * @param {Object} member a fixture or an object
+ * @returns {Object} `{ kind, id }`
+ */
+export function memberRef(member) {
+  return { kind: kindOf(member) || SCENE_ITEM_KINDS.FIXTURE, id: member.id };
+}
+
+/**
+ * Whether a saved structure definition member is an object or a fixture.
+ *
+ * The other kind of record a structure file holds, and a different thing from
+ * `readMemberRef`: that one says which item *in this show* a member is, while
+ * this one says how to *build* it again -- the profile it uses, or the library
+ * key and scale it is.
+ *
+ * **A record with no `kind` is a fixture.** Definitions written before objects
+ * could be members say nothing else, and reading one as an object would look
+ * for a library key that is a profile name and get nothing. Anything that is
+ * not explicitly an object is therefore a fixture, which is the safe reading
+ * for both the old files and a hand-edited one.
+ *
+ * @public
+ * @param {Object} record a member of a saved structure definition
+ * @returns {Boolean}
+ */
+export function isObjectRecord(record) {
+  return !!record && record.kind === SCENE_ITEM_KINDS.OBJECT;
+}
+
+/**
+ * The kind and id a saved member reference means.
+ *
+ * Reads the `{ kind, id }` a structure writes today and the bare ids written
+ * before it did. A bare id is a fixture: structures held nothing else until
+ * objects could be members, so an old record cannot be about anything but a
+ * fixture, and reading it any other way would drop the member.
+ *
+ * The shape is checked rather than assumed, because a showfile is a file
+ * somebody can edit and a malformed entry has to be skipped rather than
+ * resolved to fixture 0.
+ *
+ * @public
+ * @param {Number|Object} ref as saved
+ * @returns {Object|null} `{ kind, id }`, or null when the record is unusable
+ */
+export function readMemberRef(ref) {
+  if (ref !== null && typeof ref === 'object') {
+    const { kind, id } = ref;
+    if (!kind || id === undefined || id === null) return null;
+    return { kind, id };
+  }
+  if (ref === undefined || ref === null) return null;
+  return { kind: SCENE_ITEM_KINDS.FIXTURE, id: ref };
+}

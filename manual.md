@@ -395,11 +395,19 @@ Everything Beam does, as completely as it can be documented today. This section 
 
 ## The patch bay
 
+The list down the left side, holding every fixture, object and structure in the show. Three buttons at the top: **structure**, **arrange** and **new**.
+
+**structure** turns whatever you have selected into a single item you can move as one. It takes fixtures *and* objects, so a truss, the heads on it and the weights under it become one arrangement — which is also what keeps the list readable on a big stage, because a structure is one row and its contents are not. Objects already inside a structure are left where they are. **arrange** lays a multi-selection out on a line, a circle or a grid.
+
 The list down the left side, holding every fixture in the scene. Two buttons at the top: **group** and **new**.
+ master
 
 **new** opens the patch dialog, which has three tabs:
 
 - **fixtures** — the fixture library. Real profiles plus any generics you've built. Filterable.
+- **objects** — non-emitting scenery. Trusses, staging, decks. A truss has no channels, so nothing here gets addressed. **import object** copies a GLB, OBJ, FBX or STL file into your object library, with an OBJ's materials and textures. Only GLB states its units and which way is up, so the dialog asks for both and shows the model's size in metres as you choose: a truss that reads three kilometres long is in millimetres.
+- **objects** — non-emitting scenery. Trusses, staging, decks. A truss has no channels, so nothing here gets addressed. Folders nest, so `Trusses/Circles` and `Trusses/Weights` can both live under `Trusses`, and the browser indents as deep as you go. Anything sitting loose is gathered under **Unsorted**, which is not a folder on disk. **import object** copies a GLB, OBJ, FBX or STL file into your object library, with an OBJ's materials and textures. Only GLB states its units and which way is up, so the dialog asks for both and shows the model's size in metres as you choose: a truss that reads three kilometres long is in millimetres.
+- **objects** — non-emitting scenery. Trusses, staging, decks. A truss has no channels, so nothing here gets addressed. Folders nest, so `Trusses/Circles` and `Trusses/Weights` can both live under `Trusses`, and the browser indents as deep as you go. Anything sitting loose is gathered under **Unsorted**, which is not a folder on disk. *The "import object" button is disabled — this feature isn't finished.*
 - **objects** — non-emitting scenery. Trusses, staging, decks. A truss has no channels, so nothing here gets addressed. **import object** copies a GLB, OBJ, FBX or STL file into your object library, with an OBJ's materials and textures. A Draco-compressed GLB loads. Only GLB states its units and which way is up, so the dialog asks for both and shows the model's size in metres as you choose: a truss that reads three kilometres long is in millimetres.
 - **structures** — saved groups, ready to patch again as a unit. You put things here with **save as structure** in a group's widget.
 
@@ -535,6 +543,10 @@ A group is a named set of fixtures. It gives you:
 Groups have their own transform handle, so you can move and rotate a whole assembly as one object. To get at one fixture *inside* a structure, **Alt+click** it — see [Placing things](#placing-things).
 
 Each group owns its mappings independently — one group can go out as a front elevation while another is unrolled around a cylinder, in the same export.
+
+A structure made with the **structure** button may hold objects as well as fixtures, and its widget lists both. An object member has no channels, so it shows only its placement — which is the one thing about it that is true. **save as structure** records both kinds, and placing the stamp again rebuilds them: a fixture from the profile it uses, an object from the library key it references or, for a shape you built yourself, from the numbers that shape is. An object whose model is not on this machine still arrives, marked missing and naming the file.
+
+A member is not a row in the patch bay any more — the structure is. It is still there, and **un-structure** hands it back.
 
 ## The visualizer
 

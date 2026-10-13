@@ -4,16 +4,27 @@
       ref="header"
       class="patch_bay_header"
     >
+<<<<<<< Updated upstream
       <!-- Hidden rather than removed. A group is becoming a saved selection
            set for control, not a thing that moves in the scene -- structures
            do that -- so there is nothing to make one for from here yet.
            `createGroup` stays: the groups in existing shows still load. -->
+=======
+      <h3>Patch Bay</h3>
+      <span style="flex: 1" />
+      <!-- Makes the selection one movable item. Fixtures and objects alike --
+           a truss, its heads and its weights are one arrangement -- and what it
+           already holds cannot join a second owner, so a selection of nothing
+           structureable turns the button off rather than doing nothing on
+           click. -->
+>>>>>>> Stashed changes
       <uk-button
         icon="structure"
         style="margin-right: 8px"
         label="structure"
         :icon-only="compactButtons"
         title="structure"
+        :disabled="!canStructure"
         @click="createStructure"
       />
       <uk-button
@@ -82,7 +93,9 @@
 import EventBus from '@/plugins/eventbus';
 import Controls from '@/plugins/visualizer/controls';
 import Clipboard, { chunkSummary } from '@/models/DMX/clipboard';
-import { SCENE_ITEM_KINDS, rowId, kindOf } from '@/models/DMX/scene_item';
+import {
+  SCENE_ITEM_KINDS, PLACEABLE_KINDS, rowId, kindOf,
+} from '@/models/DMX/scene_item';
 import Selection from '@/models/DMX/selection';
 import { displayNameOf } from '@/models/DMX/item_naming';
 import { formatAddress } from '@/models/DMX/address_format';
@@ -194,6 +207,7 @@ export default {
       return this.highlightedIds.length > 1;
     },
     /**
+<<<<<<< Updated upstream
      * Whether anything is selected to export.
      *
      * @property {Boolean} canExport
@@ -204,6 +218,23 @@ export default {
     /**
      * The patch bay as a tree: groups first, holding their members, then
      * everything still at the root.
+=======
+     * Whether there is anything to make a structure out of.
+     *
+     * One item is enough -- that is the common case, a truss with its heads
+     * already on it. The floor is in here like anything else, so it can be
+     * swept up into a stage, which is occasionally what is wanted and never
+     * forced.
+     *
+     * @property {Boolean} canStructure
+     */
+    canStructure() {
+      return this.structureableItems().length > 0;
+    },
+    /**
+     * The patch bay as a tree: structures first, then objects, then groups
+     * holding their members, then the fixtures still at the root.
+>>>>>>> Stashed changes
      *
      * Built here rather than on the pool because grouping is a scene concern,
      * not something the pool knows about.
@@ -211,6 +242,7 @@ export default {
      * @type {Array}
      */
     listable() {
+<<<<<<< Updated upstream
       // How many items of each kind carry each name, counted once here rather
       // than by every row: a row shows its instance number only when its name
       // is shared.
@@ -222,9 +254,19 @@ export default {
         }));
       // By uid, which is unique across kinds: a structure holding object 3
       // must not hide fixture 3.
+=======
+      // Keyed by kind and id, not by id alone: fixture 3 and object 3 are
+      // different things, and a structure holding object 3 would otherwise
+      // speak for fixture 3 as well and hide it from the list.
+>>>>>>> Stashed changes
       const spokenFor = new Set();
+      const speak = (member) => spokenFor.add(rowId(kindOf(member), member.id));
       const groups = this.show.groups.map((group) => {
+<<<<<<< Updated upstream
         group.members.forEach((member) => spokenFor.add(member.uid));
+=======
+        group.members.forEach(speak);
+>>>>>>> Stashed changes
         // Its own icon rather than the selector's folder: a group is a thing
         // in the show, not a place to look in.
         return [group, {
@@ -241,8 +283,11 @@ export default {
       // Structures are flat rows with nothing to unfold. What they hold sits
       // at coordinates relative to them, which makes those things not scene
       // items -- they are reached through the structure's own widget, and
-      // putting them here would contradict what this list is.
+      // putting them here would contradict what this list is. Members may be
+      // fixtures or objects; either way a structure is one row, which is what
+      // keeps a stage of two hundred trusses from filling this column.
       const structures = this.show.structures.map((structure) => {
+<<<<<<< Updated upstream
         structure.members.forEach((member) => spokenFor.add(member.uid));
         return [structure, structure.listable];
       });
@@ -265,6 +310,24 @@ export default {
       return [...structures, ...objects, ...groups, ...loose]
         .sort((a, b) => place(a) - place(b))
         .map(([item, row]) => this.withVisibility(item, row, counts));
+=======
+        structure.members.forEach(speak);
+        return structure.listable;
+      });
+      // The same rule for a loose object as for a loose fixture: one that a
+      // structure holds is not a row of its own any more. The structures are
+      // walked first precisely so that by the time this runs, every member has
+      // been spoken for -- an object becoming a structure takes its row out of
+      // the list without anything being deleted, and `un-structure` puts it
+      // back.
+      const objects = (this.show.objects || [])
+        .filter((object) => !spokenFor.has(rowId(SCENE_ITEM_KINDS.OBJECT, object.id)))
+        .map((object) => object.listable);
+      const loose = this.pool.fixtures
+        .filter((fixture) => !spokenFor.has(rowId(SCENE_ITEM_KINDS.FIXTURE, fixture.id)))
+        .map((fixture) => this.describeFixture(fixture));
+      return [...structures, ...objects, ...groups, ...loose];
+>>>>>>> Stashed changes
     },
   },
   mounted() {
@@ -524,18 +587,53 @@ export default {
      * @public
      */
     createGroup() {
-      const members = this.highlightedIds
-        .map((id) => this.pool.findFromId(id))
-        .filter(Boolean);
+      const members = Selection.items
+        .map((entry) => this.itemOfKind(entry.kind, entry))
+        .filter(Boolean)
+        .filter((item) => kindOf(item) === SCENE_ITEM_KINDS.FIXTURE)
+        .filter((fixture) => !fixture.group);
       this.$show.createGroup(members);
     },
     /**
+<<<<<<< Updated upstream
      * Makes one structure out of the selected fixtures and objects.
      *
      * Structures take fixtures and objects, not other structures or groups,
      * so a selection that holds one contributes only its loose items. Each
      * entry is resolved by its kind: row ids are namespaced, and an object's
      * would never be found among the fixtures.
+=======
+     * The selected items a structure could be made out of.
+     *
+     * Resolved through the selection store and the kind-aware lookup rather
+     * than by asking the fixture pool for each highlighted row id: a row id is
+     * namespaced by kind, and an object's is `object:3`, which the pool's
+     * `Number(id)` makes NaN and quietly drops. That is the whole reason this
+     * button used to do nothing for anything that was not a fixture.
+     *
+     * Fixtures and objects are both members. Groups and structures are not --
+     * a group is not a thing in the room, and a structure takes no structures,
+     * so a selection that already holds one contributes only its loose items.
+     * A member already spoken for is left where it is rather than dragged into
+     * a second owner.
+     *
+     * @public
+     * @returns {Array} placeable items, in selection order
+     */
+    structureableItems() {
+      return Selection.items
+        .map((entry) => this.itemOfKind(entry.kind, entry))
+        .filter(Boolean)
+        .filter((item) => PLACEABLE_KINDS.includes(kindOf(item)))
+        .filter((item) => !item.structure);
+    },
+    /**
+     * Makes one structure out of the selection.
+     *
+     * Fixtures and objects alike, which is what this is for on a stage: a
+     * truss, the heads on it and the weights under it are one arrangement, and
+     * a structure is the one item that moves them all and keeps them together.
+>>>>>>> Stashed changes
      *
      * @public
      */
@@ -553,12 +651,16 @@ export default {
       this.exportPopupState = true;
     },
     createStructure() {
+<<<<<<< Updated upstream
       const members = Selection.items
         .filter((entry) => entry.kind === SCENE_ITEM_KINDS.FIXTURE
           || entry.kind === SCENE_ITEM_KINDS.OBJECT)
         .map((entry) => this.itemOfKind(entry.kind, entry))
         .filter(Boolean)
         .filter((item) => !item.structure);
+=======
+      const members = this.structureableItems();
+>>>>>>> Stashed changes
       if (!members.length) return;
       const structure = this.$show.createStructure(members);
       this.selectStructure(structure.id);
@@ -570,6 +672,7 @@ export default {
      * @public
      * @param {Object} payload `{ item, target, position }` from the list
      */
+<<<<<<< Updated upstream
     reorderItem({ item, target, position }) {
       const dragged = this.itemFromRow(item);
       const anchor = this.itemFromRow(target);
@@ -596,6 +699,25 @@ export default {
       const order = rows.filter((entry) => !moving.includes(entry));
       order.splice(at, 0, ...moving);
       this.$show.setListOrder(order);
+=======
+    reparentItem({ item, target }) {
+      // A structure is one item, and what it holds is not in this list, so
+      // there is nothing to drag into or out of one.
+      const itemKind = kindOf(item);
+      if (!item || itemKind === SCENE_ITEM_KINDS.GROUP
+        || itemKind === SCENE_ITEM_KINDS.STRUCTURE) return;
+      if (kindOf(target) === SCENE_ITEM_KINDS.STRUCTURE) return;
+      // A group holds fixtures. Objects are not draggable into one -- and the
+      // id is looked up through the pool rather than the list, so an object's
+      // row would simply not match and the drag would do nothing.
+      if (itemKind !== SCENE_ITEM_KINDS.FIXTURE) return;
+      const fixture = this.pool.findFromId(item.id);
+      if (!fixture) return;
+      const group = kindOf(target) === SCENE_ITEM_KINDS.GROUP
+        ? this.$show.groups.find((g) => g.id === target.groupId)
+        : null;
+      this.$show.moveToGroup(fixture, group);
+>>>>>>> Stashed changes
     },
     /**
      * Routes to the selected fixture, which the modifier follows.

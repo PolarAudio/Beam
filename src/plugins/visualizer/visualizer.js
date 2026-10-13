@@ -1189,6 +1189,11 @@ class Visualizer {
       // last frame. Stream-fed like the video devices, not DMX-driven, so it
       // updates here rather than through setChannel.
       Laser.update(t);
+      // Where a model can still be joined, and which join a drag is making now.
+      // On the render loop rather than on selection changes, because the useful
+      // moment for seeing an anchor is *before* the drag, while deciding where
+      // to put the piece.
+      Controls.updateAnchorMarkers();
       // Each laser's depth from its aperture, so the beam stops at the first
       // surface rather than running through it. Drawn before the frame, like the
       // projectors' depth pass above.

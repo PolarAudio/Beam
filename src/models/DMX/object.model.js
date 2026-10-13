@@ -145,6 +145,18 @@ class SceneObject extends withTransform(Object) {
       _dummy: this.transformNode,
       expandBounds: (box) => this.expandBounds(box),
       /**
+       * The same bounds under the name the seating code asks a renderer for.
+       *
+       * An object has no renderer of its own, so nothing else answers to that
+       * name -- but `seatStructure` reaches for it to find where a placed
+       * structure's geometry sits, and without it a truss made only of objects
+       * would have nothing to measure and would be left at the insertion point
+       * rather than standing on it.
+       *
+       * @param {Object} box THREE.Box3 to expand
+       */
+      expandGeometryBounds: (box) => this.expandBounds(box),
+      /**
        * Where this is drawn, in metres -- the renderer's answer, not the
        * model's, which is the whole point of a preview.
        *

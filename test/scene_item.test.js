@@ -20,7 +20,7 @@ import Controls from '@/plugins/visualizer/controls';
 import Fixture from '@/models/DMX/fixture.model';
 import Structure from '@/models/DMX/structure.model';
 import SceneObject from '@/models/DMX/object.model';
-import { SCENE_ITEM_KINDS } from '@/models/DMX/scene_item';
+import { SCENE_ITEM_KINDS, readMemberRef, rowId } from '@/models/DMX/scene_item';
 
 // The gizmo is detached around every axis write so its cached handles cannot
 // be left where the item no longer is. It needs a live viewport to do that,
@@ -102,6 +102,52 @@ console.log('\nuids are unique across kinds');
 const a = new Structure({ name: 'a' });
 const b = new SceneObject({ name: 'b' });
 check('a structure and an object never share a uid', a.uid === b.uid, false);
+
+console.log('\na structure names its members by kind, because ids are per kind');
+const truss = new Structure({ id: 1, name: 'Truss' });
+const member = new Fixture({ isStub: true });
+member.id = 3;
+// A stub fixture skips the branch that builds its transform, so it is seeded
+// here the way `stubFixture` above is -- `add` reads where the member stands.
+member._position = { x: 0, y: 0, z: 0 };
+member._rotation = { x: 0, y: 0, z: 0 };
+// Deliberately the same number the object below carries: a bare id would be
+// ambiguous, and the fixture would be the one that got claimed.
+const weight = new SceneObject({ id: 3, name: 'Weight' });
+truss.add(member);
+truss.add(weight);
+const refs = truss.showData.members;
+check('two members', refs.length, 2);
+check('the fixture is named a fixture', `${refs[0].kind}:${refs[0].id}`, 'fixture:3');
+check('the object is named an object', `${refs[1].kind}:${refs[1].id}`, 'object:3');
+
+console.log('\nand a show written before that still says what it meant');
+// A bare id is a fixture: structures held nothing else until objects could
+// be members, so no old record can be about anything but a fixture.
+check(
+  'a bare id reads as a fixture',
+  `${readMemberRef(7).kind}:${readMemberRef(7).id}`,
+  'fixture:7',
+);
+const written = readMemberRef({ kind: 'object', id: 2 });
+check('a written ref reads as itself', `${written.kind}:${written.id}`, 'object:2');
+// A showfile is a file somebody can edit, so a broken entry is skipped
+// rather than resolved to fixture 0.
+check('a half-written ref is refused', readMemberRef({ kind: 'object' }), null);
+check('a nameless ref is refused', readMemberRef({ id: 3 }), null);
+check('nothing at all is refused', readMemberRef(undefined), null);
+
+console.log('\na structure of geometry has no address to order by');
+const weights = new Structure({ name: 'Weights' });
+weights.add(new SceneObject({ id: 1, name: 'Weight' }));
+// Not Infinity: an ordering that sorts it would rather have a number it can
+// compare than one that poisons every comparison it takes part in.
+check('a structure of objects reports 0', weights.address, 0);
+check('and so does an empty one', new Structure({ name: 'empty' }).address, 0);
+
+console.log('\nrow ids stay namespaced, so the two never collide');
+check('a fixture row id is the bare number', rowId(SCENE_ITEM_KINDS.FIXTURE, 3), 3);
+check('an object row id is prefixed', rowId(SCENE_ITEM_KINDS.OBJECT, 3), 'object:3');
 
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');
 process.exit(failures ? 1 : 0);

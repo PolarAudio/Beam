@@ -4,8 +4,12 @@ import { Proxify } from '../utils/proxify.utils';
 import GroupHandle from '../../plugins/visualizer/group_handle';
 import Controls from '../../plugins/visualizer/controls';
 import withTransform from './scene_item.transform';
+<<<<<<< Updated upstream
 import { SCENE_ITEM_KINDS, rowId, kindOf } from './scene_item';
 import { itemLabel, splitSavedName } from './item_naming';
+=======
+import { SCENE_ITEM_KINDS, rowId, memberRef } from './scene_item';
+>>>>>>> Stashed changes
 
 /**
  * @file One scene item built out of several, placed and moved as a unit.
@@ -154,6 +158,10 @@ class Structure extends withTransform(Proxify) {
    * order is useful here because it is the order the rig was patched in, which
    * is how a programmer numbers it.
    *
+   * An object has no address at all, so it is not counted. A structure of
+   * nothing but geometry is not in the running order either, and says so with
+   * 0 rather than sorting to the end of every arrangement.
+   *
    * Offered here rather than special-cased in the ordering, so `arrangement.js`
    * keeps knowing nothing about kinds.
    *
@@ -161,11 +169,14 @@ class Structure extends withTransform(Proxify) {
    * @type {Number}
    */
   get address() {
-    if (!this.members.length) return 0;
-    return this.members.reduce(
-      (lowest, member) => Math.min(lowest, Number(member.address) || 0),
-      Infinity,
-    );
+    const lowest = this.members.reduce((running, member) => {
+      const address = Number(member.address);
+      return Number.isFinite(address) ? Math.min(running, address) : running;
+    }, Infinity);
+    // Nothing addressed to order by -- a structure of geometry alone, or an
+    // empty one. 0 rather than Infinity, so it sorts rather than poisons every
+    // comparison it takes part in.
+    return lowest === Infinity ? 0 : lowest;
   }
 
   /**
@@ -191,10 +202,21 @@ class Structure extends withTransform(Proxify) {
   }
 
   /**
+<<<<<<< Updated upstream
    * Exportable show data chunk. Members are referenced by id, and serialise
    * themselves in the fixture and object lists. A fixture is its bare id; an
    * object is `{ kind: 'object', id }`, because the two kinds number
    * separately.
+=======
+   * Exportable show data chunk. Members are referenced, not serialised in place:
+   * they keep absolute coordinates in the fixture and object lists, as ordinary
+   * scene items, and this is what says which of those belong to this structure.
+   *
+   * **The reference carries its kind.** Ids are per-kind -- fixture 3 and object
+   * 3 are different things -- so a bare id cannot say which was meant, and a
+   * structure holding both would claim one of them. The kind is written out
+   * rather than left undefined so a record reads the same written and loaded.
+>>>>>>> Stashed changes
    *
    * @readonly
    * @type {Object}
@@ -207,9 +229,13 @@ class Structure extends withTransform(Proxify) {
       hidden: this._hidden || undefined,
       position: { ...this._position },
       rotation: { ...this._rotation },
+<<<<<<< Updated upstream
       members: this.members.map((member) => (kindOf(member) === SCENE_ITEM_KINDS.OBJECT
         ? { kind: SCENE_ITEM_KINDS.OBJECT, id: member.id }
         : member.id)),
+=======
+      members: this.members.map((member) => memberRef(member)),
+>>>>>>> Stashed changes
       mappings: [...this.mappings],
       grouping: this.grouping,
     };

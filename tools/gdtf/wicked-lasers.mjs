@@ -13,6 +13,9 @@
  * behind the chassis front. Each is written into its file in metres, in the
  * chassis colour, as both glTF and 3DS.
  *
+ * Each file's thumbnail is `thumbnails/<file>.png`, rendered from the
+ * written file's model by `thumbnails.cjs`.
+ *
  * Usage:
  *   node tools/gdtf/wicked-lasers.mjs
  *
@@ -334,7 +337,7 @@ function dmxOf(key, value) {
   return Math.round(((v - lo) / (hi - lo)) * 255);
 }
 
-function description(laser, body) {
+function description(laser, body, thumbnail) {
   const x = [];
   x.push('<?xml version="1.0" encoding="UTF-8" standalone="no"?>');
   x.push('<GDTF DataVersion="1.2">');
@@ -346,7 +349,7 @@ function description(laser, body) {
     Description: 'Made by Beatline Beam. Body measured off the unit; its origin is the aperture\'s optical axis 20 mm behind the front face.',
     FixtureTypeID: laser.id,
     RefFT: '',
-    Thumbnail: '',
+    Thumbnail: thumbnail ? 'thumbnail' : '',
     CanHaveChildren: 'No',
   })}>`);
   x.push('    <AttributeDefinitions>');
@@ -430,7 +433,9 @@ function description(laser, body) {
     // A switch is 0 or 1.
     const value = Number(control.value);
     const [lo, hi] = control.mode === 'fixed' ? [value, value] : a.range;
-    const channel = `Laser_${a.name}`;
+    // A channel is named for its geometry and attribute, which is how
+    // InitialFunction finds it.
+    const channel = `Body_${a.name}`;
     x.push(`          <DMXChannel${attrs({
       DMXBreak: 1,
       // Not on DMX: set at the unit, or fixed by it.
@@ -489,8 +494,12 @@ LASERS.forEach((laser) => {
     // a wide-angle lens fitted it leaves from the lens front, along -Y.
     aperture: [0, -(laser.lensFront || 0) / 1000, 0],
   };
-  files['description.xml'] = strToU8(description(laser, body));
   const name = `${fileSafe('Wicked Lasers')}@${fileSafe(laser.name)}@Beam_1.gdtf`;
+  // The body's picture, rendered by thumbnails.cjs from this file's model.
+  const thumbnail = path.join(here, 'thumbnails', name.replace(/.gdtf$/, '.png'));
+  const hasThumbnail = fs.existsSync(thumbnail);
+  if (hasThumbnail) files['thumbnail.png'] = new Uint8Array(fs.readFileSync(thumbnail));
+  files['description.xml'] = strToU8(description(laser, body, hasThumbnail));
   // A fixed date, so the file changes only when what is in it does.
   fs.writeFileSync(path.join(outDir, name), zipSync(files, { mtime: new Date('2026-10-13T00:00:00Z') }));
   console.log(`${name}  ${fs.statSync(path.join(outDir, name)).size} bytes`);

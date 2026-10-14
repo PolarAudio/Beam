@@ -32,9 +32,9 @@ const r1 = (n) => Math.round(n * 10) / 10;
 const pro = read('Wicked_Lasers@LaserCube_Pro_2.5W@Beam_1');
 check('reads without problems', pro.problems, []);
 check(
-  'carries the body as glTF and 3DS',
+  'carries the body as glTF and 3DS, and a thumbnail',
   Object.keys(pro.files).sort(),
-  ['models/3ds/LaserCube Pro.3ds', 'models/gltf/LaserCube Pro.glb'],
+  ['models/3ds/LaserCube Pro.3ds', 'models/gltf/LaserCube Pro.glb', 'thumbnail.png'],
 );
 const type = pro.fixtureType;
 check('a Laser geometry is a laser', fixtureCategory(type), 'Laser');
@@ -57,9 +57,11 @@ check('no channel takes an address', type.modes[0].channels.every((c) => c.offse
 
 const wideFile = read('Wicked_Lasers@LaserCube_Pro_2.5W_Wide_Angle@Beam_1');
 check(
-  'the wide angle carries its own body',
+  'the wide angle carries its own body and thumbnail',
   Object.keys(wideFile.files).sort(),
-  ['models/3ds/LaserCube Pro Wide Angle.3ds', 'models/gltf/LaserCube Pro Wide Angle.glb'],
+  [
+    'models/3ds/LaserCube Pro Wide Angle.3ds', 'models/gltf/LaserCube Pro Wide Angle.glb', 'thumbnail.png',
+  ],
 );
 const wide = laserParams(wideFile.fixtureType);
 check('the wide angle lens multiplies scan and divergence by 4.5', [wide.scanAngleH, wide.divergence], [144, 4.5]);
@@ -67,9 +69,9 @@ check('its lens adds depth, mm', [wide.width, wide.depth, wide.height].map((m) =
 
 const ultra = read('Wicked_Lasers@LaserCube_Ultra_7.5W@Beam_1');
 check(
-  'the Ultra carries its body',
+  'the Ultra carries its body and thumbnail',
   Object.keys(ultra.files).sort(),
-  ['models/3ds/LaserCube Ultra.3ds', 'models/gltf/LaserCube Ultra.glb'],
+  ['models/3ds/LaserCube Ultra.3ds', 'models/gltf/LaserCube Ultra.glb', 'thumbnail.png'],
 );
 const u = laserParams(ultra.fixtureType);
 check('the Ultra is 7.5 W, its diodes added up', u.power, 7.5);

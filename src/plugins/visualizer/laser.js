@@ -368,6 +368,7 @@ function makeBeamMaterial() {
       varying float vPerPixel;
       varying float vWidthW;
       varying float vClipW;
+      varying float vAcrossW;
       void main() {
         vColor = acolor;
         // A sheet's vertices carry no side; a dot's ribbon is +-1 across.
@@ -397,7 +398,12 @@ function makeBeamMaterial() {
         // interpolates linearly across the screen as the ribbon's edges do.
         vWidthW = 2.0 * halfPx * here.w;
         vClipW = here.w;
-        vec2 offsetPx = perp * aSide * halfPx;
+        // A dot's ribbon is drawn a pixel wider each side and the fragment
+        // weighs each pixel by its coverage, so every pixel column along the
+        // beam gets the same light wherever the line crosses the pixel grid.
+        float drawnPx = halfPx + vDot;
+        vAcrossW = aSide * drawnPx * here.w;
+        vec2 offsetPx = perp * aSide * drawnPx;
         here.xy += (offsetPx / resolution) * 2.0 * here.w;
         gl_Position = here;
       }
@@ -410,6 +416,7 @@ function makeBeamMaterial() {
       varying float vPerPixel;
       varying float vWidthW;
       varying float vClipW;
+      varying float vAcrossW;
       uniform bool fogState;
       uniform float fogFactor;
       uniform float fogScale;
@@ -471,7 +478,14 @@ function makeBeamMaterial() {
 
         // Metres the light is spread across, as the view ray meets it.
         float across;
+        float coverage = 1.0;
         if (vDot > 0.5) {
+          // The beam's width convolved with a pixel: summed over the pixels
+          // across, it comes to the drawn width whatever the sub-pixel offset.
+          float halfWidthPx = 0.5 * vWidthW / max(vClipW, 1e-6);
+          float fromCentrePx = abs(vAcrossW / max(vClipW, 1e-6));
+          coverage = clamp(halfWidthPx + 0.5 - fromCentrePx, 0.0, 1.0);
+          if (coverage <= 0.0) discard;
           float viewDepth = isOrthographic ? 1.0 : -(viewMatrix * vec4(vWorld, 1.0)).z;
           // The width drawn here: the beam's own, or one pixel where it is
           // narrower. The light is spread over what is drawn and no wider.
@@ -487,7 +501,7 @@ function makeBeamMaterial() {
         // towards the eye, so it takes the pair's phase; its alpha carries
         // luminance times distance, which the halo sizes its spread by.
         float phase = haloSource ? haloPhase(cosTheta) : hazeLobes(cosTheta);
-        vec3 nits = vColor * sigma * phase * field * transmission / across;
+        vec3 nits = vColor * sigma * phase * field * transmission * coverage / across;
         vec3 scene = nits * SCENE_PER_NIT * beamGain;
         float distance = isOrthographic ? 1.0 : length(toCamera);
         gl_FragColor = haloSource

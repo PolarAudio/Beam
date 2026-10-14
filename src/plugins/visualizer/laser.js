@@ -811,10 +811,30 @@ class Laser {
     const kGreen = drawn.green * balance.green;
     const kBlue = drawn.blue * balance.blue;
     const evenShare = 1 / Math.max(frame.count, 1);
-    const xScale = val('xScale', 100) / 100;
-    const yScale = val('yScale', 100) / 100;
+    // The figure is placed twice: the cue in the zone, then the zone in the
+    // scan field. Each turns, sizes and moves; a turn is clockwise as the
+    // audience sees it, ILDA's x being to the right and y up.
+    const radians = (degrees) => ((Number(degrees) || 0) * Math.PI) / 180;
+    const cueTurn = radians(val('rotation', 0) + (this._spinAngle || 0));
+    const zoneTurn = radians(val('zoneRotation', 0));
+    const cueCos = Math.cos(cueTurn);
+    const cueSin = Math.sin(cueTurn);
+    const zoneCos = Math.cos(zoneTurn);
+    const zoneSin = Math.sin(zoneTurn);
+    const zoom = val('zoom', 100) / 100;
+    const cueX = (val('xScale', 100) / 100) * zoom;
+    const cueY = (val('yScale', 100) / 100) * zoom;
+    const zoneX = val('xSizeLimit', 100) / 100;
+    const zoneY = val('ySizeLimit', 100) / 100;
+    const cuePosX = val('cueX', 0) / 100;
+    const cuePosY = val('cueY', 0) / 100;
     const xPos = val('xPos', 0) / 100;
     const yPos = val('yPos', 0) / 100;
+    // Each position moves within the room its size leaves: an 80 % figure can
+    // travel over the remaining 20 %, and never off the field. A negative size
+    // turns the figure over; the room is the same either way.
+    const roomX = 1 - Math.abs(cueX * zoneX);
+    const roomY = 1 - Math.abs(cueY * zoneY);
     // Mounting flips, the way a real projector offers them: a laser hung
     // upside down or firing at a mirror needs its field turned over without
     // the content being re-authored.
@@ -853,10 +873,14 @@ class Laser {
       const rawY = ((pts[b + 1] << 16) >> 16) / 32768;
       // Position moves within the headroom the scale leaves: an 80% pattern
       // can travel over the remaining 20%, and never off the field.
-      const sx = mirrorX ? -rawX : rawX;
-      const sy = mirrorY ? -rawY : rawY;
-      const nx = Math.min(Math.max(sx * xScale + xPos * (1 - xScale), -1), 1);
-      const ny = Math.min(Math.max(sy * yScale + yPos * (1 - yScale), -1), 1);
+      const fx = mirrorX ? -rawX : rawX;
+      const fy = mirrorY ? -rawY : rawY;
+      const cx = (fx * cueCos + fy * cueSin) * cueX + cuePosX * (1 - Math.abs(cueX));
+      const cy = (fy * cueCos - fx * cueSin) * cueY + cuePosY * (1 - Math.abs(cueY));
+      const zx = (cx * zoneCos + cy * zoneSin) * zoneX;
+      const zy = (cy * zoneCos - cx * zoneSin) * zoneY;
+      const nx = Math.min(Math.max(zx + xPos * roomX, -1), 1);
+      const ny = Math.min(Math.max(zy + yPos * roomY, -1), 1);
       const ax = nx * h;
       const ay = ny * v0;
       const cosAx = Math.cos(ax);
@@ -1205,7 +1229,18 @@ class Laser {
       }
       const u = laser._beamMaterial.uniforms;
       u.time.value = t || 0;
-      laser._clipTime = t || 0;
+      // A clip's clock runs at the scan rate times the speed, so a change
+      // slows or quickens it from where it is.
+      const now = t || 0;
+      const settings = laser._settingsAt();
+      const clock = settings && settings.clipClock !== undefined ? settings.clipClock : 1;
+      const step = laser._clockAt === undefined ? 0 : Math.max(now - laser._clockAt, 0);
+      laser._clockAt = now;
+      laser._clipTime = (laser._clipTime || 0) + step * clock;
+      // The spin turns from wherever it is, so a change of speed never jumps.
+      const spin = settings && settings.spinRate !== undefined ? settings.spinRate : 0;
+      laser._spinAngle = settings && settings.spinResets
+        ? 0 : ((laser._spinAngle || 0) + step * spin) % 360;
       // Level with the room every frame, the way the mover beam is kept level,
       // so a laser is never drawn through haze the room does not have.
       u.fogState.value = SceneEnv.hazeEnabled;
@@ -1390,7 +1425,8 @@ class Laser {
         address: null,
         service: null,
         live: status.state === 'ready',
-        rate: clip ? (clip.rate || Number(params.maxPointRate) || 0) : 0,
+        rate: clip ? (clip.rate || Number(params.maxPointRate) || 0)
+          * (settings && settings.scanShare !== undefined ? settings.scanShare : 1) : 0,
         points: frame ? frame.count : 0,
         frames: status.frames,
         name: clip ? clip.name : null,

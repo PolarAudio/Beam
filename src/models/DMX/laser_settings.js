@@ -1,4 +1,4 @@
-import DeviceSettings, { FULL } from './device_settings';
+import DeviceSettings, { FULL, valueInRange } from './device_settings';
 import {
   ControlDef, ControlType, EnumType, TextType, ChoiceType, clamp,
 } from './device_control';
@@ -107,6 +107,9 @@ const FEED_DEFS = [
 /** Every attribute a laser holds: the output stage, plus how it is fed. */
 export const LASER_DEFS = [...CONTROL_DEFS, ...FEED_DEFS];
 
+/** Degrees a second at full spin: Pangolin's FB4 table gives -60 to 60 RPM. */
+export const SPIN_AT_FULL = 360;
+
 class LaserSettings extends DeviceSettings {
   /**
    * @param {Object} params the profile's `beam.laser` -- the envelope
@@ -114,6 +117,89 @@ class LaserSettings extends DeviceSettings {
    */
   constructor(params, data = {}) {
     super(LASER_DEFS, params, data);
+    /** The page the clip channel's cue is on, from a file's page channel. */
+    this._page = Math.max(Math.round(Number((data || {}).clipPage)) || 1, 1);
+    this._pageRaw = 0;
+  }
+
+  /**
+   * The controls' values and the page the clip channel is on.
+   *
+   * @readonly
+   * @type {Object}
+   */
+  get showData() {
+    const data = super.showData;
+    if (this._params.clipPage) data.clipPage = this._page;
+    return data;
+  }
+
+  /**
+   * Takes a DMX byte. A file's page channel is not a control of its own: it
+   * moves the clip channel's cue to its page, see `laser_parts.js`.
+   *
+   * @public
+   * @param {Number} index byte offset within the fixture
+   * @param {Number} dmx 0-255
+   */
+  writeChannel(index, dmx) {
+    const page = this._params.clipPage;
+    const byte = page ? index - (page.channel - 1) : -1;
+    if (byte < 0 || byte >= page.bits / 8) {
+      super.writeChannel(index, dmx);
+      return;
+    }
+    const shift = (page.bits / 8 - 1 - byte) * 8;
+    const level = Math.min(Math.max(Number(dmx) || 0, 0), 255);
+    // eslint-disable-next-line no-bitwise
+    this._pageRaw = ((this._pageRaw & ~(0xff << shift)) | (level << shift)) >>> 0;
+    const value = page.steps ? valueInRange(page.steps, this._pageRaw) : this._pageRaw;
+    // Page 0 is a file's "Disabled": the cue stays on the first page.
+    this._page = Math.max(Number(value) || 0, 1);
+  }
+
+  /**
+   * The spin, in degrees a second clockwise.
+   *
+   * @readonly
+   * @type {Number}
+   */
+  get spinRate() {
+    return (clamp(this.value('spin'), -FULL, FULL, 0) / FULL) * SPIN_AT_FULL;
+  }
+
+  /**
+   * Whether the spin channel sits in its file's Reset range, which puts the
+   * figure back at its own angle rather than holding where the spin left it.
+   *
+   * @readonly
+   * @type {Boolean}
+   */
+  get spinResets() {
+    const curve = this._params.dmxCurves && this._params.dmxCurves.spin;
+    if (!curve || curve.reset === undefined || !this.hasLive('spin')) return false;
+    return (this._raw.spin || 0) <= curve.reset;
+  }
+
+  /**
+   * How fast a played clip runs against the scene clock: the scan rate times
+   * the speed, 1 at 100 % each.
+   *
+   * @readonly
+   * @type {Number}
+   */
+  get clipClock() {
+    return this.scanShare * (clamp(this.value('speed'), 0, 4 * FULL, FULL) / FULL);
+  }
+
+  /**
+   * The laser's point rate against the clip's, 0..2.
+   *
+   * @readonly
+   * @type {Number}
+   */
+  get scanShare() {
+    return clamp(this.value('scanRate'), 0, 2 * FULL, FULL) / FULL;
   }
 
   /**
@@ -128,7 +214,8 @@ class LaserSettings extends DeviceSettings {
    */
   get gain() {
     if (!this.value('shutter')) return 0;
-    return clamp(this.value('dimmer'), 0, FULL, FULL) / FULL;
+    return (clamp(this.value('dimmer'), 0, FULL, FULL) / FULL)
+      * (clamp(this.value('dimmerLimit'), 0, FULL, FULL) / FULL);
   }
 
   /**
@@ -140,7 +227,12 @@ class LaserSettings extends DeviceSettings {
   get currentClip() {
     const selection = this.value('clip');
     // A channel at 0 picks no clip; by hand, no choice yet means the first.
-    if (selection === null && this.hasLive('clip')) return null;
+    if (selection === null && this.isDriven('clip')) return null;
+    const page = this._params.clipPage;
+    // A number is a position from the channel, on the page's.
+    if (page && typeof selection === 'number') {
+      return selectedClip(this.value('clips'), selection + (this._page - 1) * page.perPage);
+    }
     return selectedClip(this.value('clips'), selection);
   }
 

@@ -399,11 +399,17 @@ class Fixture extends withTransform(Proxify) {
         this.channels.fill(0);
       } else {
         this.channels.forEach((channel) => {
-          this.setChannel(channel.id - 1, 0);
+          // A device's values are already restored from the show; writing
+          // zeros through it would put every driven one back at level 0.
+          if (this.device) channel.value = 0; // eslint-disable-line no-param-reassign
+          else this.setChannel(channel.id - 1, 0);
         });
       }
       // After the zeroing, or a saved value would be wiped by it.
       this.applyParkedChannels();
+      // A device's held bytes went through it too; its saved values, which
+      // a hand may have set after them, are the last word.
+      if (this.device) this.device.restore(deviceData);
       // A channel left at its default is never reported by a write, so the
       // head hears every channel once.
       if (this._dispatch) this._dispatch.applyAll();

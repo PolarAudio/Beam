@@ -432,7 +432,8 @@ export default {
      */
     gdtfFacts() {
       const type = this.gdtf;
-      const mode = this.fixture.mode || type.modes[0];
+      // The file's own mode: a laser's `fixture.mode` is its laser listing's.
+      const mode = type.modes[this.fixture.modeIndex] || type.modes[0];
       const inputs = headInputs(type, mode);
       const { beam } = inputs;
       const unmeasured = inputs.unmeasured ? ' · not measured, file defaults' : '';
@@ -473,8 +474,9 @@ export default {
       if (inputs.lumens && narrow && wide && ['Moving Head', 'Static'].includes(inputs.category)) {
         spec.push(peakFact(inputs.lumens, narrow, wide));
       }
-      if (inputs.panSpan) spec.push({ label: 'Pan / tilt', value: `${inputs.panSpan}° / ${inputs.tiltSpan || 0}°` });
-      if (inputs.panSpeed || inputs.tiltSpeed) {
+      // A laser's pan and tilt move its figure, which Beam does not draw.
+      if (inputs.panSpan && inputs.category !== 'Laser') spec.push({ label: 'Pan / tilt', value: `${inputs.panSpan}° / ${inputs.tiltSpan || 0}°` });
+      if ((inputs.panSpeed || inputs.tiltSpeed) && inputs.category !== 'Laser') {
         const rate = (speed) => (speed ? `${Math.round(speed)}°/s` : '-');
         spec.push({ label: 'Pan / tilt speed', value: `${rate(inputs.panSpeed)} / ${rate(inputs.tiltSpeed)}` });
       }
@@ -577,6 +579,19 @@ export default {
       const guide = fixture.fixtureType && fixture._engine
         ? gdtfGuide(fixture.fixtureType, fixture._engine)
         : fixtureGuide(fixture.OFLData, fixture.mode);
+      // A device acts on every byte its controls own, whatever the OFL
+      // capability its listing gives them, and on a laser's page channel.
+      const { device } = fixture;
+      if (device) {
+        const { beam } = fixture.OFLData;
+        const page = beam && beam.laser && beam.laser.clipPage;
+        guide.channels.forEach((row) => {
+          if (device.controlAt(row.n - 1) || (page && row.n === page.channel)) {
+            row.drawn = true; // eslint-disable-line no-param-reassign
+            if (row.text === 'maintenance') row.text = ''; // eslint-disable-line no-param-reassign
+          }
+        });
+      }
       return guide.channels.length ? guide : null;
     },
     copyLabel() {

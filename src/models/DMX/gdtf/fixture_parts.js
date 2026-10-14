@@ -8,7 +8,9 @@
  */
 
 import { walkGeometry } from './gdtf_reader';
-import { slotKind } from './name_rules';
+import {
+  slotKind, namesLaser, namesLaserAttribute, namesScaleAttribute,
+} from './name_rules';
 import { isOwnPretty } from './standard_attributes';
 
 /** Old channel types by GDTF attribute, for the quick accessors and the UI. */
@@ -316,6 +318,37 @@ function hasLaser(type) {
   return found;
 }
 
+/** Every attribute a fixture type's modes address. */
+function attributesOf(type) {
+  const found = new Set();
+  type.modes.forEach((mode) => mode.channels.forEach((c) => c.logicalChannels
+    .forEach((l) => found.add(l.attribute))));
+  return found;
+}
+
+/**
+ * Whether a fixture type with no Laser geometry is a scanning laser, as most
+ * laser files are: by an attribute only a laser has, or by its name and a
+ * figure scale. A named laser on a yoke is a moving head that carries a
+ * laser, unless a channel picks its content.
+ *
+ * @param {Object} type a fixture type
+ * @returns {Boolean}
+ */
+export function laserByChannels(type) {
+  const attributes = [...attributesOf(type)];
+  if (attributes.some(namesLaserAttribute)) return true;
+  if (!namesLaser(`${type.manufacturer || ''} ${type.name || ''}`)) return false;
+  if (!attributes.some(namesScaleAttribute)) return false;
+  const axis = (g) => g.type === 'Axis' || g.children.some(axis);
+  return !type.geometries.some(axis) || attributes.includes('MediaContent1');
+}
+
+/** Whether a fixture type is drawn as a laser. */
+export function isLaserType(type) {
+  return hasLaser(type) || laserByChannels(type);
+}
+
 /**
  * The moving head's inputs from a fixture type in one mode.
  *
@@ -408,7 +441,10 @@ export function headInputs(type, mode) {
   let category = 'Other';
   // A light that pans or tilts is a moving head in every mode, including one
   // that leaves pan and tilt out; a light that does neither is static.
-  if (beams.length) category = moves(type) ? 'Moving Head' : 'Static';
+  // A laser known by its channels may model its beam and its position axes
+  // as a light's, so it is a laser before it is a light.
+  if (laserByChannels(type)) category = 'Laser';
+  else if (beams.length) category = moves(type) ? 'Moving Head' : 'Static';
   else if (hasLaser(type)) category = 'Laser';
   return {
     category,

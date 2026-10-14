@@ -67,6 +67,40 @@ export const COMMON_CONTROLS = {
   source: (label = 'Source Select', source = 'videoInputs') => new ControlDef('source', label, new ChoiceType({ source }), { fixable: false }),
 };
 
+/**
+ * The value on a curve at a raw channel value: straight between its points,
+ * held beyond the first and last.
+ *
+ * @param {Object} curve `{ at, values }`, `at` ascending
+ * @param {Number} raw
+ * @returns {Number}
+ */
+export function valueOnCurve(curve, raw) {
+  const { at, values } = curve;
+  if (raw <= at[0]) return values[0];
+  for (let i = 1; i < at.length; i += 1) {
+    if (raw <= at[i]) {
+      const span = at[i] - at[i - 1];
+      const t = span > 0 ? (raw - at[i - 1]) / span : 1;
+      return values[i - 1] + (values[i] - values[i - 1]) * t;
+    }
+  }
+  return values[values.length - 1];
+}
+
+/**
+ * The value of the last range starting at or below a raw channel value.
+ *
+ * @param {Object} steps `{ from, values }`, starts ascending
+ * @param {Number} raw
+ * @returns {*}
+ */
+export function valueInRange(steps, raw) {
+  let index = 0;
+  steps.from.forEach((from, i) => { if (from <= raw) index = i; });
+  return steps.values[index];
+}
+
 class DeviceSettings {
   /**
    * @param {Array} defs the kind's parameter declarations, in addressing order
@@ -78,31 +112,42 @@ class DeviceSettings {
     this._defs = defs;
     this._params = params || {};
     this._controls = ControlSet.fromProfile(defs, this._params);
-    const stored = data || {};
-
     /**
      * The one value per attribute: what the profile bakes in for a fixed one,
      * what the show carries for anything else, and the definition's own
      * default when the show says nothing. The wire and a hand both write here.
      */
     this._stored = {};
-    this._controls.controls.forEach((control) => {
-      if (control.isFixed || stored[control.key] === undefined) {
-        this._stored[control.key] = control.value;
-      } else {
-        this._stored[control.key] = control.type.coerce(stored[control.key], this._params);
-      }
-    });
-
     /**
      * Whether an attribute's value was last written by the wire. What the
      * panel's marker says, and what tells a source select whether it holds a
      * channel's position or a hand-picked id.
      */
     this._fromWire = {};
+    this.restore(data);
     /** The assembled raw integer per driven attribute, across its bytes. */
     this._raw = {};
     this._byteMap = this._controls.byteMap();
+  }
+
+  /**
+   * Takes the values a show stored, as the last word: after a load has put
+   * the saved channel bytes back through `writeChannel`, so a value set by
+   * hand after the last byte keeps it.
+   *
+   * @public
+   * @param {Object} [data] stored values from the show
+   */
+  restore(data) {
+    const stored = data || {};
+    this._controls.controls.forEach((control) => {
+      if (control.isFixed || stored[control.key] === undefined) {
+        this._stored[control.key] = control.value;
+      } else {
+        this._stored[control.key] = control.type.coerce(stored[control.key], this._params);
+      }
+      this._fromWire[control.key] = false;
+    });
   }
 
   /**
@@ -216,7 +261,19 @@ class DeviceSettings {
     // 16 places is well within 32 bits, but bitwise ops otherwise sign it.
     this._raw[entry.key] = next >>> 0;
     const max = (2 ** (entry.bytes * 8)) - 1;
-    this._stored[entry.key] = control.type.fromLevel(this._raw[entry.key] / max, this._params);
+    // A profile read from a file may give a control the file's own ranges:
+    // `{ from, values }`, each range's start and the value it gives.
+    const steps = this._params.dmxSteps && this._params.dmxSteps[entry.key];
+    // Or a curve, `{ at, values }`, see `valueOnCurve`.
+    const curve = this._params.dmxCurves && this._params.dmxCurves[entry.key];
+    if (steps) {
+      this._stored[entry.key] = valueInRange(steps, this._raw[entry.key]);
+    } else if (curve) {
+      const value = valueOnCurve(curve, this._raw[entry.key]);
+      this._stored[entry.key] = control.type.coerce(value, this._params);
+    } else {
+      this._stored[entry.key] = control.type.fromLevel(this._raw[entry.key] / max, this._params);
+    }
     this._fromWire[entry.key] = true;
   }
 

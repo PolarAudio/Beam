@@ -66,6 +66,17 @@ export const LASER_CHANNELS = {
   MODE: 'mode',
   CLIP: 'clip',
   TEST_PATTERN: 'testPattern',
+  SCAN_RATE: 'scanRate',
+  SPEED: 'speed',
+  DIMMER_LIMIT: 'dimmerLimit',
+  X_SIZE_LIMIT: 'xSizeLimit',
+  Y_SIZE_LIMIT: 'ySizeLimit',
+  ZOOM: 'zoom',
+  ZONE_ROTATION: 'zoneRotation',
+  ROTATION: 'rotation',
+  SPIN: 'spin',
+  CUE_X: 'cueX',
+  CUE_Y: 'cueY',
 };
 
 /**
@@ -100,11 +111,12 @@ const atFull = () => new PercentType({ initial: 100 });
 
 /**
  * A galvo cannot deflect past its own maximum, so a laser can only be scaled
- * *down* from full scan -- 100 % is as large as the picture gets.
+ * *down* from full scan -- 100 % is as large as the picture gets. A file's
+ * size may go below 0 to -100 %, the figure at that size turned over.
  *
  * @returns {PercentType}
  */
-const scale = () => new PercentType({ initial: 100 });
+const scale = () => new PercentType({ initial: 100, min: -100 });
 
 /**
  * A -100..+100 % offset, centred by default: moves the figure within the scan
@@ -113,6 +125,16 @@ const scale = () => new PercentType({ initial: 100 });
  * @returns {PercentType}
  */
 const offset = () => new PercentType({ initial: 0, limit: () => 100 });
+
+/**
+ * An angle in degrees, clockwise: a channel's level is 0-360, a file's
+ * range may name -360 to 360.
+ *
+ * @returns {PercentType}
+ */
+const angle = () => new PercentType({
+  initial: 0, min: -360, max: 360, unit: '°',
+});
 
 /**
  * A mounting flip: off by default.
@@ -151,6 +173,26 @@ export const CONTROL_DEFS = [
   new ControlDef(LASER_CHANNELS.TEST_PATTERN, 'Test Pattern', new EnumType({
     options: TEST_PATTERN_IDS, initial: TEST_PATTERN_OFF, labels: TEST_PATTERN_LABELS,
   }), { fixable: false }),
+  // A played clip's clock, the two multiplied: the share of the point rate
+  // the scanners run at, and the cue's playback speed.
+  // Pangolin's channels run the scan rate to 200 % and the speed to 400 %.
+  new ControlDef(LASER_CHANNELS.SCAN_RATE, 'Scan Rate', new PercentType({ initial: 100, max: 200 })),
+  new ControlDef(LASER_CHANNELS.SPEED, 'Speed', new PercentType({ initial: 100, max: 400 })),
+  // A projection zone's limits, as a desk sets them over every cue: the
+  // light out is the dimmer times its limit, the size the scale times its.
+  new ControlDef(LASER_CHANNELS.DIMMER_LIMIT, 'Dimmer Limit', atFull()),
+  new ControlDef(LASER_CHANNELS.X_SIZE_LIMIT, 'X Size Limit', scale()),
+  new ControlDef(LASER_CHANNELS.Y_SIZE_LIMIT, 'Y Size Limit', scale()),
+  // Both sizes at once, multiplying them.
+  new ControlDef(LASER_CHANNELS.ZOOM, 'Zoom', new PercentType({ initial: 100, min: -100, max: 400 })),
+  // The zone's angle and the cue's, in degrees clockwise, which add.
+  new ControlDef(LASER_CHANNELS.ZONE_ROTATION, 'Zone Rotation', angle()),
+  new ControlDef(LASER_CHANNELS.ROTATION, 'Rotation', angle()),
+  // A turn on top, clockwise positive, centred on a channel: see SPIN_AT_FULL.
+  new ControlDef(LASER_CHANNELS.SPIN, 'Spin', new PercentType({ initial: 0, limit: () => 100 })),
+  // The cue's place within the zone, as X/Y Position is the zone's.
+  new ControlDef(LASER_CHANNELS.CUE_X, 'Cue X Position', offset()),
+  new ControlDef(LASER_CHANNELS.CUE_Y, 'Cue Y Position', offset()),
 ];
 
 /** Derived, so a parameter cannot be in one of these and missing from another. */

@@ -970,8 +970,8 @@ export default {
       // A basis rather than a width: the controls share whatever the widget
       // is, so three colours fit across one row and four geometry fields fall
       // into two, whatever width the widget has.
-      const pct = (key, label, min = 0, basis = 88) => ({
-        key, label, min, max: 100, basis,
+      const pct = (key, label, min = 0, basis = 88, max = 100) => ({
+        key, label, min, max, basis,
       });
       return [
         { label: 'Intensity', lines: [[pct('dimmer', 'Dimmer %')]], shutter: true },
@@ -997,6 +997,10 @@ export default {
               key: 'mirrorY', label: 'Mirror Y', icon: 'flip_y', axis: 'y',
             },
           ],
+        },
+        {
+          label: 'Playback %',
+          lines: [[pct('scanRate', 'Scan rate', 0, 80, 200), pct('speed', 'Speed', 0, 80, 400)]],
         },
       ];
     },
@@ -1768,14 +1772,9 @@ export default {
      */
     setChannelValue(index, value) {
       this.targets.forEach((target) => {
-        if (target.device) {
-          // Straight to the channel: a device's values are its controls, and
-          // the show saves those. Parking the byte as well would store the
-          // same fact twice and let the two disagree on the next load.
-          target.setChannel(index, Math.max(0, Math.min(255, Math.round(Number(value) || 0))));
-        } else if (target.parkChannel) {
-          target.parkChannel(index, value);
-        }
+        // Held and saved for every fixture, so the table loads as it was
+        // left; a device's control values are restored after its bytes.
+        if (target.parkChannel) target.parkChannel(index, value);
         // The renderer reads the fixture rather than watching it, the same as
         // every other write in this widget.
         const model = target._3DModel;
@@ -2013,6 +2012,8 @@ export default {
 /* The channel table: the same table the Model widget draws for a bar, with
    the byte's box in a cell. Rows are as tight as the box allows. */
 .channel_table {
+  /* A scroll box in the body's column: without this it shrinks to nothing. */
+  flex-shrink: 0;
   overflow-x: auto;
   border: 1px solid var(--primary-dark);
   border-radius: 3px;

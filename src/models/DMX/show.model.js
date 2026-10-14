@@ -33,7 +33,7 @@ import movedProfile from './moved_profiles';
 import readGdtf, { wheelImages } from './gdtf/gdtf_reader';
 import buildBody, { laserBody } from '../../plugins/visualizer/gdtf_body';
 import { laserGeometry } from './gdtf/laser_parts';
-import { headInputs } from './gdtf/fixture_parts';
+import { headInputs, isLaserType } from './gdtf/fixture_parts';
 import { MAX_SHADOW_CASTERS } from '../../plugins/visualizer/light';
 import MeasureTool from '../../plugins/visualizer/measure_tool';
 import { CLIP_KINDS, BUILT_IN_CLIPS } from './laser_clips';
@@ -1565,9 +1565,12 @@ class Show extends EventEmitter {
       // whose meshes cannot be read keeps the shipped body.
       try {
         // A laser is drawn by the laser renderer, standing; a light by the head.
-        if (laserGeometry(fixtureType)) {
+        // A laser known only by its channels has no frame its model is drawn
+        // in for a laser, so it takes the box.
+        if (isLaserType(fixtureType)) {
           fixtureType.body = null;
-          fixtureType.laserBody = await laserBody(fixtureType, files);
+          fixtureType.laserBody = laserGeometry(fixtureType)
+            ? await laserBody(fixtureType, files) : null;
         } else {
           fixtureType.body = await buildBody(fixtureType, files);
         }

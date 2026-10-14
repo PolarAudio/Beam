@@ -2,8 +2,12 @@ import DeviceSettings, { FULL } from './device_settings';
 import {
   ControlDef, ControlType, EnumType, TextType, ChoiceType, clamp,
 } from './device_control';
-import { LASER_CHANNELS, CONTROL_DEFS } from './generic/laser';
-import { coerceClipList, selectedClip } from './laser_clips';
+import {
+  LASER_CHANNELS, CONTROL_DEFS, LASER_MODES, MODE_LABELS,
+} from './generic/laser';
+import { coerceClipList, selectedClip, testPatternClip } from './laser_clips';
+
+export { LASER_MODES, MODE_LABELS };
 
 /**
  * @file What one laser is set to.
@@ -48,12 +52,12 @@ export const PROTOCOL_LABELS = {
   idn: 'IDN',
   etherdream: 'Ether Dream',
   lasercube: 'LaserCube',
-  clips: 'Clip list',
+  clips: 'Standalone',
 };
 
 /**
- * The protocol a laser plays from its own clip list: nothing is received, so
- * it is never waiting for a stream.
+ * The protocol a laser plays its standalone list from, as from its own memory
+ * card: nothing is received, so it is never waiting for a stream.
  */
 export const CLIPS_PROTOCOL = 'clips';
 
@@ -95,11 +99,9 @@ const FEED_DEFS = [
     addressable: false, fixable: false,
   }),
   new ControlDef('clips', 'Clips', new ClipListType(), { addressable: false, fixable: false }),
-  // The playing clip, by id. Not addressable yet: a channel would name a
-  // one-based position in the list, which `selectedClip` already reads.
-  new ControlDef('clip', 'Clip', new ChoiceType({ source: 'laserClips' }), {
-    addressable: false, fixable: false,
-  }),
+  // The library card the list is a copy of, by key, or null for a list of
+  // this placement's own. See laser_cards.js.
+  new ControlDef('card', 'Card', new TextType(), { addressable: false, fixable: false }),
 ];
 
 /** Every attribute a laser holds: the output stage, plus how it is fed. */
@@ -136,7 +138,20 @@ class LaserSettings extends DeviceSettings {
    * @type {Object|null}
    */
   get currentClip() {
-    return selectedClip(this.value('clips'), this.value('clip'));
+    const selection = this.value('clip');
+    // A channel at 0 picks no clip; by hand, no choice yet means the first.
+    if (selection === null && this.hasLive('clip')) return null;
+    return selectedClip(this.value('clips'), selection);
+  }
+
+  /**
+   * The test pattern overriding the input, or null when it is Off.
+   *
+   * @readonly
+   * @type {Object|null}
+   */
+  get testPattern() {
+    return testPatternClip(this.value('testPattern'));
   }
 }
 

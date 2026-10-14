@@ -215,6 +215,21 @@
              Dream and LaserCube name a device by its address alone, so one
              laser each, while IDN offers a named service per laser at one
              address. -->
+        <!-- Overrides whatever the laser is fed, as a projector's service test
+             does. Several lasers at once is how a rig is aligned. -->
+        <uk-flex
+          v-if="isLaser"
+          :gap="8"
+          class="row"
+        >
+          <uk-select-input
+            :model-value="testPatternIndex"
+            style="flex: 1"
+            label="Test pattern"
+            :options="testPatternOptions"
+            @input="pickTestPattern"
+          />
+        </uk-flex>
         <!-- Not for several at once: an address is where one device lives. -->
         <template v-if="isLaser && !many">
           <uk-flex
@@ -250,12 +265,13 @@
               @input="pickSource"
             />
           </uk-flex>
-          <!-- The laser's own content: a list of clips, one playing. A rate of
-               0 plays at the laser's maximum point rate. -->
+          <!-- The standalone list: the user's ILDA files, as a laser's memory
+               card holds them, managed in the Clip list window. The number is
+               what a Clip channel picks. -->
           <template v-if="usesClips">
             <uk-flex
-              :gap="8"
-              class="row"
+              :gap="6"
+              class="row clip_controls"
             >
               <uk-select-input
                 :model-value="clipIndex"
@@ -264,60 +280,9 @@
                 :options="clipOptions"
                 @input="pickClip"
               />
-            </uk-flex>
-            <div class="clip_list">
-              <uk-flex
-                v-for="(clip, i) in clips"
-                :key="clip.id"
-                :gap="4"
-                class="clip_row"
-                :class="{ playing: clip.id === playingClipId }"
-              >
-                <span class="clip_number">{{ i + 1 }}</span>
-                <span
-                  class="clip_name"
-                  :title="clip.kind === 'file' ? clip.file : 'Built-in pattern'"
-                  @click="pickClip(i)"
-                >{{ clip.name }}</span>
-                <uk-num-input
-                  :model-value="clip.rate || 0"
-                  style="width: 72px"
-                  title="Point rate, points per second; 0 is the laser's maximum"
-                  :min="0"
-                  :max="200000"
-                  @update:model-value="setClipRate(i, $event)"
-                />
-                <button
-                  type="button"
-                  class="icon_toggle"
-                  title="Move up"
-                  aria-label="Move up"
-                  :disabled="i === 0"
-                  @click="moveClip(i, -1)"
-                >
-                  <uk-icon name="arrow_up" />
-                </button>
-                <button
-                  type="button"
-                  class="icon_toggle"
-                  title="Remove"
-                  aria-label="Remove"
-                  @click="removeClip(i)"
-                >
-                  <uk-icon name="trash" />
-                </button>
-              </uk-flex>
-            </div>
-            <uk-flex
-              :gap="8"
-              class="row"
-            >
-              <uk-select-input
-                :model-value="0"
-                style="flex: 1"
-                label="Add"
-                :options="addClipOptions"
-                @input="addClip"
+              <uk-button
+                label="Edit clip list…"
+                @click="editClips"
               />
             </uk-flex>
           </template>
@@ -760,10 +725,8 @@ import EventBus from '@/plugins/eventbus';
 import LaserStream from '@/plugins/laser_stream';
 import Laser from '@/plugins/visualizer/laser';
 import { SELECTABLE_PROTOCOLS, PROTOCOL_LABELS, CLIPS_PROTOCOL } from '@/models/DMX/laser_settings';
-import {
-  BUILT_IN_CLIPS, builtInClipList, coerceClip, fileClip, selectedClip,
-} from '@/models/DMX/laser_clips';
-import { relistClipFiles } from '@/plugins/visualizer/laser_clip_player';
+import { TEST_PATTERN_IDS, TEST_PATTERN_LABELS, selectedClip } from '@/models/DMX/laser_clips';
+import { cardFor } from '@/plugins/visualizer/laser_cards';
 import { SHUTTER_MODE_ORDER, SHUTTER_MODE_LABELS } from '@/plugins/visualizer/shutter';
 import { formatAddress } from '@/models/DMX/address_format';
 import fixtureGuide from '@/models/DMX/fixture_guide';
@@ -853,8 +816,6 @@ export default {
       laserAddresses: [],
       /** What the running devices report, refreshed on the same tick. */
       laserDevices: [],
-      /** The ILDA files in the library and the open project, for the Add list. */
-      laserFiles: [],
       /**
        * Widget header data
        */
@@ -1084,6 +1045,11 @@ export default {
         // default and the Address row would never appear.
         protocol: device.value('protocol'),
         address: device.value('address'),
+        // A laser's clip list and the clip playing from it.
+        clips: device.value('clips'),
+        clip: device.value('clip'),
+        testPattern: device.value('testPattern'),
+        card: device.value('card'),
         // The laser output stage. Undefined for any device without these, which
         // reads as nothing to show -- the rows are gated on the kind anyway.
         red: device.value('red'),
@@ -1248,31 +1214,20 @@ export default {
     clipOptions() {
       return this.clips.length
         ? this.clips.map((clip, i) => `${i + 1}  ${clip.name}`)
-        : ['— the list is empty —'];
+        : ['— add an ILDA file —'];
+    },
+    testPatternOptions() {
+      const list = TEST_PATTERN_IDS.map((id) => TEST_PATTERN_LABELS[id]);
+      return this.isMixed('testPattern') ? ['*', ...list] : list;
+    },
+    testPatternIndex() {
+      if (this.isMixed('testPattern')) return 0;
+      const at = TEST_PATTERN_IDS.indexOf(this.read('testPattern'));
+      return at < 0 ? 0 : at;
     },
     clipIndex() {
       const at = this.clips.findIndex((clip) => clip.id === this.playingClipId);
       return at < 0 ? 0 : at;
-    },
-    /**
-     * What can be added: the built-in patterns, the ILDA files already in the
-     * library or the open project, and a new file from disk. Shipped files are
-     * the built-in file clips, so they are not listed twice.
-     */
-    addClipChoices() {
-      const shipped = new Set(BUILT_IN_CLIPS.filter((clip) => clip.file)
-        .map((clip) => clip.file.toLowerCase()));
-      return [
-        { label: 'Add a clip…' },
-        ...BUILT_IN_CLIPS.map((clip) => ({ label: clip.name, builtIn: clip })),
-        ...this.laserFiles
-          .filter((entry) => !shipped.has(entry.key.toLowerCase()))
-          .map((entry) => ({ label: entry.name, file: entry.key })),
-        { label: 'ILDA file from disk…', pick: true },
-      ];
-    },
-    addClipOptions() {
-      return this.addClipChoices.map((choice) => choice.label);
     },
     /**
      * The protocols on offer, plus whatever this laser is already set to --
@@ -1362,13 +1317,23 @@ export default {
       if (!state) return '';
       // A device that never started -- a port another program owns, most often
       // -- is the answer whatever else the streams say.
+      if (state.mode === 'off' && !state.test) return 'Off by the Mode channel.';
       if (state.protocol === CLIPS_PROTOCOL) {
-        if (!state.name) return 'Add a clip to play.';
+        const fed = PROTOCOL_LABELS[state.fed] || state.fed;
+        const over = state.test && state.fed !== CLIPS_PROTOCOL ? `, over ${fed}` : '';
+        const byMode = !state.test && state.mode === 'standalone' && state.fed !== CLIPS_PROTOCOL
+          ? ' (standalone by the Mode channel)' : '';
+        if (!state.name) return `Add an ILDA file to play${byMode}.`;
+        if (state.test && state.live) {
+          return `Test pattern ${state.name}${over}: ${state.points} points at ${Math.round(state.rate / 1000)} kpps.`;
+        }
         if (state.error) return `${state.name}: ${state.error}.`;
         if (state.clipState === 'missing') return `${state.name}: the file is not in the library or the project.`;
         if (!state.live) return `Loading ${state.name}…`;
         const frames = state.frames > 1 ? `, ${state.frames} frames` : '';
-        return `Playing ${state.name}: ${state.points} points${frames} at ${Math.round(state.rate / 1000)} kpps.`;
+        const cardKey = this.read('card');
+        const card = cardKey ? ` from card ${(cardFor(cardKey) || {}).name || cardKey}` : '';
+        return `Playing ${state.name}${card}${byMode}: ${state.points} points${frames} at ${Math.round(state.rate / 1000)} kpps.`;
       }
       if (state.error) return `Not connected — ${state.error}.`;
       if (state.protocol === 'ponk') {
@@ -1571,7 +1536,6 @@ export default {
       }
     }, STREAM_POLL_MS);
     LaserStream.addresses().then((list) => { this.laserAddresses = list || []; });
-    this.readLaserFiles();
     // Only a patched fixture can change underneath the panel, and only its
     // channel list and device values are what the wire writes.
     this.wireTimer = setInterval(() => {
@@ -1582,9 +1546,11 @@ export default {
     }, WIRE_POLL_MS);
     // The Video inputs window can set a device's input; the rows re-read.
     EventBus.on('video_input_assigned', this.onInputAssigned);
+    EventBus.on('laser_clips_changed', this.onClipsChanged);
   },
   beforeUnmount() {
     EventBus.off('video_input_assigned', this.onInputAssigned);
+    EventBus.off('laser_clips_changed', this.onClipsChanged);
     if (this.streamTimer) clearInterval(this.streamTimer);
     this.streamTimer = null;
     if (this.wireTimer) clearInterval(this.wireTimer);
@@ -1885,12 +1851,16 @@ export default {
       // A stream belongs to Ponk, so leaving one bound while the laser is fed
       // by a DAC would be a setting that says something untrue.
       if (protocol !== 'ponk' && this.read('source')) this.writeDevice('source', null);
-      // A laser switched to its own list starts with something to play.
-      if (protocol === CLIPS_PROTOCOL && !this.clips.length) {
-        const list = builtInClipList();
-        this.writeDevice('clips', list);
-        this.writeDevice('clip', list[0].id);
-      }
+    },
+    /**
+     * Sets the test pattern, which overrides whatever the laser is fed.
+     *
+     * @public
+     * @param {Number} index into `testPatternOptions`
+     */
+    pickTestPattern(index) {
+      const id = TEST_PATTERN_IDS[Number(index) - (this.isMixed('testPattern') ? 1 : 0)];
+      if (id) this.writeDevice('testPattern', id);
     },
     /**
      * Plays one clip of the list.
@@ -1902,77 +1872,15 @@ export default {
       const clip = this.clips[index];
       if (clip) this.writeDevice('clip', clip.id);
     },
-    /**
-     * Sets the point rate one clip plays at; 0 is the laser's maximum.
-     *
-     * @public
-     * @param {Number} index into the list
-     * @param {Number} rate points per second
-     */
-    setClipRate(index, rate) {
-      const list = this.clips.map((clip) => ({ ...clip }));
-      if (!list[index]) return;
-      list[index].rate = Number(rate) > 0 ? Math.round(Number(rate)) : null;
-      this.writeDevice('clips', list);
+    /** Opens the Clip list window on this laser. */
+    editClips() {
+      if (this.fixture) EventBus.emit('open_laser_clips', { fixtureId: this.fixture.id });
     },
-    /**
-     * Moves one clip up the list. Its position is what a DMX channel will
-     * pick it by.
-     *
-     * @public
-     * @param {Number} index
-     * @param {Number} by -1 up, 1 down
-     */
-    moveClip(index, by) {
-      const to = index + by;
-      if (to < 0 || to >= this.clips.length) return;
-      const list = [...this.clips];
-      [list[index], list[to]] = [list[to], list[index]];
-      this.writeDevice('clips', list);
+    /** The Clip list window changed this laser; read it again. */
+    onClipsChanged() {
+      this.deviceRevision += 1;
     },
-    /**
-     * Takes one clip out of the list; the file stays in the library.
-     *
-     * @public
-     * @param {Number} index
-     */
-    removeClip(index) {
-      this.writeDevice('clips', this.clips.filter((clip, i) => i !== index));
-    },
-    /**
-     * Adds a built-in pattern, a library file, or files picked from disk.
-     *
-     * @public
-     * @async
-     * @param {Number} index into `addClipChoices`
-     */
-    async addClip(index) {
-      const choice = this.addClipChoices[index];
-      if (!choice || index === 0) return;
-      let added = [];
-      if (choice.builtIn) {
-        added = [coerceClip({ ...choice.builtIn, id: null })];
-      } else if (choice.file) {
-        added = [fileClip(choice.file)];
-      } else if (choice.pick && window.library && window.library.addLaserClips) {
-        const result = await window.library.addLaserClips();
-        if (!result || !result.ok) return;
-        added = result.entries.map((entry) => fileClip(entry.key));
-        relistClipFiles();
-        this.readLaserFiles();
-      }
-      added = added.filter(Boolean);
-      if (!added.length) return;
-      this.writeDevice('clips', [...this.clips, ...added]);
-      this.writeDevice('clip', added[0].id);
-    },
-    /** Reads which ILDA files the library and the open project hold. */
-    readLaserFiles() {
-      if (!window.library || !window.library.laserClips) return;
-      Promise.resolve(window.library.laserClips())
-        .then((list) => { this.laserFiles = list || []; })
-        .catch(() => {});
-    },
+
     /**
      * Binds this laser's device to one of the machine's addresses.
      *
@@ -2055,33 +1963,8 @@ export default {
   flex-wrap: wrap;
   align-items: flex-start;
 }
-.clip_list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 4px 0;
-}
-.clip_row {
-  align-items: center;
-}
-.clip_number {
-  width: 18px;
-  text-align: right;
-  font-size: 11px;
-  color: var(--secondary-lighter-alt);
-}
-.clip_name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  cursor: pointer;
-}
-.clip_row.playing .clip_name {
-  color: var(--secondary-lighter);
-  font-family: Roboto-Bold, sans-serif;
+.clip_controls {
+  align-items: flex-end;
 }
 .icon_toggle:disabled {
   opacity: 0.4;
@@ -2105,6 +1988,11 @@ export default {
    does rather than only whether it is on. */
 .icon_toggle :deep(.icon) {
   transition: transform 0.12s ease;
+}
+/* Icons whose paths carry no fill of their own would draw black; they take
+   the button's colour like the rest. */
+.icon_toggle :deep(.icon path) {
+  fill: currentColor;
 }
 .icon_toggle.on {
   background: var(--accent-blue);

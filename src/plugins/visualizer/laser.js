@@ -11,7 +11,7 @@ import { clipFrame, clipStatus } from './laser_clip_player';
 import FIGURE_ATLAS, { LaserFigure, FIGURE_PIXEL, FIGURE_MIN_PIXELS } from './laser_figure';
 import LaserStream, { POINT_STRIDE } from '../laser_stream';
 import {
-  DEFAULT_LASER_PARAMS, apertureOrigin, scanHalfAngles, laserChannelLumens,
+  DEFAULT_LASER_PARAMS, apertureOrigin, apertureSize, scanHalfAngles, laserChannelLumens,
 } from '../../models/DMX/generic/laser';
 import { HAZE_SCATTER_AT_FULL, HAZE_EXTINCTION_AT_FULL } from './light';
 import { SCENE_PER_NIT } from './light_field';
@@ -140,8 +140,11 @@ let lastInputs = '';
 /** Unit body, scaled per laser. */
 const BOX_GEOMETRY = new THREE.BoxGeometry(1, 1, 1);
 
-/** The aperture disc. A circle faces +Z, and the beam leaves along -Y. */
-const APERTURE_GEOMETRY = new THREE.CircleGeometry(0.5, 20);
+/**
+ * The aperture window, a unit square scaled to its width and height. A plane
+ * faces +Z, and the beam leaves along -Y.
+ */
+const APERTURE_GEOMETRY = new THREE.PlaneGeometry(1, 1);
 APERTURE_GEOMETRY.rotateX(Math.PI / 2);
 
 /**
@@ -602,7 +605,7 @@ class Laser {
     const width = Math.max(Number(params.width) || 0, 0.001);
     const height = Math.max(Number(params.height) || 0, 0.001);
     const depth = Math.max(Number(params.depth) || 0, 0.001);
-    const aperture = Math.max(Number(params.apertureDiameter) || 0, 0.001);
+    const aperture = apertureSize(params);
 
     // Width across, depth front-to-back, height up -- the box stands the way
     // the machine does. A model is drawn at its own size, and its aperture is
@@ -615,7 +618,7 @@ class Laser {
     // by someone facing it; same unnegated -Y/+Z convention as the projector's
     // lens. Set a hair proud of the panel so it is not co-planar with it.
     const ap = apertureOrigin(params);
-    this._aperture.scale.set(aperture, 1, aperture);
+    this._aperture.scale.set(aperture.width, 1, aperture.height);
     this._aperture.position.set(ap.x, ap.y - 0.001, ap.z);
 
     this.buildAim(ap);
@@ -665,8 +668,22 @@ class Laser {
   resolveSource(settings) {
     const protocol = (settings && settings.value('protocol')) || 'ponk';
     const address = (settings && settings.value('address')) || this._address || null;
-    // The laser's own clip list: nothing to receive.
-    if (protocol === 'clips') return { protocol: 'clips', service: null, address: null };
+    // A test pattern overrides whatever the laser is fed, as a projector's
+    // service test does; then the Mode channel; then the Protocol.
+    const test = settings ? settings.testPattern : null;
+    if (test) {
+      return {
+        protocol: 'clips', clip: test, test: true, service: null, address: null,
+      };
+    }
+    const mode = (settings && settings.value('mode')) || 'input';
+    if (mode === 'off') return null;
+    // The standalone list: nothing to receive.
+    if (mode === 'standalone' || protocol === 'clips') {
+      return {
+        protocol: 'clips', clip: settings ? settings.currentClip : null, service: null, address: null,
+      };
+    }
     if (protocol === 'ponk') {
       const chosen = parsePonkStream(settings ? settings.value('source') : null);
       if (chosen !== null) return { protocol: 'ponk', service: chosen, address: null };
@@ -726,8 +743,7 @@ class Laser {
     // the scanner drew. A DAC stream's travel is guessed from the distance.
     let explicitBlanking = false;
     if (source && source.protocol === 'clips') {
-      const clip = settings ? settings.currentClip : null;
-      frame = clipFrame(clip, this._clipTime || 0, Number(params.maxPointRate) || 0);
+      frame = clipFrame(source.clip, this._clipTime || 0, Number(params.maxPointRate) || 0);
       explicitBlanking = true;
     } else if (source && source.protocol === 'ponk') {
       const ponk = LaserStream.ponkFrame(source.service);
@@ -1103,8 +1119,9 @@ class Laser {
   }
 
   /**
-   * Whether the fixture is hidden from the scene: not drawn, and its beam with it;
-   * `projections()` leaves it out, so no figure lands on a surface.
+   * Whether the fixture is hidden from the scene. A hidden laser does nothing:
+   * it is not drawn, builds no beam or figure, holds no depth or figure tile,
+   * puts nothing in the beams' halo and offers no input on the network.
    * Picking skips it by asking the fixture, not this.
    *
    * @type {Boolean}
@@ -1168,6 +1185,10 @@ class Laser {
     // The viewport, so a dot's beam keeps its minimum width in pixels.
     if (renderer) renderer.getSize(scratchResolution);
     instances.forEach((laser) => {
+      if (laser._hidden) {
+        laser._beamGeo.setDrawRange(0, 0);
+        return;
+      }
       const u = laser._beamMaterial.uniforms;
       u.time.value = t || 0;
       laser._clipTime = t || 0;
@@ -1248,8 +1269,9 @@ class Laser {
       const handle = laser.fixtureHandle;
       const settings = laser._settingsAt();
       const protocol = (settings && settings.value('protocol')) || 'ponk';
-      // A clip list plays here; there is no device for the main process to run.
-      if (protocol === 'clips') return;
+      // A hidden laser offers no input; a clip list plays here, with no
+      // device for the main process to run.
+      if (laser._hidden || protocol === 'clips') return;
       const address = (settings && settings.value('address')) || null;
       const name = (handle && handle.name) || `Laser ${i + 1}`;
       let service = null;
@@ -1329,9 +1351,12 @@ class Laser {
     const settings = laser._settingsAt();
     const source = laser.resolveSource(settings);
     const error = laser.inputError();
+    const fed = (settings && settings.value('protocol')) || 'ponk';
+    const mode = (settings && settings.value('mode')) || 'input';
     if (!source) {
       return {
-        protocol: (settings && settings.value('protocol')) || 'ponk',
+        protocol: fed,
+        mode,
         address: (settings && settings.value('address')) || null,
         service: null,
         live: false,
@@ -1342,7 +1367,7 @@ class Laser {
       };
     }
     if (source.protocol === 'clips') {
-      const clip = settings ? settings.currentClip : null;
+      const { clip } = source;
       const status = clipStatus(clip);
       const params = laser._params || {};
       const frame = clipFrame(clip, laser._clipTime || 0, Number(params.maxPointRate) || 0);
@@ -1356,6 +1381,10 @@ class Laser {
         frames: status.frames,
         name: clip ? clip.name : null,
         clipState: status.state,
+        // A test pattern, or the Mode channel, playing over the Protocol.
+        test: !!source.test,
+        fed,
+        mode,
         error: status.error || error,
       };
     }
@@ -1413,8 +1442,8 @@ class Laser {
    * @returns {Boolean} whether any laser had a beam to draw
    */
   static renderHaloSource(renderer, camera, target, clear) {
-    const lit = [...instances].filter((laser) => laser._beam && laser._beam.visible
-      && laser._beamGeo.drawRange.count > 0);
+    const lit = [...instances].filter((laser) => !laser._hidden && laser._beam
+      && laser._beam.visible && laser._beamGeo.drawRange.count > 0);
     if (!lit.length) return false;
     const clearColor = renderer.getClearColor(haloClearColor);
     const clearAlpha = renderer.getClearAlpha();
@@ -1468,7 +1497,8 @@ class Laser {
    * @param {Object} renderer THREE.WebGLRenderer
    */
   static renderFigures(renderer) {
-    const list = [...instances];
+    instances.forEach((laser) => { if (laser._hidden) laser._figureSlot = -1; });
+    const list = [...instances].filter((laser) => !laser._hidden);
     if (!list.length) return;
     const entries = [];
     list.forEach((laser, i) => {
@@ -1494,7 +1524,12 @@ class Laser {
    * @param {Object} scene
    */
   static renderDepth(renderer, scene) {
-    const list = [...instances];
+    instances.forEach((laser) => {
+      if (!laser._hidden) return;
+      laser._depthSlot = -1;
+      laser._beamMaterial.uniforms.depthReady.value = false;
+    });
+    const list = [...instances].filter((laser) => !laser._hidden);
     if (!list.length) return;
     if (!occlusionEnabled) {
       // Not just an early return: a tile bound last frame would go on cutting.

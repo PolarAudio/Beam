@@ -35,6 +35,10 @@
       :focus-id="videoFocusId"
       :for-fixtures="videoForFixtures"
     />
+    <laser-clips-popup
+      v-model="laserClipsPopupState"
+      :fixture-id="laserClipsFixtureId"
+    />
   </uk-flex>
 </template>
 
@@ -53,6 +57,7 @@ import NewshowPopup from './_popups/popup.newshow.vue';
 import ProjectPopup from './_popups/popup.project.vue';
 import PatchSheetPopup from './_popups/popup.patchsheet.vue';
 import VideoPopup from './_popups/popup.video.vue';
+import LaserClipsPopup from './_popups/popup.laserclips.vue';
 
 export default {
   name: 'ToolbarFragment',
@@ -68,6 +73,7 @@ export default {
     ProjectPopup,
     PatchSheetPopup,
     VideoPopup,
+    LaserClipsPopup,
   },
   data() {
     return {
@@ -85,6 +91,9 @@ export default {
       videoFocusId: null,
       /** The devices the window was opened from, by fixture id. */
       videoForFixtures: [],
+      laserClipsPopupState: false,
+      /** The laser the Clip list window edits, by fixture id. */
+      laserClipsFixtureId: null,
       /** Whether Beam is in sender mode, and who else is on its universes. */
       sending: false,
       otherSenders: [],
@@ -361,6 +370,8 @@ export default {
     // The Video inputs window opens from a device's Input list, and from its
     // own shortcut, which has no menu entry to carry it.
     EventBus.on('open_video_inputs', this.openVideoInputs);
+    // A laser's clip list opens from its Fixture settings.
+    EventBus.on('open_laser_clips', this.openLaserClips);
     window.addEventListener('keydown', this.onVideoInputsKey);
     this.$show.on('videoCropsDropped', (names) => {
       EventBus.emit('app_error', new Error(
@@ -386,8 +397,17 @@ export default {
     window.removeEventListener('drop', this.onFileDrop);
     window.removeEventListener('keydown', this.onVideoInputsKey);
     EventBus.off('open_video_inputs', this.openVideoInputs);
+    EventBus.off('open_laser_clips', this.openLaserClips);
   },
   methods: {
+    /**
+     * @param {Object} from `{ fixtureId }`, the laser to edit
+     */
+    openLaserClips(from = null) {
+      this.laserClipsFixtureId = from && typeof from.fixtureId === 'number' ? from.fixtureId : null;
+      this.laserClipsPopupState = true;
+    },
+
     /**
      * @param {Object} [from] `{ inputId, fixtureIds }` when a device's panel
      *   opens it: the input to show and the devices it can set

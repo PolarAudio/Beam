@@ -295,6 +295,28 @@ contextBridge.exposeInMainWorld('library', {
    */
   addLaserClips: () => ipcRenderer.invoke('library:addLaserClips'),
   /**
+   * Laser memory cards: named clip lists in `Library/Lasers/Cards`, and those
+   * the open document carries.
+   *
+   * @returns {Promise<Array>} `{ key, name, clips, origin }`
+   */
+  laserCards: () => ipcRenderer.invoke('library:laserCards'),
+  /**
+   * Writes a card to the library.
+   *
+   * @param {String} name
+   * @param {Array} clips
+   * @returns {Promise<Object>} `{ ok, key }` or `{ ok: false, reason }`
+   */
+  saveLaserCard: (name, clips) => ipcRenderer.invoke('library:saveLaserCard', name, clips),
+  /**
+   * Copies a clip list's files to a chosen folder, numbered in list order.
+   *
+   * @param {Array} clips `{ name, file }`
+   * @returns {Promise<Object>} `{ ok, folder, written, missing }` or `{ ok: false, reason }`
+   */
+  exportLaserClips: (clips) => ipcRenderer.invoke('library:exportLaserClips', clips),
+  /**
    * GDTF fixtures in `Library/Profiles`, metadata only. The bytes are served
    * as `library://profiles/<file>`.
    *

@@ -27,8 +27,9 @@
 import { COMMON_CONTROLS } from '../device_settings';
 import { efficacyAt } from './spectral';
 import {
-  ControlSet, ControlDef, PercentType, SwitchType, orderOf, labelsOf,
+  ControlSet, ControlDef, PercentType, SwitchType, EnumType, ChoiceType, orderOf, labelsOf,
 } from '../device_control';
+import { TEST_PATTERN_IDS, TEST_PATTERN_LABELS, TEST_PATTERN_OFF } from '../laser_clips';
 
 /** Radians to degrees, and back, for the scan-angle maths below. */
 const DEG = 180 / Math.PI;
@@ -62,6 +63,22 @@ export const LASER_CHANNELS = {
   Y_POS: 'yPos',
   MIRROR_X: 'mirrorX',
   MIRROR_Y: 'mirrorY',
+  MODE: 'mode',
+  CLIP: 'clip',
+  TEST_PATTERN: 'testPattern',
+};
+
+/**
+ * What the Mode channel can make the laser do: follow its Protocol, play its
+ * standalone list whatever the Protocol says, or nothing at all.
+ */
+export const LASER_MODES = ['input', 'standalone', 'off'];
+
+/** What each mode is called on screen. */
+export const MODE_LABELS = {
+  input: 'As set',
+  standalone: 'Standalone',
+  off: 'Off',
 };
 
 /**
@@ -121,6 +138,19 @@ export const CONTROL_DEFS = [
   new ControlDef(LASER_CHANNELS.Y_POS, 'Y Position', offset()),
   new ControlDef(LASER_CHANNELS.MIRROR_X, 'Mirror X', mirror()),
   new ControlDef(LASER_CHANNELS.MIRROR_Y, 'Mirror Y', mirror()),
+  // The input from the desk: follow the Protocol, play the standalone list,
+  // or nothing. On a channel the range is split evenly in that order.
+  new ControlDef(LASER_CHANNELS.MODE, 'Mode', new EnumType({
+    options: LASER_MODES, initial: 'input', labels: MODE_LABELS,
+  }), { fixable: false }),
+  // The playing standalone clip: an id by hand, a one-based position from a
+  // channel, where 0 plays nothing.
+  new ControlDef(LASER_CHANNELS.CLIP, 'Clip', new ChoiceType({ source: 'laserClips' }), { fixable: false }),
+  // Overrides whatever the laser is fed. On a channel the range is split
+  // evenly over Off and the patterns, Off first.
+  new ControlDef(LASER_CHANNELS.TEST_PATTERN, 'Test Pattern', new EnumType({
+    options: TEST_PATTERN_IDS, initial: TEST_PATTERN_OFF, labels: TEST_PATTERN_LABELS,
+  }), { fixable: false }),
 ];
 
 /** Derived, so a parameter cannot be in one of these and missing from another. */
@@ -196,7 +226,11 @@ export const DEFAULT_LASER_PARAMS = {
    */
   apertureX: 0,
   apertureY: 0,
-  /** The aperture opening, in metres, drawn on the front panel. */
+  /**
+   * The aperture window's width, in metres, drawn on the front panel. Its
+   * height follows from the scan field; see `apertureSize`. Named for the
+   * round opening it once was, which stored definitions still carry.
+   */
   apertureDiameter: 0.03,
   /**
    * Where the beam starts, `{ x, y, z }` in metres in the body's frame, for a
@@ -274,6 +308,26 @@ export function laserChannelLumens(params) {
     green: { lumens: out.green.lumens, nm: out.green.nm },
     blue: { lumens: out.blue.lumens, nm: out.blue.nm },
   };
+}
+
+/**
+ * The aperture window's size, in metres.
+ *
+ * A laser's window is a rectangle cut to pass its scan field, so its height
+ * is its width scaled by the field's shape: tan of half the vertical scan over
+ * tan of half the horizontal one. Equal angles make it square.
+ *
+ * @public
+ * @param {Object} params laser parameters
+ * @returns {Object} `{ width, height }`
+ */
+export function apertureSize(params) {
+  const stated = Number(params.apertureDiameter) || DEFAULT_LASER_PARAMS.apertureDiameter;
+  const width = Math.max(stated, 0.001);
+  const h = Number(params.scanAngleH) || DEFAULT_LASER_PARAMS.scanAngleH;
+  const v = Number(params.scanAngleV) || DEFAULT_LASER_PARAMS.scanAngleV;
+  const half = (deg) => Math.tan((Math.min(Math.max(deg, 1), 170) * Math.PI) / 360);
+  return { width, height: width * (half(v) / half(h)) };
 }
 
 /**

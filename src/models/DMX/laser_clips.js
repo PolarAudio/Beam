@@ -2,15 +2,18 @@
 import { POINT_STRIDE } from './ilda';
 
 /**
- * @file The content a laser plays on its own: a list of clips per placed laser.
+ * @file What a laser plays on its own: its test patterns and its standalone
+ * clip list.
  *
- * A clip is a built-in pattern drawn here, or an ILDA file by file name. A
- * file is found where a show's files are found -- the open project, then the
- * user's `Library/Lasers`, then the files that ship with Beam -- so the ILDA
- * test patterns are ordinary file clips whose file happens to ship.
+ * The test patterns are built in: the ILDA test patterns and the files that
+ * ship with Beam, and patterns drawn here. A laser's test pattern overrides
+ * whatever it is fed, as a projector's service test does.
  *
- * The list belongs to the placement and is saved with the show. Which clip is
- * playing is picked by its id, and later by a DMX channel as a one-based
+ * The standalone list is the user's ILDA files, by file name, as a laser's own
+ * memory card holds them. A file is found where a show's files are found --
+ * the open project, then the user's `Library/Lasers`, then the files that ship
+ * with Beam. The list belongs to the placement and is saved with the show. The
+ * playing clip is picked by id by hand, or by a DMX channel as a one-based
  * position in the list.
  *
  * A clip may name the point rate it was made for. ILDA frames carry no timing,
@@ -191,6 +194,31 @@ export const BUILT_IN_CLIPS = Object.freeze([
   patternEntry('dot', 'Centre dot', 'dot'),
 ]);
 
+/** The test pattern value that plays nothing. */
+export const TEST_PATTERN_OFF = 'off';
+
+/** Every test pattern value, Off first: the order a DMX channel splits into. */
+export const TEST_PATTERN_IDS = Object.freeze([
+  TEST_PATTERN_OFF, ...BUILT_IN_CLIPS.map((clip) => clip.id),
+]);
+
+/** What each test pattern is called on screen. */
+export const TEST_PATTERN_LABELS = Object.freeze({
+  [TEST_PATTERN_OFF]: 'Off',
+  ...Object.fromEntries(BUILT_IN_CLIPS.map((clip) => [clip.id, clip.name])),
+});
+
+/**
+ * The clip a test pattern value plays, or null for Off or an unknown value.
+ *
+ * @public
+ * @param {String} id
+ * @returns {Object|null}
+ */
+export function testPatternClip(id) {
+  return BUILT_IN_CLIPS.find((clip) => clip.id === id) || null;
+}
+
 /**
  * The frames of a generated pattern.
  *
@@ -266,17 +294,6 @@ export function coerceClipList(raw) {
 }
 
 /**
- * A new list holding the built-in clips, each with an id of its own so two
- * copies of one pattern in a list stay two entries.
- *
- * @public
- * @returns {Array<Object>}
- */
-export function builtInClipList() {
-  return BUILT_IN_CLIPS.map((clip) => ({ ...clip }));
-}
-
-/**
  * A file clip for a file just added to the library.
  *
  * @public
@@ -289,8 +306,8 @@ export function fileClip(file) {
 
 /**
  * The clip a selection names: by id when picked by hand, or by one-based
- * position when a channel picks it. Null when the list is empty; the first
- * clip when the id is not in the list.
+ * position when a channel picks it. Null when the list is empty or a position
+ * is past its end; the first clip when an id is not in the list.
  *
  * @public
  * @param {Array} clips
@@ -299,6 +316,6 @@ export function fileClip(file) {
  */
 export function selectedClip(clips, selection) {
   if (!Array.isArray(clips) || !clips.length) return null;
-  if (typeof selection === 'number') return clips[Math.min(Math.max(selection, 1), clips.length) - 1];
+  if (typeof selection === 'number') return clips[Math.round(selection) - 1] || null;
   return clips.find((clip) => clip.id === selection) || clips[0];
 }

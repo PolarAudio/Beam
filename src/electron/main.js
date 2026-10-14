@@ -610,6 +610,9 @@ function setupLibrary() {
   ipcMain.handle('library:addMedia', () => mediastore.add(mainWindow));
   ipcMain.handle('library:laserClips', () => laserclipstore.list());
   ipcMain.handle('library:addLaserClips', () => laserclipstore.add(mainWindow));
+  ipcMain.handle('library:laserCards', () => laserclipstore.listCards());
+  ipcMain.handle('library:saveLaserCard', (event, name, clips) => laserclipstore.saveCard(name, clips));
+  ipcMain.handle('library:exportLaserClips', (event, clips) => laserclipstore.exportToFolder(mainWindow, clips));
   // The dialog is attached to the window so it is modal to Beam rather than
   // floating loose, which is how every other file prompt here behaves.
   ipcMain.handle('library:addEnvironment', () => environmentstore.add(mainWindow));

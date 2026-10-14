@@ -37,6 +37,7 @@ import { headInputs } from './gdtf/fixture_parts';
 import { MAX_SHADOW_CASTERS } from '../../plugins/visualizer/light';
 import MeasureTool from '../../plugins/visualizer/measure_tool';
 import { CLIP_KINDS, BUILT_IN_CLIPS } from './laser_clips';
+import { loadCards } from '../../plugins/visualizer/laser_cards';
 
 /** The ILDA files that ship with Beam, which an export need not carry. */
 const SHIPPED_CLIP_FILES = new Set(BUILT_IN_CLIPS
@@ -793,7 +794,7 @@ class Show extends EventEmitter {
    * own parameters and has nothing to collect.
    *
    * @public
-   * @returns {Object} `{ profiles, objects, media, lasers }`, each an array of keys
+   * @returns {Object} `{ profiles, objects, media, lasers, laserCards }`, each an array of keys
    */
   referencedResources() {
     const profiles = new Set(this.fixturePool.fixtures
@@ -806,9 +807,13 @@ class Show extends EventEmitter {
       // The built-in test card ships with Beam, so an export need not carry it.
       .filter((input) => input.kind === INPUT_KINDS.FILE && input.file && !input.builtIn)
       .map((input) => input.file);
-    // ILDA files in laser clip lists. The shipped ones travel with Beam.
+    // ILDA files in laser clip lists, and the cards they are copies of. The
+    // shipped files travel with Beam.
     const lasers = new Set();
+    const laserCards = new Set();
     this.fixturePool.fixtures.forEach((fixture) => {
+      const card = fixture.device && fixture.device.value ? fixture.device.value('card') : null;
+      if (card) laserCards.add(card);
       const clips = fixture.device && fixture.device.value ? fixture.device.value('clips') : null;
       (Array.isArray(clips) ? clips : []).forEach((clip) => {
         const carried = clip.kind === CLIP_KINDS.FILE && !SHIPPED_CLIP_FILES.has(clip.file);
@@ -816,7 +821,11 @@ class Show extends EventEmitter {
       });
     });
     return {
-      profiles: [...profiles], objects: [...objects], media, lasers: [...lasers],
+      profiles: [...profiles],
+      objects: [...objects],
+      media,
+      lasers: [...lasers],
+      laserCards: [...laserCards],
     };
   }
 
@@ -986,6 +995,8 @@ class Show extends EventEmitter {
     this.applyOpeningView(storedView);
 
     VideoRouter.refresh();
+    // Lasers on a library card take the library's version of it.
+    loadCards(this).catch(() => {});
     // Said once, when the show opens: these devices showed part of a picture
     // and now show all of it.
     if (video.lostCrop.length) this.emit('videoCropsDropped', video.lostCrop);

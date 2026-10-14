@@ -94,6 +94,15 @@ const ATTRIBUTES = {
  */
 const WIDE_LENS = 4.5;
 
+/**
+ * How far the wide-angle lens's glass stands ahead of the laser's own
+ * aperture, in millimetres. The Wide bodies' lens barrel ends at 60 mm on the
+ * optical axis, where the plain bodies end at 31; the glass sits 10 mm back
+ * inside the barrel. The scan leaves the unit from the glass, so a Wide
+ * Angle's beams start there.
+ */
+const WIDE_LENS_FRONT = 50;
+
 /** The Ultra's diodes: wavelength in nm and optical power in watts. */
 const ULTRA_LINES = [
   { name: 'Red', nm: 638, watts: 1.5 },
@@ -119,6 +128,7 @@ const LASERS = [
     scan: 32 * WIDE_LENS,
     beamDiameter: 0.0015,
     divergence: 1 * WIDE_LENS,
+    lensFront: WIDE_LENS_FRONT,
     body: { source: 'LaserCube Pro 2.5W Wide.glb', stem: 'LaserCube Pro Wide Angle' },
   },
   {
@@ -141,6 +151,7 @@ const LASERS = [
     scan: 37 * WIDE_LENS,
     beamDiameter: 0.004,
     divergence: 1 * WIDE_LENS,
+    lensFront: WIDE_LENS_FRONT,
     body: { source: 'LaserCube 7.5 Ultra wide.glb', stem: 'LaserCube Ultra Wide Angle' },
   },
 ];
@@ -474,8 +485,9 @@ LASERS.forEach((laser) => {
   const body = {
     file: stem,
     size: [0, 1, 2].map((a) => box.max[a] - box.min[a]),
-    // The model's origin is the optical axis, where the scan starts.
-    aperture: [0, 0, 0],
+    // The model's origin is on the optical axis, where the scan starts; with
+    // a wide-angle lens fitted it leaves from the lens front, along -Y.
+    aperture: [0, -(laser.lensFront || 0) / 1000, 0],
   };
   files['description.xml'] = strToU8(description(laser, body));
   const name = `${fileSafe('Wicked Lasers')}@${fileSafe(laser.name)}@Beam_1.gdtf`;

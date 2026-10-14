@@ -55,7 +55,7 @@ console.log('\nan empty show names nothing');
 check('empty', Show.prototype.referencedResources.call({
   fixturePool: { fixtures: [] }, definitions: { has: () => false }, objects: [],
 }), {
-  profiles: [], objects: [], media: [], lasers: [],
+  profiles: [], objects: [], media: [], lasers: [], laserCards: [],
 });
 
 console.log('\na show with a file input names its file');

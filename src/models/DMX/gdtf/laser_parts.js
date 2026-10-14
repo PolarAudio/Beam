@@ -106,6 +106,7 @@ export function laserParams(type, mode = type.modes[0]) {
   const controls = {};
   CONTROL_DEFS.forEach((def) => {
     const attribute = LASER_ATTRIBUTES[def.key];
+    if (!attribute) return;
     const channel = mode && mode.channels.find((c) => c.logicalChannels
       .some((l) => l.attribute === attribute));
     if (channel) controls[def.key] = controlOf(channel, def);

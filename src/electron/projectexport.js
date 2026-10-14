@@ -243,6 +243,22 @@ function collectLaserClip(key, entries) {
 }
 
 /**
+ * Collects one laser card, from where a load would find it.
+ *
+ * @param {String} key card key
+ * @param {Object} entries collected so far, added to
+ * @returns {Boolean} whether the card was found
+ */
+function collectLaserCard(key, entries) {
+  const file = laserclipstore.cardFileFor(key);
+  if (!file) return false;
+  const bytes = bytesOf(file);
+  if (!bytes) return false;
+  entries[entryFor(path.join(objectstore.LASERS_DIR, laserclipstore.CARDS_DIR, `${key}.json`))] = bytes;
+  return true;
+}
+
+/**
  * Everything a show references, as container entries.
  *
  * @public
@@ -257,6 +273,7 @@ function collect(wanted) {
   const objects = Array.isArray(wanted && wanted.objects) ? wanted.objects : [];
   const media = Array.isArray(wanted && wanted.media) ? wanted.media : [];
   const lasers = Array.isArray(wanted && wanted.lasers) ? wanted.lasers : [];
+  const laserCards = Array.isArray(wanted && wanted.laserCards) ? wanted.laserCards : [];
 
   [...new Set(media)].forEach((key) => {
     if (typeof key !== 'string' || !collectMedia(key, entries)) missing.push(`media ${key}`);
@@ -264,6 +281,10 @@ function collect(wanted) {
 
   [...new Set(lasers)].forEach((key) => {
     if (typeof key !== 'string' || !collectLaserClip(key, entries)) missing.push(`laser clip ${key}`);
+  });
+
+  [...new Set(laserCards)].forEach((key) => {
+    if (typeof key !== 'string' || !collectLaserCard(key, entries)) missing.push(`laser card ${key}`);
   });
 
   [...new Set(profiles)].forEach((key) => {

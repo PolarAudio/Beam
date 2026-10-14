@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { Effect, EffectAttribute, BlendFunction } from 'postprocessing';
 import { SCENE_PER_NIT } from './light_field';
-import { FIGURE_CANDELA } from './laser_figure';
+import { FIGURE_CANDELA, FIGURE_PIXEL } from './laser_figure';
 
 /**
  * @file Puts every laser's figure onto whatever the camera can see.
@@ -125,8 +125,11 @@ const FRAGMENT = /* glsl */`
       // The luminous intensity it sends that way, in kilocandela. It already
       // carries the dimmer, the shutter and the RGB balance -- it was written
       // from the same points the beams were built from.
+      // Read half a texel inside the tile: on its border the filter would take
+      // the neighbouring tile, another laser's figure, as a line at the edge.
       vec4 ft = figureTile[i];
-      vec3 intensity = texture2D(figureAtlas, ft.xy + frame * ft.zw).rgb * FIGURE_CANDELA;
+      vec2 figureAt = clamp(frame, vec2(FIGURE_HALF_TEXEL), vec2(1.0 - FIGURE_HALF_TEXEL));
+      vec3 intensity = texture2D(figureAtlas, ft.xy + figureAt * ft.zw).rgb * FIGURE_CANDELA;
 
       // Lux: intensity over the square of the distance from the aperture, by
       // the cosine of the angle the surface turns from it.
@@ -169,6 +172,9 @@ class LaserEffect extends Effect {
         ['DEPTH_BIAS', DEPTH_BIAS.toFixed(4)],
         ['DEPTH_SLOPE_MAX', DEPTH_SLOPE_MAX.toFixed(1)],
         ['FIGURE_CANDELA', FIGURE_CANDELA.toFixed(1)],
+        // Half a figure texel, as a share of the tile: FIGURE_PIXEL spans the
+        // tile's -1..1, so a texel is half of it in 0..1.
+        ['FIGURE_HALF_TEXEL', (FIGURE_PIXEL / 4).toFixed(8)],
         // A white matte surface's scene value per lux: SCENE_PER_NIT / pi.
         ['SCENE_PER_WHITE_LUX', (SCENE_PER_NIT / Math.PI).toFixed(8)],
       ]),

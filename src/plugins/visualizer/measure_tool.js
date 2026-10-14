@@ -985,7 +985,7 @@ function onChange(fn) {
 function handleKey(e) {
   if (!state.active) {
     if (state.selectedId === null) return false;
-    if (e.key === 'Delete' || e.key === 'Backspace') {
+    if (e.key === 'Delete') {
       remove(state.selectedId);
       return true;
     }
@@ -999,7 +999,7 @@ function handleKey(e) {
     else toggle(false);
     return true;
   }
-  if (e.key === 'Delete' || e.key === 'Backspace') {
+  if (e.key === 'Delete') {
     if (state.selectedId !== null) remove(state.selectedId);
     return true;
   }

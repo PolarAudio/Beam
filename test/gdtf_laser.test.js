@@ -40,8 +40,9 @@ const type = pro.fixtureType;
 check('a Laser geometry is a laser', fixtureCategory(type), 'Laser');
 const p = laserParams(type);
 check('power in watts', p.power, 2.5);
+check('one RGB source: no lines', p.lines, null);
 const lumens = laserChannelLumens(p);
-check('lumens per colour, a third of the watts each', [lumens.red, lumens.green, lumens.blue].map(Math.round), [110, 404, 22]);
+check('lumens per colour, a third of the watts each', [lumens.red, lumens.green, lumens.blue].map((c) => Math.round(c.lumens)), [109, 404, 22]);
 check('scan angle', [p.scanAngleH, p.scanAngleV], [32, 32]);
 check('beam diameter in mm', r1(p.beamDiameter), 3);
 check('divergence in mrad', p.divergence, 1);
@@ -71,7 +72,11 @@ check(
   ['models/3ds/LaserCube Ultra.3ds', 'models/gltf/LaserCube Ultra.glb'],
 );
 const u = laserParams(ultra.fixtureType);
-check('the Ultra is 7.5 W', u.power, 7.5);
+check('the Ultra is 7.5 W, its diodes added up', u.power, 7.5);
+check('one Laser geometry per diode', u.lines, [{ nm: 638, watts: 1.5 }, { nm: 525, watts: 2 }, { nm: 455, watts: 4 }]);
+const ul = laserChannelLumens(u);
+check('each diode lights its channel at its wavelength', [ul.red.nm, ul.green.nm, ul.blue.nm], [638, 525, 455]);
+check('mostly green in lumens', [ul.red, ul.green, ul.blue].map((c) => Math.round(c.lumens)), [196, 1084, 131]);
 check('its body, mm', [u.width, u.depth, u.height].map((m) => Math.round(m * 1000)), [202, 196, 199]);
 check('its beam starts at the model origin', apertureOrigin(u), { x: 0, y: 0, z: 0 });
 const ultraWide = laserParams(read('Wicked_Lasers@LaserCube_Ultra_7.5W_Wide_Angle@Beam_1').fixtureType);

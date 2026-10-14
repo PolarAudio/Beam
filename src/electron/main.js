@@ -35,6 +35,7 @@ import projectexport from './projectexport';
 import videorecorder from './videorecorder';
 import environmentstore from './environmentstore';
 import mediastore from './mediastore';
+import laserclipstore from './laserclipstore';
 import gdtfstore from './gdtfstore';
 import gdtfshare from './gdtfshare';
 import fileexport from './fileexport';
@@ -607,6 +608,8 @@ function setupLibrary() {
   ipcMain.handle('library:environments', () => environmentstore.list());
   ipcMain.handle('library:media', () => mediastore.list());
   ipcMain.handle('library:addMedia', () => mediastore.add(mainWindow));
+  ipcMain.handle('library:laserClips', () => laserclipstore.list());
+  ipcMain.handle('library:addLaserClips', () => laserclipstore.add(mainWindow));
   // The dialog is attached to the window so it is modal to Beam rather than
   // floating loose, which is how every other file prompt here behaves.
   ipcMain.handle('library:addEnvironment', () => environmentstore.add(mainWindow));

@@ -393,6 +393,8 @@ export default {
     ).observe(this.$refs.visualizer);
     // After the visualizer, which is what loads the preferences.
     ViewMode.start();
+    // A show opened at launch got here first; its view waited for a camera.
+    this.$show.visualizerReady();
     EventBus.emit('visualizer_loaded', true);
     this.snapEnabled = this.$show.visualizerHandle.snapEnabled;
     this.houseLights = this.$show.visualizerHandle.houseLights;

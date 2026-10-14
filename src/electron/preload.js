@@ -282,6 +282,19 @@ contextBridge.exposeInMainWorld('library', {
    */
   addMedia: () => ipcRenderer.invoke('library:addMedia'),
   /**
+   * ILDA files a laser clip list can play: the open document's, the user's
+   * `Library/Lasers` and the ones that ship with Beam.
+   *
+   * @returns {Promise<Array>} `{ key, name, origin, url }`
+   */
+  laserClips: () => ipcRenderer.invoke('library:laserClips'),
+  /**
+   * Asks for ILDA files and copies them into `Library/Lasers`.
+   *
+   * @returns {Promise<Object>} `{ ok, entries, refused }` or `{ ok: false, reason }`
+   */
+  addLaserClips: () => ipcRenderer.invoke('library:addLaserClips'),
+  /**
    * GDTF fixtures in `Library/Profiles`, metadata only. The bytes are served
    * as `library://profiles/<file>`.
    *

@@ -5,6 +5,7 @@ import documentstore from './documentstore';
 import gdtfstore from './gdtfstore';
 import library from './library';
 import mediastore from './mediastore';
+import laserclipstore from './laserclipstore';
 import objectstore from './objectstore';
 import paths from './paths';
 
@@ -226,6 +227,22 @@ function collectMedia(key, entries) {
 }
 
 /**
+ * Collects one ILDA file a laser clip list plays, from where a load would find it.
+ *
+ * @param {String} key file name
+ * @param {Object} entries collected so far, added to
+ * @returns {Boolean} whether the file was found
+ */
+function collectLaserClip(key, entries) {
+  const file = laserclipstore.fileFor(key);
+  if (!file) return false;
+  const bytes = bytesOf(file);
+  if (!bytes) return false;
+  entries[entryFor(path.join(objectstore.LASERS_DIR, key))] = bytes;
+  return true;
+}
+
+/**
  * Everything a show references, as container entries.
  *
  * @public
@@ -239,9 +256,14 @@ function collect(wanted) {
   const profiles = Array.isArray(wanted && wanted.profiles) ? wanted.profiles : [];
   const objects = Array.isArray(wanted && wanted.objects) ? wanted.objects : [];
   const media = Array.isArray(wanted && wanted.media) ? wanted.media : [];
+  const lasers = Array.isArray(wanted && wanted.lasers) ? wanted.lasers : [];
 
   [...new Set(media)].forEach((key) => {
     if (typeof key !== 'string' || !collectMedia(key, entries)) missing.push(`media ${key}`);
+  });
+
+  [...new Set(lasers)].forEach((key) => {
+    if (typeof key !== 'string' || !collectLaserClip(key, entries)) missing.push(`laser clip ${key}`);
   });
 
   [...new Set(profiles)].forEach((key) => {

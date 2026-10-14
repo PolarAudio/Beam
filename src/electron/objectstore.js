@@ -64,6 +64,12 @@ const MEDIA_VIDEO_EXTENSIONS = ['.mp4', '.m4v', '.mov', '.webm'];
 /** Every media file a video source may be. */
 const MEDIA_EXTENSIONS = [...MEDIA_IMAGE_EXTENSIONS, ...MEDIA_VIDEO_EXTENSIONS];
 
+/** Where the user's ILDA files for laser clip lists live, under the library root. */
+const LASERS_DIR = 'Lasers';
+
+/** The files a laser clip list plays. */
+const LASER_EXTENSIONS = ['.ild'];
+
 /**
  * Folders the `library://` protocol will serve, by the host segment naming them.
  *
@@ -97,6 +103,17 @@ const SERVED_DIRS = {
     extensions: MEDIA_EXTENSIONS,
   },
   shippedmedia: { base: () => paths.rendererAssets('media'), extensions: MEDIA_EXTENSIONS },
+  // ILDA files for laser clip lists: the user's, the open document's, and
+  // the ones that ship with Beam.
+  lasers: { dir: LASERS_DIR, extensions: LASER_EXTENSIONS },
+  projectlasers: {
+    base: () => {
+      const mounted = documentstore.mountRoot();
+      return mounted ? path.join(mounted, LASERS_DIR) : null;
+    },
+    extensions: LASER_EXTENSIONS,
+  },
+  shippedlasers: { base: () => paths.rendererAssets('lasers'), extensions: LASER_EXTENSIONS },
   project: {
     base: () => {
       const mounted = documentstore.mountRoot();
@@ -1011,6 +1028,8 @@ export default {
   MEDIA_IMAGE_EXTENSIONS,
   MEDIA_VIDEO_EXTENSIONS,
   MEDIA_EXTENSIONS,
+  LASERS_DIR,
+  LASER_EXTENSIONS,
   PRIMITIVE_TYPES,
   PRIMITIVE_KIND,
   DEFAULT_METADATA,

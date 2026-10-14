@@ -1,3 +1,5 @@
+import { chromaticityAt } from '../../models/DMX/generic/spectral';
+
 /**
  * @file How much brighter a laser line looks than the screen can show it.
  *
@@ -17,17 +19,10 @@
  */
 
 /**
- * CIE 1931 chromaticity of the usual RGB show-laser lines, 638, 520 and 450 nm,
- * and of the sRGB primaries they are drawn with.
+ * The sRGB primaries the lines are drawn with, CIE 1931 chromaticity.
  *
  * @constant {Object}
  */
-export const LASER_LINES = Object.freeze({
-  red: { x: 0.7128, y: 0.2871 },
-  green: { x: 0.0743, y: 0.8338 },
-  blue: { x: 0.1566, y: 0.0177 },
-});
-
 export const SRGB_PRIMARIES = Object.freeze({
   red: { x: 0.64, y: 0.33 },
   green: { x: 0.30, y: 0.60 },
@@ -47,13 +42,41 @@ export function brightnessRatio({ x, y }) {
 }
 
 /**
- * The factor each laser colour is drawn brighter by: the line's ratio over its
- * primary's.
+ * The factor a line is drawn brighter by: its ratio over the ratio of the
+ * primary it is drawn as.
  *
- * @constant {Object} `{ red, green, blue }`
+ * @public
+ * @param {String} channel 'red' | 'green' | 'blue'
+ * @param {Number} nm the line's wavelength
+ * @returns {Number}
  */
-export const LASER_APPEARANCE = Object.freeze({
-  red: brightnessRatio(LASER_LINES.red) / brightnessRatio(SRGB_PRIMARIES.red),
-  green: brightnessRatio(LASER_LINES.green) / brightnessRatio(SRGB_PRIMARIES.green),
-  blue: brightnessRatio(LASER_LINES.blue) / brightnessRatio(SRGB_PRIMARIES.blue),
-});
+export function laserAppearance(channel, nm) {
+  return brightnessRatio(chromaticityAt(nm)) / brightnessRatio(SRGB_PRIMARIES[channel]);
+}
+
+/**
+ * A laser's colour balance: the share of each colour's full output it runs at
+ * so that equal red, green and blue values draw white.
+ *
+ * Laser content is colour balanced (ILDA IDTF section 2.5): full red, green
+ * and blue is white. A projector meets that by holding back its stronger
+ * colours, so the weakest one runs at full and sets how bright white can be.
+ * White here is white as drawn: each colour's drawn brightness, its luminance
+ * on the sRGB primary times `laserAppearance`, comes out equal.
+ *
+ * @public
+ * @param {Object} drawn `{ red, green, blue }`, each colour's drawn
+ *   brightness at full output
+ * @returns {Object} `{ red, green, blue }`, each 0..1
+ */
+export function whiteBalance(drawn) {
+  const keys = ['red', 'green', 'blue'];
+  const lit = keys.map((c) => Number(drawn[c]) || 0).filter((v) => v > 0);
+  const weakest = lit.length ? Math.min(...lit) : 0;
+  const out = {};
+  keys.forEach((c) => {
+    const v = Number(drawn[c]) || 0;
+    out[c] = v > 0 ? weakest / v : 0;
+  });
+  return out;
+}

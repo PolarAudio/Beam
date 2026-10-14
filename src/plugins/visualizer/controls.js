@@ -753,7 +753,7 @@ class Controls {
       this.gizmoMode = GIZMO_MODES.ROTATE;
     } else if (e.key.toLowerCase() === 's') {
       this.gizmoMode = GIZMO_MODES.SCALE;
-    } else if (e.key === 'Delete' || e.key === 'Backspace') {
+    } else if (e.key === 'Delete') {
       // Asked for rather than done here: what a fixture or a structure means
       // when it is deleted -- addresses released, members taken with it -- is
       // the show's business, and the show is not something the visualizer

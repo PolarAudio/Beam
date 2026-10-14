@@ -36,6 +36,11 @@ import { laserGeometry } from './gdtf/laser_parts';
 import { headInputs } from './gdtf/fixture_parts';
 import { MAX_SHADOW_CASTERS } from '../../plugins/visualizer/light';
 import MeasureTool from '../../plugins/visualizer/measure_tool';
+import { CLIP_KINDS, BUILT_IN_CLIPS } from './laser_clips';
+
+/** The ILDA files that ship with Beam, which an export need not carry. */
+const SHIPPED_CLIP_FILES = new Set(BUILT_IN_CLIPS
+  .filter((clip) => clip.kind === CLIP_KINDS.FILE).map((clip) => clip.file));
 
 const fixtureDataCache = {};
 
@@ -263,6 +268,8 @@ class Show extends EventEmitter {
     this.loadChain = Promise.resolve();
     this.artnetServerUrl = import.meta.env.VITE_APP_DMX2WS_SERVER_URL;
     this.visualizerHandle = null;
+    /** An opening view waiting for the viewport's camera; see `applyOpeningView`. */
+    this.pendingOpeningView = null;
     ProxifySingleton.on('changed', () => {
       this.isSaved = false;
       this.emit('saveState', this.isSaved);
@@ -404,6 +411,40 @@ class Show extends EventEmitter {
       details: Object.values(this.details).some(Boolean) ? { ...this.details } : undefined,
       measurements: MeasureTool.toJSON(),
     };
+  }
+
+  /**
+   * Puts the viewport on a show's opening view: its stored editor view, or a
+   * framing of what it contains when it has none.
+   *
+   * A show opened at launch loads before the viewport has a camera; the view
+   * is then held until `visualizerReady` says there is one.
+   *
+   * @public
+   * @param {Boolean} stored whether the show carried an editor view
+   */
+  applyOpeningView(stored) {
+    const handle = this.visualizerHandle;
+    if (!handle || !handle.camera || !handle.controls) {
+      this.pendingOpeningView = { stored: !!stored };
+      return;
+    }
+    this.pendingOpeningView = null;
+    if (stored) {
+      handle.viewpoint = Studio.viewpointOf(Studio.SCENE_CAMERA_ID);
+    } else if (handle.frameDefault) {
+      handle.frameDefault();
+    }
+  }
+
+  /**
+   * Called once the viewport has its camera: applies an opening view that
+   * arrived before it did.
+   *
+   * @public
+   */
+  visualizerReady() {
+    if (this.pendingOpeningView) this.applyOpeningView(this.pendingOpeningView.stored);
   }
 
   /**
@@ -752,7 +793,7 @@ class Show extends EventEmitter {
    * own parameters and has nothing to collect.
    *
    * @public
-   * @returns {Object} `{ profiles, objects, media }`, each an array of keys
+   * @returns {Object} `{ profiles, objects, media, lasers }`, each an array of keys
    */
   referencedResources() {
     const profiles = new Set(this.fixturePool.fixtures
@@ -765,7 +806,18 @@ class Show extends EventEmitter {
       // The built-in test card ships with Beam, so an export need not carry it.
       .filter((input) => input.kind === INPUT_KINDS.FILE && input.file && !input.builtIn)
       .map((input) => input.file);
-    return { profiles: [...profiles], objects: [...objects], media };
+    // ILDA files in laser clip lists. The shipped ones travel with Beam.
+    const lasers = new Set();
+    this.fixturePool.fixtures.forEach((fixture) => {
+      const clips = fixture.device && fixture.device.value ? fixture.device.value('clips') : null;
+      (Array.isArray(clips) ? clips : []).forEach((clip) => {
+        const carried = clip.kind === CLIP_KINDS.FILE && !SHIPPED_CLIP_FILES.has(clip.file);
+        if (carried) lasers.add(clip.file);
+      });
+    });
+    return {
+      profiles: [...profiles], objects: [...objects], media, lasers: [...lasers],
+    };
   }
 
   /**
@@ -931,13 +983,7 @@ class Show extends EventEmitter {
     // has nowhere else to live. `frameDefault` is the fallback for a show that
     // carries none -- and it has to be an either/or, because it flies rather
     // than jumps, so running both would animate away from the restored view.
-    if (this.visualizerHandle) {
-      if (storedView) {
-        this.visualizerHandle.viewpoint = Studio.viewpointOf(Studio.SCENE_CAMERA_ID);
-      } else if (this.visualizerHandle.frameDefault) {
-        this.visualizerHandle.frameDefault();
-      }
-    }
+    this.applyOpeningView(storedView);
 
     VideoRouter.refresh();
     // Said once, when the show opens: these devices showed part of a picture

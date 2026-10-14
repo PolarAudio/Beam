@@ -2,7 +2,9 @@
 /**
  * @file Writes the Wicked Lasers fixtures Beam ships as GDTF 1.2 files.
  *
- * Each file has the body as a Model, a Laser geometry with the optics, and
+ * Each file has the body as a Model, a Laser geometry with the optics -- or,
+ * where Wicked Lasers give each diode's power, one SingleWaveLength Laser
+ * geometry per diode at the same aperture -- and
  * one mode in which every control is a channel: Fixed and Adjustable ones
  * are virtual (no DMX offset), as a lens focused by hand is. The LaserCube
  * bodies are `LaserCube Pro 2.5W.glb`, `LaserCube 7.5 Ultra.glb` and their
@@ -92,6 +94,13 @@ const ATTRIBUTES = {
  */
 const WIDE_LENS = 4.5;
 
+/** The Ultra's diodes: wavelength in nm and optical power in watts. */
+const ULTRA_LINES = [
+  { name: 'Red', nm: 638, watts: 1.5 },
+  { name: 'Green', nm: 525, watts: 2 },
+  { name: 'Blue', nm: 455, watts: 4 },
+];
+
 /** The four models. A Wide Angle is the laser behind the wide-angle lens. */
 const LASERS = [
   {
@@ -113,10 +122,12 @@ const LASERS = [
     body: { source: 'LaserCube Pro 2.5W Wide.glb', stem: 'LaserCube Pro Wide Angle' },
   },
   {
-    // Wicked Lasers' figures: 37 degree scan, 4 mm beam, 1 mrad.
+    // Wicked Lasers' figures: 37 degree scan, 4 mm beam, 1 mrad, and the
+    // diodes (1,405 lm in all).
     name: 'LaserCube Ultra 7.5W',
     id: '6E1B2A4C-3F5D-4B8E-9C21-7A0F4D3E2B13',
     power: 7.5,
+    lines: ULTRA_LINES,
     scan: 37,
     beamDiameter: 0.004,
     divergence: 1,
@@ -126,6 +137,7 @@ const LASERS = [
     name: 'LaserCube Ultra 7.5W Wide Angle',
     id: '6E1B2A4C-3F5D-4B8E-9C21-7A0F4D3E2B14',
     power: 7.5,
+    lines: ULTRA_LINES,
     scan: 37 * WIDE_LENS,
     beamDiameter: 0.004,
     divergence: 1 * WIDE_LENS,
@@ -375,13 +387,20 @@ function description(laser, body) {
   const [ax, ay, az] = body.aperture;
   x.push('    <Geometries>');
   x.push(`      <Geometry Name="Body" Model="Body" Position="${matrix([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])}">`);
-  x.push(`        <Laser${attrs({
-    Name: 'Laser',
+  const sources = laser.lines
+    ? laser.lines.map((l) => ({
+      name: `Laser ${l.name}`, colorType: 'SingleWaveLength', color: l.nm, watts: l.watts,
+    }))
+    : [{
+      name: 'Laser', colorType: 'RGB', color: 0, watts: laser.power,
+    }];
+  sources.forEach((source) => x.push(`        <Laser${attrs({
+    Name: source.name,
     Model: 'Aperture',
     Position: matrix([[1, 0, 0, ax], [0, 0, 1, ay], [0, -1, 0, az], [0, 0, 0, 1]]),
-    ColorType: 'RGB',
-    Color: '0',
-    OutputStrength: num(laser.power),
+    ColorType: source.colorType,
+    Color: num(source.color),
+    OutputStrength: num(source.watts),
     Emitter: '',
     BeamDiameter: num(laser.beamDiameter),
     BeamDivergenceMin: num(laser.divergence),
@@ -389,7 +408,7 @@ function description(laser, body) {
     ScanAnglePan: num(laser.scan),
     ScanAngleTilt: num(laser.scan),
     ScanSpeed: '0',
-  })}/>`);
+  })}/>`));
   x.push('      </Geometry>');
   x.push('    </Geometries>');
   x.push('    <DMXModes>');
@@ -406,7 +425,8 @@ function description(laser, body) {
       // Not on DMX: set at the unit, or fixed by it.
       Offset: 'None',
       Highlight: 'None',
-      Geometry: 'Laser',
+      // The whole unit: a colour may be one of several diodes.
+      Geometry: 'Body',
       InitialFunction: `${channel}.${a.name}.${a.fn}`,
     })}>`);
     x.push(`            <LogicalChannel Attribute="${a.name}" Snap="No" Master="None" MibFade="0" DMXChangeTimeLimit="0">`);

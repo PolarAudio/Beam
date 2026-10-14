@@ -2280,15 +2280,30 @@ class Visualizer {
       )
       : this.camera.position;
     const t = this.controls ? this.controls.target : { x: 0, y: 0, z: 0 };
+    // A middle-drag's lens shift, as fractions of the panel so it lands the
+    // same in a window of another size.
+    const { view } = this.camera;
+    const shift = view && view.enabled && view.fullWidth && view.fullHeight
+      ? { x: view.offsetX / view.fullWidth, y: view.offsetY / view.fullHeight }
+      : null;
     return {
       position: { x: p.x, y: p.y, z: p.z },
       target: { x: t.x, y: t.y, z: t.z },
+      shift,
+      orthographic: this.orthographic,
     };
   }
 
   set viewpoint(value) {
     if (!value || !this.camera) return;
-    // A recalled view is aimed afresh, so any lens shift goes with it.
+    // A view set outright ends any flight still under way, which would
+    // otherwise carry on and land somewhere else.
+    Controls.cancelFly();
+    // The projection first: switching it moves the camera onto the other one,
+    // and the position and target below then apply to that.
+    if (typeof value.orthographic === 'boolean') this.orthographic = value.orthographic;
+    // A recalled view is aimed afresh, so any lens shift goes with it unless
+    // the view carries its own.
     Controls.clearLensShift();
     const { position, target } = value;
     if (position) this.camera.position.set(position.x, position.y, position.z);
@@ -2302,6 +2317,13 @@ class Visualizer {
       setOrthoHalfHeight(this.camera, distance * Math.tan(THREE.MathUtils.degToRad(ORTHO_REFERENCE_FOV) / 2));
       this.keepOrthoStandoff();
       this.controls.update();
+    }
+    const { shift } = value;
+    if (shift && Number.isFinite(shift.x) && Number.isFinite(shift.y) && (shift.x || shift.y)) {
+      const width = this.domElement.clientWidth || 1;
+      const height = this.domElement.clientHeight || 1;
+      this.camera.setViewOffset(width, height, shift.x * width, shift.y * height, width, height);
+      this.camera.updateProjectionMatrix();
     }
   }
 

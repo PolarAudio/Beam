@@ -25,6 +25,7 @@
  * divergence set how thick that ray is drawn and how it grows with distance.
  */
 import { COMMON_CONTROLS } from '../device_settings';
+import { efficacyAt } from './spectral';
 import {
   ControlSet, ControlDef, PercentType, SwitchType, orderOf, labelsOf,
 } from '../device_control';
@@ -205,6 +206,12 @@ export const DEFAULT_LASER_PARAMS = {
    */
   aperture: null,
   /**
+   * The laser's colour lines, `[{ nm, watts }]`, when the maker gives them:
+   * each diode's wavelength and optical power. Null spreads `power` evenly
+   * over `DEFAULT_LINES`.
+   */
+  lines: null,
+  /**
    * How each controllable parameter is decided, keyed as the attributes are.
    *
    * `{ key: { mode, value, channel, bits } }` -- mode 'fixed' | 'adjustable' |
@@ -216,29 +223,56 @@ export const DEFAULT_LASER_PARAMS = {
 };
 
 /**
- * Lumens per optical watt of each colour's diodes: 683 lm/W times the eye's
- * response V(λ) at 638, 520 and 450 nm, the usual RGB show-laser lines.
+ * The usual RGB show-laser lines, in nm, for a laser that gives only its total
+ * power.
  *
  * @constant {Object}
  */
-export const LASER_EFFICACY = Object.freeze({ red: 132, green: 485, blue: 26 });
+export const DEFAULT_LINES = Object.freeze({ red: 638, green: 520, blue: 450 });
 
 /**
- * The luminous flux of each colour at full output, in lumens.
+ * Which colour channel drives a wavelength: red from 590 nm, blue below 490.
  *
- * Profiles give total optical power only, so it is split evenly over the three
- * colours.
+ * @public
+ * @param {Number} nm
+ * @returns {String} 'red' | 'green' | 'blue'
+ */
+export function channelOf(nm) {
+  if (nm >= 590) return 'red';
+  if (nm < 490) return 'blue';
+  return 'green';
+}
+
+/**
+ * Each colour channel's light at full output: its lumens, from each line's
+ * watts times the eye's response at its wavelength, and the wavelength it is
+ * drawn as -- the strongest line's when two share a channel.
  *
  * @public
  * @param {Object} params laser parameters
- * @returns {Object} `{ red, green, blue }` in lumens
+ * @returns {Object} `{ red, green, blue }`, each `{ lumens, nm }`
  */
 export function laserChannelLumens(params) {
-  const watts = Math.max(Number(params.power) || 0, 0) / 3;
+  const lines = Array.isArray(params.lines) && params.lines.length
+    ? params.lines
+    : Object.values(DEFAULT_LINES).map((nm) => ({
+      nm, watts: Math.max(Number(params.power) || 0, 0) / 3,
+    }));
+  const out = {
+    red: { lumens: 0, nm: DEFAULT_LINES.red, watts: 0 },
+    green: { lumens: 0, nm: DEFAULT_LINES.green, watts: 0 },
+    blue: { lumens: 0, nm: DEFAULT_LINES.blue, watts: 0 },
+  };
+  lines.forEach(({ nm, watts }) => {
+    const w = Math.max(Number(watts) || 0, 0);
+    const c = out[channelOf(nm)];
+    c.lumens += w * efficacyAt(nm);
+    if (w > c.watts) { c.watts = w; c.nm = nm; }
+  });
   return {
-    red: watts * LASER_EFFICACY.red,
-    green: watts * LASER_EFFICACY.green,
-    blue: watts * LASER_EFFICACY.blue,
+    red: { lumens: out.red.lumens, nm: out.red.nm },
+    green: { lumens: out.green.lumens, nm: out.green.nm },
+    blue: { lumens: out.blue.lumens, nm: out.blue.nm },
   };
 }
 

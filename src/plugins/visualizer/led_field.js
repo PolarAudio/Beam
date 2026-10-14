@@ -51,6 +51,17 @@ const DEFAULT_CHANNELS_PER_PIXEL = 3;
 /** Marks a component the emitter does not have. */
 const NO_TEXEL = -1;
 
+/**
+ * The billboard emitter's look: brightness, halo over the die, the floor seen
+ * from behind, and dimming as the camera comes nearer than `EMITTER_DIM_START`
+ * metres, down to `EMITTER_DIM_FLOOR`.
+ */
+const EMITTER_GAIN = 3.0;
+const EMITTER_HALO = 1.46;
+const EMITTER_BACK_SCATTER = 0.29;
+const EMITTER_DIM_START = 3.9;
+const EMITTER_DIM_FLOOR = 0.23;
+
 /** How much larger the drawn quad is than the die, to carry the halo. */
 const GLOW_SCALE = 7.0;
 
@@ -185,9 +196,9 @@ const TEXEL_LOOKUP = /* glsl */`
 const EMITTER_VERTEX = `${SHADER_DEFINES + TEXEL_LOOKUP /* glsl */}
   attribute float beamCutoff;
 
-  uniform float gain;
-  uniform float dimStartDistance;
-  uniform float dimFloor;
+  #define EMITTER_GAIN ${EMITTER_GAIN.toFixed(2)}
+  #define DIM_START ${EMITTER_DIM_START.toFixed(2)}
+  #define DIM_FLOOR ${EMITTER_DIM_FLOOR.toFixed(2)}
 
   attribute float coreRadius;
 
@@ -208,17 +219,17 @@ const EMITTER_VERTEX = `${SHADER_DEFINES + TEXEL_LOOKUP /* glsl */}
     // Orthographic has no eye to be near: the direction is the view's, and
     // the length is the distance at which dimming has not begun.
     vToCamera = isOrthographic
-      ? vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2]) * dimStartDistance
+      ? vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2]) * DIM_START
       : cameraPosition - worldPosition.xyz;
 
     // Emitters dim as the camera closes in, so their glare recedes and the
     // individual LEDs stay readable up close. Not physical -- a real emitter
     // glares harder the nearer you get -- but it stands in for the eye
     // stopping down.
-    float distanceScale = clamp(length(vToCamera) / dimStartDistance, dimFloor, 1.0);
+    float distanceScale = clamp(length(vToCamera) / DIM_START, DIM_FLOOR, 1.0);
     vDistanceScale = distanceScale;
 
-    vColor = emitterColor() * gain * distanceScale;
+    vColor = emitterColor() * EMITTER_GAIN * distanceScale;
 
     // The quad's orientation lives in the instance matrix, so the normal has
     // to be carried through it rather than through normalMatrix.
@@ -229,11 +240,8 @@ const EMITTER_VERTEX = `${SHADER_DEFINES + TEXEL_LOOKUP /* glsl */}
 `;
 
 const EMITTER_FRAGMENT = /* glsl */`
-  // The die's size arrives per emitter, from its physical size against the quad
-  // it is drawn on. This scales all of them together, for tuning the look.
-  uniform float coreScale;
-  uniform float haloStrength;
-  uniform float backScatter;
+  #define HALO_STRENGTH ${EMITTER_HALO.toFixed(2)}
+  #define BACK_SCATTER ${EMITTER_BACK_SCATTER.toFixed(2)}
 
   varying vec3 vColor;
   varying vec3 vNormalWorld;
@@ -253,20 +261,20 @@ const EMITTER_FRAGMENT = /* glsl */`
 
     // Never quite zero: the die is hidden behind the extrusion when it faces
     // away, but light scattering off the profile still reaches the eye.
-    visibility = mix(backScatter, 1.0, visibility);
+    visibility = mix(BACK_SCATTER, 1.0, visibility);
 
     float radius = length(vQuadUv - 0.5) * 2.0;
     if (radius > 1.0) discard;
 
-    // The die: a small, flat-topped disc at the physical LED size.
-    float dieRadius = vCoreRadius * coreScale;
-    float die = 1.0 - smoothstep(dieRadius * 0.6, dieRadius, radius);
+    // The die: a small, flat-topped disc at the physical LED size, which
+    // arrives per emitter against the quad it is drawn on.
+    float die = 1.0 - smoothstep(vCoreRadius * 0.6, vCoreRadius, radius);
 
     // The halo around it, reaching zero well before the quad edge so no square
     // boundary is ever visible.
     float halo = pow(max(0.0, 1.0 - radius), 3.0);
 
-    float core = die + halo * haloStrength * vDistanceScale;
+    float core = die + halo * HALO_STRENGTH * vDistanceScale;
 
     // Linear HDR on purpose: tone mapping happens in the composer.
     gl_FragColor = vec4(vColor * visibility * core, 1.0);
@@ -408,10 +416,10 @@ const scratch = {
 /**
  * The scattered glow's tunables, as one object per parameter.
  *
- * Shared by reference with the panel path, exactly as `EMITTER_UNIFORMS` is:
- * haze is a property of the room, so a tile and a strip standing in it must be
- * scattering through the same air. It also means `syncEnvironment` and
- * `update` reach both paths without knowing the second one exists.
+ * Shared by reference with the panel path: haze is a property of the room, so
+ * a tile and a strip standing in it must be scattering through the same air.
+ * It also means `syncEnvironment` and `update` reach both paths without knowing
+ * the second one exists.
  *
  * Note `backScatter` is far higher here than on the emitters. Scattered light
  * is much less directional than a die, so a panel facing away still lights the
@@ -496,25 +504,9 @@ function buildProfiles(maxBars) {
   return mesh;
 }
 
-/**
- * The emitters' tunables, as one object per parameter.
- *
- * Module-scoped, and handed out by reference: `led_panel.js` builds its
- * materials against these same objects, so a tile and a strip standing side by
- * side are lit by literally the same numbers and one debug panel drives both.
- * Built at module load rather than in `init`, so a panel created before the
- * field is initialised still finds them.
- *
- * @constant {Object} EMITTER_UNIFORMS
- */
+/** The billboard emitters' uniforms. */
 const EMITTER_UNIFORMS = {
   dmxTexture: { value: DMXStore.texture },
-  gain: { value: 3.0 },
-  dimStartDistance: { value: 3.9 },
-  dimFloor: { value: 0.23 },
-  coreScale: { value: 1.0 },
-  haloStrength: { value: 1.46 },
-  backScatter: { value: 0.29 },
 };
 
 function buildEmitters(maxLeds) {
@@ -921,7 +913,7 @@ function addEmitters(emitters) {
  * @returns {Object}
  */
 function tunables() {
-  return { emitter: EMITTER_UNIFORMS, glow: GLOW_UNIFORMS };
+  return { glow: GLOW_UNIFORMS };
 }
 
 /** @returns {Object} how much has been built */
@@ -930,9 +922,7 @@ function stats() {
 }
 
 export {
-  /** The emitters' tunables, shared by reference with the panel path. */
-  EMITTER_UNIFORMS,
-  /** The scattered glow's tunables, likewise. */
+  /** The scattered glow's tunables, shared by reference with the panel path. */
   GLOW_UNIFORMS,
   /** The glow's look, so the panel path can source colour differently and
    *  still draw the identical blob. */

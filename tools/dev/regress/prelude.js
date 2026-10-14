@@ -110,16 +110,27 @@
     E.emit('changed', E);
   };
 
-  // The room and the camera's look, fixed rather than read from the user's
-  // preferences. These setters write preferences; run.ps1 restores the file.
-  bt.room = () => {
-    if (vis.houseLights) vis.houseLights = false;
-    if (vis.houseLightsDown !== 2) vis.houseLightsDown = 2;
-    if (vis.houseExposureDown !== 5.25) vis.houseExposureDown = 5.25;
-    if (vis.environmentHouseOff !== 'room') vis.environmentHouseOff = 'room';
-    vis.setBloom('intensity', 0.45);
-    vis.setBloom('threshold', 0.46);
-    vis.setBloom('radius', 0.05);
+  // The glare as visualizer.js builds it, read on the first load of the page.
+  // Only the debug panel changes it, and does not store it; run.ps1 starts a
+  // fresh app, so this is the code's own value.
+  if (!window.__btGlare && vis.bloom) {
+    const { intensity, threshold, radius } = vis.bloom;
+    window.__btGlare = { intensity, threshold, radius };
+  }
+
+  // The room and exposure are the preference defaults: run.ps1 starts the app
+  // without the user's preferences.json, as a new install would. House 'up' or
+  // 'down' picks which of the two default states a shot is taken in.
+  bt.room = (house = 'down') => {
+    const up = house === 'up';
+    if (vis.houseLights !== up) vis.houseLights = up;
+    // The glare the app draws with, so the shots see what the user sees.
+    const g = window.__btGlare;
+    if (g) {
+      vis.setBloom('intensity', g.intensity);
+      vis.setBloom('threshold', g.threshold);
+      vis.setBloom('radius', g.radius);
+    }
     bt.Light.setOcclusion(true);
     if (bt.Laser.setOcclusion) bt.Laser.setOcclusion(true);
   };

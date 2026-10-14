@@ -170,12 +170,13 @@ export class LaserFigure {
    *   scene colour), `lit`, `linked` (the point is part of a stroke),
    *   `joined` (point i and i + 1 are one stroke), `clip`, `tanH` and `tanV`
    *   of the scan half-angles, and `width`, the stroke width in tile units
-   *   (-1..1 across)
+   *   (-1..1 across), and `gain`, a multiplier over the result (1 when absent)
    */
   build(f) {
     const {
       n, far, flux, lit, linked, joined, clip, tanH, tanV, width,
     } = f;
+    const gain = f.gain === undefined ? 1 : f.gain;
     const pos = this._pos;
     const colour = this._col;
     const uv = this._uv;
@@ -184,7 +185,7 @@ export class LaserFigure {
     const perLumen = (x, y, area, mean) => {
       const c2 = 1 / (1 + (x * tanH) ** 2 + (y * tanV) ** 2);
       const steradians = area * tanH * tanV * c2 * Math.sqrt(c2);
-      return 1 / (Math.max(steradians, 1e-12) * mean * FIGURE_CANDELA);
+      return gain / (Math.max(steradians, 1e-12) * mean * FIGURE_CANDELA);
     };
     let v = 0;
 

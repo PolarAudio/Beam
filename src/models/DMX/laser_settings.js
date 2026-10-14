@@ -1,8 +1,9 @@
 import DeviceSettings, { FULL } from './device_settings';
 import {
-  ControlDef, EnumType, TextType, ChoiceType, clamp,
+  ControlDef, ControlType, EnumType, TextType, ChoiceType, clamp,
 } from './device_control';
 import { LASER_CHANNELS, CONTROL_DEFS } from './generic/laser';
+import { coerceClipList, selectedClip } from './laser_clips';
 
 /**
  * @file What one laser is set to.
@@ -25,7 +26,7 @@ export const LASER_ATTRIBUTES = LASER_CHANNELS;
  * Every protocol a laser may be *stored* as, including withdrawn ones, so a
  * show naming one still loads and says what it was set to.
  */
-export const LASER_PROTOCOLS = ['ponk', 'idn', 'etherdream', 'lasercube'];
+export const LASER_PROTOCOLS = ['ponk', 'idn', 'etherdream', 'lasercube', 'clips'];
 
 /**
  * What the dropdown offers.
@@ -39,7 +40,7 @@ export const LASER_PROTOCOLS = ['ponk', 'idn', 'etherdream', 'lasercube'];
  * machine, which is not a thing to offer in a list. Put it back here if that
  * ever changes; nothing else has to be rebuilt.
  */
-export const SELECTABLE_PROTOCOLS = ['ponk', 'idn', 'etherdream'];
+export const SELECTABLE_PROTOCOLS = ['clips', 'ponk', 'idn', 'etherdream'];
 
 /** What each protocol is called on screen. */
 export const PROTOCOL_LABELS = {
@@ -47,7 +48,29 @@ export const PROTOCOL_LABELS = {
   idn: 'IDN',
   etherdream: 'Ether Dream',
   lasercube: 'LaserCube',
+  clips: 'Clip list',
 };
+
+/**
+ * The protocol a laser plays from its own clip list: nothing is received, so
+ * it is never waiting for a stream.
+ */
+export const CLIPS_PROTOCOL = 'clips';
+
+/**
+ * A laser's clip list: an array of clips, see `laser_clips.js`. Held per
+ * placement and saved with the show; no console rides it.
+ */
+class ClipListType extends ControlType {
+  // eslint-disable-next-line class-methods-use-this
+  initial() { return []; }
+
+  // eslint-disable-next-line class-methods-use-this
+  coerce(value) { return coerceClipList(value); }
+
+  // eslint-disable-next-line class-methods-use-this
+  fromLevel() { return []; }
+}
 
 /**
  * How the laser is fed. None of these is addressable, and that is the point:
@@ -69,6 +92,12 @@ const FEED_DEFS = [
   }), { addressable: false }),
   new ControlDef('address', 'Address', new TextType(), { addressable: false }),
   new ControlDef('source', 'Source', new ChoiceType({ source: 'dacStreams' }), {
+    addressable: false, fixable: false,
+  }),
+  new ControlDef('clips', 'Clips', new ClipListType(), { addressable: false, fixable: false }),
+  // The playing clip, by id. Not addressable yet: a channel would name a
+  // one-based position in the list, which `selectedClip` already reads.
+  new ControlDef('clip', 'Clip', new ChoiceType({ source: 'laserClips' }), {
     addressable: false, fixable: false,
   }),
 ];
@@ -98,6 +127,16 @@ class LaserSettings extends DeviceSettings {
   get gain() {
     if (!this.value('shutter')) return 0;
     return clamp(this.value('dimmer'), 0, FULL, FULL) / FULL;
+  }
+
+  /**
+   * The clip this laser plays when it plays from its list, or null.
+   *
+   * @readonly
+   * @type {Object|null}
+   */
+  get currentClip() {
+    return selectedClip(this.value('clips'), this.value('clip'));
   }
 }
 

@@ -9,7 +9,10 @@ import { DEFAULT_LASER_PARAMS, CONTROL_DEFS } from '../generic/laser';
  * The optics come from the Laser geometry: OutputStrength in watts,
  * BeamDiameter in metres, divergence in milliradians and the scan angles in
  * degrees. The body is the root geometry's Model, and the beam starts where
- * the Laser geometry sits in it.
+ * the Laser geometry sits in it. An RGB laser may instead be one Laser
+ * geometry per diode, each SingleWaveLength with its wavelength in Color and
+ * its own OutputStrength: those become the laser's lines and their watts add
+ * up to its power; the optics and the aperture are the first one's.
  *
  * The controls come from the mode's channels, one attribute each. A channel
  * with an offset is driven over DMX. A virtual channel, one with no offset,
@@ -33,16 +36,18 @@ export const LASER_ATTRIBUTES = {
 };
 
 /**
- * The first Laser geometry in a fixture type, and the root geometry it is
- * under.
+ * The Laser geometries in a fixture type, all under the root geometry of the
+ * first, and that root.
  *
  * @param {Object} type a GDTF fixture type
- * @returns {Object|null} `{ root, laser }`
+ * @returns {Object|null} `{ root, laser, lasers }`, `laser` the first
  */
 export function laserGeometry(type) {
   let found = null;
   (type.geometries || []).some((root) => {
-    walkGeometry(root, (g) => { if (!found && g.type === 'Laser') found = { root, laser: g }; });
+    const lasers = [];
+    walkGeometry(root, (g) => { if (g.type === 'Laser') lasers.push(g); });
+    if (lasers.length) found = { root, laser: lasers[0], lasers };
     return !!found;
   });
   return found;
@@ -85,8 +90,13 @@ function controlOf(channel, def) {
 export function laserParams(type, mode = type.modes[0]) {
   const found = laserGeometry(type);
   if (!found) return null;
-  const { root, laser } = found;
+  const { root, laser, lasers } = found;
   const a = laser.attrs || {};
+  // One Laser geometry per diode: each a wavelength and its watts.
+  const lines = lasers
+    .filter((g) => (g.attrs || {}).ColorType === 'SingleWaveLength')
+    .map((g) => ({ nm: number(g.attrs.Color, 0), watts: number(g.attrs.OutputStrength, 0) }))
+    .filter((l) => l.nm > 0);
   const body = root.model ? type.index.model.get(root.model) : null;
   const apertureModel = laser.model ? type.index.model.get(laser.model) : null;
   // The Laser geometry's place in the body, in metres: the last column of the
@@ -102,7 +112,10 @@ export function laserParams(type, mode = type.modes[0]) {
   });
   return {
     ...DEFAULT_LASER_PARAMS,
-    power: number(a.OutputStrength, DEFAULT_LASER_PARAMS.power),
+    power: lines.length
+      ? lines.reduce((sum, l) => sum + l.watts, 0)
+      : number(a.OutputStrength, DEFAULT_LASER_PARAMS.power),
+    lines: lines.length ? lines : null,
     scanAngleH: number(a.ScanAnglePan, DEFAULT_LASER_PARAMS.scanAngleH),
     scanAngleV: number(a.ScanAngleTilt, DEFAULT_LASER_PARAMS.scanAngleV),
     beamDiameter: number(a.BeamDiameter, DEFAULT_LASER_PARAMS.beamDiameter / 1000) * 1000,

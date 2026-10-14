@@ -183,6 +183,7 @@ float dbgField = 0.0;
 uniform bool fogState;
 uniform float beamUnits;     // Light-field intensity into scene luminance, per unit of scattering coefficient
 uniform float hazeScatter;   // The haze's scattering coefficient at full haze, per metre
+uniform float hazeExtinction; // What a beam loses per metre at full haze; see HAZE_EXTINCTION_SHARE
 uniform float fogFactor;    // How much haze there is, 0..1
 uniform float fogScale;      // How wide one haze feature is, in metres
 uniform float fogTurbulence; // Global fogging turbulence factor
@@ -847,7 +848,7 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
   // Where the field's cone would open from behind the lens, which the
   // samples are spaced by; a prism only widens the drawn cone.
   float apexBehind = r0 / max(m / vSpread, 1e-4);
-  float extinctionPerMetre = hazeScatter * clamp(fogFactor, 0.0, 1.0);
+  float extinctionPerMetre = hazeExtinction * clamp(fogFactor, 0.0, 1.0);
   float samples = float(BEAM_PROFILE_SAMPLES);
   // Distance from the cone's virtual apex at the ends of the lit stretch,
   // which is what the irradiance falls off with.
@@ -974,31 +975,6 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
   return sumLight;
 }
 
-/**
- * @function haloPhase
- * @brief the phase the halo's source is drawn with
- * @param float cosView the beam's travel dotted with the direction to the eye
- * @returns float per steradian
- *
- * The halo is the beam's light scattered twice: out of the beam at an angle
- * t1 to its axis, then towards the eye. For the air beside the beam where a
- * view ray passes closest, the second angle is acos(cos t1 cosView), so the
- * pair weighs Q = integral over t1 of p(t1) p(acos(cos t1 cosView)). The
- * kernel in beam_halo.js was worked out for even scattering both times, where
- * the same integral is pi / (4 pi)^2; drawing the source with 4 Q instead of
- * the even 1 / (4 pi) carries the difference. Side-on that is 0.70 of the
- * even value, looking down a beam towards its lens 33 times it. Thirty-two
- * steps hold the forward lobe; it runs only in the small halo draw.
- */
-float haloPhase(float cosView) {
-  const int STEPS = 32;
-  float sum = 0.0;
-  for (int i = 0; i < STEPS; i++) {
-    float c = cos(M_PI * (float(i) + 0.5) / float(STEPS));
-    sum += hazeLobes(c) * hazeLobes(c * cosView);
-  }
-  return 4.0 * sum * M_PI / float(STEPS);
-}
 
 void main() {
   #include <clipping_planes_fragment>

@@ -97,6 +97,15 @@ const LENS_DARK = 0.05;
  * @constant {Number}
  */
 const LENS_FACE_MAX = 30000;
+/**
+ * The share of a lamp's light its lens scatters evenly over the front half
+ * space: surface and bulk scatter of the glass and reflections between the
+ * elements. It is why a lens seen from outside its beam still shows as a lit
+ * disc. Optical glass with coatings scatters in the order of 1 %.
+ *
+ * @constant {Number}
+ */
+const LENS_SCATTER = 0.01;
 /** Scratch for the lens colour write. */
 const lensColor = new THREE.Color();
 /**
@@ -332,6 +341,17 @@ let occlusionEnabled = true;
 export const HAZE_SCATTER_AT_FULL = Math.log(50) / 50;
 
 /**
+ * The share of the scattering coefficient that a beam loses per metre on its
+ * way out and on its way to the eye. A quarter, set by eye: at the full
+ * coefficient beams and pools faded with distance far more than real show
+ * haze does. How bright the haze makes a beam is unchanged.
+ */
+export const HAZE_EXTINCTION_SHARE = 0.25;
+
+/** Extinction per metre at full haze, for beams and the light reaching surfaces. */
+export const HAZE_EXTINCTION_AT_FULL = HAZE_SCATTER_AT_FULL * HAZE_EXTINCTION_SHARE;
+
+/**
  * The beam fragment shader, with the scene's haze configuration prepended.
  *
  * The mode, the field and its constants live in `haze_noise.js` and reach every
@@ -524,6 +544,12 @@ const haloClearColor = new THREE.Color();
 let capMesh;
 /** The lens faces a file draws as rectangles; the same slots as `capMesh`. */
 let rectCapMesh;
+/**
+ * Per lens face: cos of the field, cos of the inner cone, 1 / focus distance
+ * in 1/m, and the dark glass's radiance. See `writeLensCone`.
+ */
+let lensConeAttribute;
+let rectLensConeAttribute;
 let boundingBoxMesh;
 
 let camera_handle = null;
@@ -570,6 +596,23 @@ const ABSOLUTE_MAX_INSTANCES = 4096;
  * @param {THREE.InstancedBufferAttribute} attribute
  * @returns {THREE.InstancedBufferAttribute}
  */
+
+/**
+ * Lens cones for `count` faces not yet written: dark glass, and a field
+ * nothing can be seen inside.
+ *
+ * @param {Number} count
+ * @returns {Float32Array}
+ */
+function lensConeArray(count) {
+  const array = new Float32Array(count * 4);
+  for (let i = 0; i < count; i += 1) {
+    array[i * 4] = 1;
+    array[i * 4 + 1] = 1;
+    array[i * 4 + 3] = LENS_DARK;
+  }
+  return array;
+}
 
 function grownAttribute(attribute) {
   const array = new Float32Array(capacity * attribute.itemSize);
@@ -1124,23 +1167,50 @@ class Light {
    */
   updateLensColor() {
     const lit = this.intensity;
-    // The face's radiance on the frame's scale: candela over the lens area,
-    // times lux per scene unit, as a lit surface's value is.
+    // The face's radiance on the frame's scale along the axis: peak candela
+    // over the lens area, times lux per scene unit, as a lit surface's value
+    // is. The face shader scales it by the beam's falloff toward the eye and
+    // holds it to LENS_FACE_MAX.
     const area = Math.PI * this.lensRadius * this.lensRadius;
     const candela = Light.peakCandela(
       this._lumens,
       this._spotLight.angle,
       this._spotLight.penumbra,
     );
-    const radiance = Math.min((candela / Math.max(area, 1e-4)) * LUX_SCALE, LENS_FACE_MAX);
+    const radiance = (candela / Math.max(area, 1e-4)) * LUX_SCALE;
     lensColor.copy(this.color).multiplyScalar(lit * radiance);
-    lensColor.r += LENS_DARK * (1 - lit);
-    lensColor.g += LENS_DARK * (1 - lit);
-    lensColor.b += LENS_DARK * (1 - lit);
     capMesh.setColorAt(this._id, lensColor);
     capMesh.instanceColor.needsUpdate = true;
     rectCapMesh.setColorAt(this._id, lensColor);
     rectCapMesh.instanceColor.needsUpdate = true;
+    this.writeLensCone(LENS_DARK * (1 - lit));
+  }
+
+  /**
+   * Writes the cone the lens face is lit within, its focus and its dark
+   * glass.
+   *
+   * Each point of the lens sends light toward the image of the gate at the
+   * focus distance, as the beam does. A point of the face is lit toward the
+   * eye when the ray from it to the eye meets the focus plane inside the
+   * field, at the falloff `smoothstep(cos outer, cos inner, cos angle)` that
+   * `peakCandela` integrates, over the projected area. Crossing the beam's
+   * edge the face fills across the lens rather than all at once. LENS_SCATTER
+   * of the lumens leave the face evenly, a radiance of f lumens / (pi area),
+   * which as a share of the peak is f solid angle / pi.
+   *
+   * @private
+   * @param {Number} [dark] the unlit glass's radiance; kept when omitted
+   */
+  writeLensCone(dark) {
+    if (!lensConeAttribute) return;
+    const outer = this._spotLight.angle;
+    const inner = outer * (1 - this._spotLight.penumbra);
+    const w = dark === undefined ? lensConeAttribute.getW(this._id) : dark;
+    lensConeAttribute.setXYZW(this._id, Math.cos(outer), Math.cos(inner), this._invFocus || 0, w);
+    lensConeAttribute.needsUpdate = true;
+    rectLensConeAttribute.copyAt(this._id, lensConeAttribute, this._id);
+    rectLensConeAttribute.needsUpdate = true;
   }
 
   /**
@@ -1457,6 +1527,7 @@ class Light {
     this._spotLight.angle = Light.degToRad(this._angle);
     angle_buffer_attribute.setX(this._id, this._angle);
     angle_buffer_attribute.needsUpdate = true;
+    this.writeLensCone();
   }
 
   /**
@@ -1547,6 +1618,7 @@ class Light {
     const f = this._frost;
     const penumbra = this._basePenumbra + (PENUMBRA_DEFOCUSED - this._basePenumbra) * f;
     this._spotLight.penumbra = penumbra;
+    this.writeLensCone();
     this._goboDefocus = (GOBO_DEFOCUS_MAX + 1) * f;
     Light.writeBeamProfile(this._id, penumbra, this._invFocus);
     this.writeOptics();
@@ -3469,6 +3541,7 @@ class Light {
         // and a surface it lights are on the same exposure.
         beamUnits: { value: SPOTLIGHT_PHYSICALLY_CORRECT_INTENSITY },
         hazeScatter: { value: HAZE_SCATTER_AT_FULL },
+        hazeExtinction: { value: HAZE_EXTINCTION_AT_FULL },
         haloSource: { value: false },
         fragScale: { value: 1 },
         // Which shader term the debug panel is drawing instead of the beam.
@@ -3532,10 +3605,61 @@ class Light {
     // Something a reflection can meet, though it writes no depth: see
     // reflections.js.
     capMaterial.userData.reflectionTarget = true;
+    // The face's radiance toward the eye: the beam's falloff at the viewing
+    // angle over the projected area, the scatter, and the dark glass. See
+    // `writeLensCone`.
+    capMaterial.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', `#include <common>
+attribute vec4 lensCone;
+varying vec4 vLensCone;
+varying vec3 vLensView;
+varying vec3 vLensNormal;
+varying vec3 vLensCenter;`)
+        .replace('#include <project_vertex>', `#include <project_vertex>
+vLensCone = lensCone;
+vLensView = -mvPosition.xyz;
+#ifdef USE_INSTANCING
+mat4 lensMatrix = modelViewMatrix * instanceMatrix;
+#else
+mat4 lensMatrix = modelViewMatrix;
+#endif
+vLensNormal = mat3( lensMatrix ) * vec3( 0.0, 0.0, 1.0 );
+vLensCenter = ( lensMatrix * vec4( 0.0, 0.0, ${LENS_FACE_OFFSET.toFixed(4)}, 1.0 ) ).xyz;`);
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', `#include <common>
+varying vec4 vLensCone;
+varying vec3 vLensView;
+varying vec3 vLensNormal;
+varying vec3 vLensCenter;`)
+        .replace('#include <color_fragment>', `#include <color_fragment>
+{
+  vec3 lensAxis = normalize( vLensNormal );
+  vec3 toEye = isOrthographic ? vec3( 0.0, 0.0, 1.0 ) : normalize( vLensView );
+  float cosView = dot( lensAxis, toEye );
+  // Where the ray from this point of the lens to the eye crosses the focus
+  // plane, as a tangent off the axis: offset x 1/focus + the ray's slope.
+  vec3 offset = -vLensView - vLensCenter;
+  offset -= dot( offset, lensAxis ) * lensAxis;
+  vec3 slope = ( toEye - cosView * lensAxis ) / max( cosView, 1e-4 );
+  vec3 atFocus = offset * vLensCone.z + slope;
+  float cosField = inversesqrt( 1.0 + dot( atFocus, atFocus ) );
+  float inner = max( vLensCone.y, vLensCone.x + 1e-5 );
+  float through = cosView > 0.0 ? smoothstep( vLensCone.x, inner, cosField ) : 0.0;
+  // f solid angle / pi, the solid angle being 2 pi (1 - (cos inner + cos outer) / 2).
+  float scatter = ${(2 * LENS_SCATTER).toFixed(4)} * ( 1.0 - 0.5 * ( vLensCone.x + vLensCone.y ) );
+  float spread = through / max( cosView, 0.05 ) + scatter;
+  diffuseColor.rgb = min( diffuseColor.rgb * spread, vec3( ${LENS_FACE_MAX.toFixed(1)} ) ) + vLensCone.w;
+}`);
+    };
 
     capGeometry.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 0, LENS_FACE_OFFSET));
 
     THREE.BufferGeometry.prototype.copy.call(targetGeo, capGeometry);
+
+    lensConeAttribute = new THREE.InstancedBufferAttribute(lensConeArray(capacity), 4);
+    lensConeAttribute.setUsage(THREE.DynamicDrawUsage);
+    targetGeo.setAttribute('lensCone', lensConeAttribute);
 
     capMesh = new THREE.InstancedMesh(targetGeo, capMaterial, capacity);
     capMesh.frustumCulled = false;
@@ -3554,6 +3678,9 @@ class Light {
     // file draws as a rectangle.
     const rectGeometry = new THREE.PlaneGeometry(BEAM_TOP_RADIUS * 2, BEAM_TOP_RADIUS * 2);
     rectGeometry.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 0, LENS_FACE_OFFSET));
+    rectLensConeAttribute = new THREE.InstancedBufferAttribute(lensConeArray(capacity), 4);
+    rectLensConeAttribute.setUsage(THREE.DynamicDrawUsage);
+    rectGeometry.setAttribute('lensCone', rectLensConeAttribute);
     rectCapMesh = new THREE.InstancedMesh(rectGeometry, capMaterial, capacity);
     rectCapMesh.frustumCulled = false;
     rectCapMesh.count = instanceCount;
@@ -3758,6 +3885,10 @@ class Light {
     gobo_attribute = grownAttribute(gobo_attribute);
     prism_attribute = grownAttribute(prism_attribute);
     color_b_attribute = grownAttribute(color_b_attribute);
+    lensConeAttribute = grownAttribute(lensConeAttribute);
+    rectLensConeAttribute = grownAttribute(rectLensConeAttribute);
+    capMesh.geometry.setAttribute('lensCone', lensConeAttribute);
+    rectCapMesh.geometry.setAttribute('lensCone', rectLensConeAttribute);
 
     // Re-attached because `setAttribute` stores the attribute, not a reference
     // to whatever the variable holds now.
@@ -3879,7 +4010,7 @@ class Light {
  */
 function syncEnvironment() {
   LightField.uniforms.lightFieldExtinction.value = SceneEnv.hazeEnabled
-    ? HAZE_SCATTER_AT_FULL * SceneEnv.hazeAmount : 0;
+    ? HAZE_EXTINCTION_AT_FULL * SceneEnv.hazeAmount : 0;
   if (!beamMesh || !beamMesh.material || !beamMesh.material.uniforms) return;
   const { uniforms } = beamMesh.material;
   uniforms.fogState.value = SceneEnv.hazeEnabled;

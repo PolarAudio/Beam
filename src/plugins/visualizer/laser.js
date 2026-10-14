@@ -7,14 +7,15 @@ import SceneEnv from './scene_env';
 import { hazeShaderPrelude, hazeUniforms } from './haze_noise';
 import { DepthAtlas } from './projector_depth';
 import { flattenPaths } from './laser_dwell';
+import { clipFrame, clipStatus } from './laser_clip_player';
 import FIGURE_ATLAS, { LaserFigure, FIGURE_PIXEL, FIGURE_MIN_PIXELS } from './laser_figure';
 import LaserStream, { POINT_STRIDE } from '../laser_stream';
 import {
   DEFAULT_LASER_PARAMS, apertureOrigin, scanHalfAngles, laserChannelLumens,
 } from '../../models/DMX/generic/laser';
-import { HAZE_SCATTER_AT_FULL } from './light';
+import { HAZE_SCATTER_AT_FULL, HAZE_EXTINCTION_AT_FULL } from './light';
 import { SCENE_PER_NIT } from './light_field';
-import { LASER_APPEARANCE } from './laser_appearance';
+import { laserAppearance, whiteBalance } from './laser_appearance';
 import BodyFinish from './body_finish';
 import { castsContactShadow } from './contact_shadows';
 import { setOutlined } from './selection_outline';
@@ -37,11 +38,24 @@ const LASER_DEPTH = new DepthAtlas({
  */
 const PRIMARY_LUMINANCE = { red: 0.2126, green: 0.7152, blue: 0.0722 };
 
+/** Scratch for the halo draw: the clear colour and the beam's resolution. */
+const haloClearColor = new THREE.Color();
+const haloResolution = new THREE.Vector2();
+
 /**
  * How much the haze texture modulates a beam, as the mover beam's
  * `BEAM_FIELD_DEPTH`: the field varies the air by half either way.
  */
 const HAZE_FIELD_DEPTH = 0.5;
+
+/**
+ * Debug-panel multipliers over the photometric result, 0 to 10: one for the
+ * beams in the air, one for the figure on surfaces. 1 is the physics; the
+ * defaults are set by eye against real lasers.
+ */
+const GAIN_MAX = 10;
+let beamGainValue = 5;
+let figureGainValue = 1.8;
 
 /**
  * The widest half-angle the aperture camera covers, in radians: 85 degrees.
@@ -248,11 +262,12 @@ const ptLinked = new Uint8Array(MAX_POINTS);
 const ptJoined = new Uint8Array(MAX_POINTS);
 
 /**
- * The narrowest a held dot's beam is drawn, in pixels. Its real width is
- * usually under a pixel; the shader spreads the same light over this width
- * rather than letting the beam alias away.
+ * The narrowest a held dot's beam is drawn, in pixels. A beam is a few
+ * millimetres across and the eye resolves it at its own luminance, so it is
+ * drawn at its real width down to one pixel and its light spread no wider;
+ * the camera's glare widens what is bright, as the eye's does.
  */
-const BEAM_WIDTH_PIXELS = 2.5;
+const BEAM_WIDTH_PIXELS = 1;
 
 /**
  * A beam material for one laser: light scattered out of the beam by the haze,
@@ -307,6 +322,11 @@ function makeBeamMaterial() {
       time: { value: 0.0 },
       // Scattering per metre at full haze.
       hazeScatter: { value: HAZE_SCATTER_AT_FULL },
+      hazeExtinction: { value: HAZE_EXTINCTION_AT_FULL },
+      // Drawing the halo's source rather than the beam: see beam_halo.js.
+      haloSource: { value: false },
+      // The debug panel's multiplier, 1 by default.
+      beamGain: { value: 1 },
       // Where the light starts, so a fragment knows which way its beam runs.
       beamOrigin: { value: new THREE.Vector3() },
       // The viewport, so a dot's beam can be held to a minimum width in pixels.
@@ -343,6 +363,8 @@ function makeBeamMaterial() {
       varying vec3 vWorld;
       varying float vDot;
       varying float vPerPixel;
+      varying float vWidthW;
+      varying float vClipW;
       void main() {
         vColor = acolor;
         // A sheet's vertices carry no side; a dot's ribbon is +-1 across.
@@ -367,6 +389,11 @@ function makeBeamMaterial() {
         float metresPerPixel = vPerPixel * (isOrthographic ? 1.0 : here.w);
         float diameter = beamDiameter + divergence * adist * beamLength;
         float halfPx = max(beamWidth, diameter / metresPerPixel) * 0.5;
+        // The drawn width in pixels, for the fragment to spread the light over
+        // exactly what is drawn. Carried times w and divided by w there, so it
+        // interpolates linearly across the screen as the ribbon's edges do.
+        vWidthW = 2.0 * halfPx * here.w;
+        vClipW = here.w;
         vec2 offsetPx = perp * aSide * halfPx;
         here.xy += (offsetPx / resolution) * 2.0 * here.w;
         gl_Position = here;
@@ -378,12 +405,17 @@ function makeBeamMaterial() {
       varying vec3 vWorld;
       varying float vDot;
       varying float vPerPixel;
+      varying float vWidthW;
+      varying float vClipW;
       uniform bool fogState;
       uniform float fogFactor;
       uniform float fogScale;
       uniform float fogTurbulence;
       uniform float time;
       uniform float hazeScatter;
+      uniform float hazeExtinction;
+      uniform bool haloSource;
+      uniform float beamGain;
       uniform vec3 beamOrigin;
       uniform float beamWidth;
       uniform float beamDiameter;
@@ -428,7 +460,9 @@ function makeBeamMaterial() {
         float cosTheta = dot(travel, toEye);
 
         float sigma = hazeScatter * haze;
-        float transmission = exp(-sigma * (s + eyeDistance));
+        // The haze's loss on the way out and on the way to the eye, as the
+        // mover beams pay it.
+        float transmission = exp(-hazeExtinction * haze * (s + eyeDistance));
         float field = mix(1.0,
           fogging(vWorld / max(fogScale, 0.01), time * fogTurbulence), HAZE_FIELD_DEPTH);
 
@@ -436,7 +470,9 @@ function makeBeamMaterial() {
         float across;
         if (vDot > 0.5) {
           float viewDepth = isOrthographic ? 1.0 : -(viewMatrix * vec4(vWorld, 1.0)).z;
-          float width = max(beamDiameter + divergence * s, beamWidth * vPerPixel * viewDepth);
+          // The width drawn here: the beam's own, or one pixel where it is
+          // narrower. The light is spread over what is drawn and no wider.
+          float width = (vWidthW / max(vClipW, 1e-6)) * vPerPixel * viewDepth;
           float sinTheta = sqrt(max(1.0 - cosTheta * cosTheta, 0.0));
           across = width * max(sinTheta, 0.01);
         } else {
@@ -444,8 +480,16 @@ function makeBeamMaterial() {
           across = s * max(abs(dot(normal, toEye)), 0.02);
         }
 
-        vec3 nits = vColor * sigma * hazeLobes(cosTheta) * field * transmission / across;
-        gl_FragColor = vec4(nits * SCENE_PER_NIT, 1.0);
+        // The halo's source is the light scattered out and scattered again
+        // towards the eye, so it takes the pair's phase; its alpha carries
+        // luminance times distance, which the halo sizes its spread by.
+        float phase = haloSource ? haloPhase(cosTheta) : hazeLobes(cosTheta);
+        vec3 nits = vColor * sigma * phase * field * transmission / across;
+        vec3 scene = nits * SCENE_PER_NIT * beamGain;
+        float distance = isOrthographic ? 1.0 : length(toCamera);
+        gl_FragColor = haloSource
+          ? vec4(scene, dot(scene, vec3(0.2126, 0.7152, 0.0722)) * distance)
+          : vec4(scene, 1.0);
       }
     `,
   });
@@ -621,6 +665,8 @@ class Laser {
   resolveSource(settings) {
     const protocol = (settings && settings.value('protocol')) || 'ponk';
     const address = (settings && settings.value('address')) || this._address || null;
+    // The laser's own clip list: nothing to receive.
+    if (protocol === 'clips') return { protocol: 'clips', service: null, address: null };
     if (protocol === 'ponk') {
       const chosen = parsePonkStream(settings ? settings.value('source') : null);
       if (chosen !== null) return { protocol: 'ponk', service: chosen, address: null };
@@ -675,7 +721,15 @@ class Laser {
     // what it played. From here down the two are the same points.
     let frame = null;
     let shares = null;
-    if (source && source.protocol === 'ponk') {
+    // Whether the frame marks its own travel: a Ponk path is one stroke, and an
+    // ILDA frame blanks every jump, so any two lit points in a row are a line
+    // the scanner drew. A DAC stream's travel is guessed from the distance.
+    let explicitBlanking = false;
+    if (source && source.protocol === 'clips') {
+      const clip = settings ? settings.currentClip : null;
+      frame = clipFrame(clip, this._clipTime || 0, Number(params.maxPointRate) || 0);
+      explicitBlanking = true;
+    } else if (source && source.protocol === 'ponk') {
       const ponk = LaserStream.ponkFrame(source.service);
       if (ponk) {
         frame = flattenPaths(ponk.paths, {
@@ -684,6 +738,7 @@ class Laser {
           maxPoints: MAX_POINTS,
         });
         ({ shares } = frame);
+        explicitBlanking = true;
       }
     } else if (source) {
       frame = LaserStream.frame(source.protocol, 50, source.service, source.address);
@@ -717,10 +772,14 @@ class Laser {
     // Lumens at full, as scene colour: each primary at the luminance its
     // flux gives, times how much brighter the line looks than the primary it
     // is drawn with (see `laser_appearance.js`).
+    // Held back by the colour balance, so equal values draw white.
     const lumens = laserChannelLumens(params);
-    const kRed = (lumens.red / PRIMARY_LUMINANCE.red) * LASER_APPEARANCE.red;
-    const kGreen = (lumens.green / PRIMARY_LUMINANCE.green) * LASER_APPEARANCE.green;
-    const kBlue = (lumens.blue / PRIMARY_LUMINANCE.blue) * LASER_APPEARANCE.blue;
+    const k = (c) => (lumens[c].lumens / PRIMARY_LUMINANCE[c]) * laserAppearance(c, lumens[c].nm);
+    const drawn = { red: k('red'), green: k('green'), blue: k('blue') };
+    const balance = whiteBalance(drawn);
+    const kRed = drawn.red * balance.red;
+    const kGreen = drawn.green * balance.green;
+    const kBlue = drawn.blue * balance.blue;
     const evenShare = 1 / Math.max(frame.count, 1);
     const xScale = val('xScale', 100) / 100;
     const yScale = val('yScale', 100) / 100;
@@ -800,11 +859,9 @@ class Laser {
       const dy = ptNorm[(i + 1) * 2 + 1] - ptNorm[i * 2 + 1];
       // Blanked travel between figures must not be bridged, and a repeated
       // point spans no area: a held dot is the same point many times, and
-      // left linked it would never get the ribbon below. A Ponk path is one
-      // stroke by definition, with a blank between paths, so only a DAC
-      // stream's travel has to be guessed from the distance.
+      // left linked it would never get the ribbon below. See `explicitBlanking`.
       const step = dx * dx + dy * dy;
-      const joined = step > 0 && (shares !== null || step <= JUMP_LIMIT * JUMP_LIMIT);
+      const joined = step > 0 && (explicitBlanking || step <= JUMP_LIMIT * JUMP_LIMIT);
       if (ptLit[i] && ptLit[i + 1] && joined) {
         ptLinked[i] = 1;
         ptLinked[i + 1] = 1;
@@ -855,6 +912,7 @@ class Laser {
     u.beamOrigin.value.setFromMatrixPosition(this._depthCam.matrixWorld);
     scratchClip.copy(this._depthMatrix).multiply(this._dummy.matrixWorld);
     figure.n = n;
+    figure.gain = figureGainValue;
     this._figure.build(figure);
     this._beamGeo.attributes.position.needsUpdate = true;
     this._beamGeo.attributes.aOther.needsUpdate = true;
@@ -1112,12 +1170,14 @@ class Laser {
     instances.forEach((laser) => {
       const u = laser._beamMaterial.uniforms;
       u.time.value = t || 0;
+      laser._clipTime = t || 0;
       // Level with the room every frame, the way the mover beam is kept level,
       // so a laser is never drawn through haze the room does not have.
       u.fogState.value = SceneEnv.hazeEnabled;
       u.fogFactor.value = SceneEnv.hazeAmount;
       u.fogScale.value = SceneEnv.hazeScale;
       u.fogTurbulence.value = SceneEnv.hazeDriftRate;
+      u.beamGain.value = beamGainValue;
       if (renderer) u.resolution.value.copy(scratchResolution);
       laser.buildBeam();
     });
@@ -1188,6 +1248,8 @@ class Laser {
       const handle = laser.fixtureHandle;
       const settings = laser._settingsAt();
       const protocol = (settings && settings.value('protocol')) || 'ponk';
+      // A clip list plays here; there is no device for the main process to run.
+      if (protocol === 'clips') return;
       const address = (settings && settings.value('address')) || null;
       const name = (handle && handle.name) || `Laser ${i + 1}`;
       let service = null;
@@ -1279,6 +1341,24 @@ class Laser {
         error,
       };
     }
+    if (source.protocol === 'clips') {
+      const clip = settings ? settings.currentClip : null;
+      const status = clipStatus(clip);
+      const params = laser._params || {};
+      const frame = clipFrame(clip, laser._clipTime || 0, Number(params.maxPointRate) || 0);
+      return {
+        protocol: 'clips',
+        address: null,
+        service: null,
+        live: status.state === 'ready',
+        rate: clip ? (clip.rate || Number(params.maxPointRate) || 0) : 0,
+        points: frame ? frame.count : 0,
+        frames: status.frames,
+        name: clip ? clip.name : null,
+        clipState: status.state,
+        error: status.error || error,
+      };
+    }
     if (source.protocol === 'ponk') {
       const frame = LaserStream.ponkFrame(source.service);
       const points = frame
@@ -1319,6 +1399,53 @@ class Laser {
    * @param {Object} fixture
    * @returns {Object|null}
    */
+  /**
+   * Draws every laser's beam into the halo's source, as the mover beams are:
+   * plain sums with alpha carrying luminance times distance, at the target's
+   * own resolution so a beam is at least one of its pixels wide with its
+   * light conserved. See beam_halo.js.
+   *
+   * @public
+   * @param {THREE.WebGLRenderer} renderer
+   * @param {THREE.Camera} camera the view
+   * @param {THREE.WebGLRenderTarget} target where it goes
+   * @param {Boolean} clear whether to clear the target first
+   * @returns {Boolean} whether any laser had a beam to draw
+   */
+  static renderHaloSource(renderer, camera, target, clear) {
+    const lit = [...instances].filter((laser) => laser._beam && laser._beam.visible
+      && laser._beamGeo.drawRange.count > 0);
+    if (!lit.length) return false;
+    const clearColor = renderer.getClearColor(haloClearColor);
+    const clearAlpha = renderer.getClearAlpha();
+    renderer.setRenderTarget(target);
+    if (clear) {
+      renderer.setClearColor(0x000000, 0);
+      renderer.clear(true, false, false);
+    }
+    lit.forEach((laser) => {
+      const material = laser._beamMaterial;
+      const u = material.uniforms;
+      const blending = [material.blending, material.blendSrc, material.blendDst,
+        material.blendSrcAlpha, material.blendDstAlpha];
+      material.blending = THREE.CustomBlending;
+      material.blendSrc = THREE.OneFactor;
+      material.blendDst = THREE.OneFactor;
+      material.blendSrcAlpha = THREE.OneFactor;
+      material.blendDstAlpha = THREE.OneFactor;
+      u.haloSource.value = true;
+      haloResolution.copy(u.resolution.value);
+      u.resolution.value.set(target.width, target.height);
+      renderer.render(laser._beam, camera);
+      u.resolution.value.copy(haloResolution);
+      u.haloSource.value = false;
+      [material.blending, material.blendSrc, material.blendDst,
+        material.blendSrcAlpha, material.blendDstAlpha] = blending;
+    });
+    renderer.setClearColor(clearColor, clearAlpha);
+    return true;
+  }
+
   static instanceFor(fixture) {
     if (!fixture) return null;
     return [...instances].find((l) => l.fixtureHandle === fixture
@@ -1516,19 +1643,28 @@ class Laser {
   }
 
   /**
-   * Retired controls the debug panel still lists. Brightness, width and reach
-   * come from the fixture's watts and optics and the haze; these change
-   * nothing and report the fixed values.
+   * The figure's multiplier over its photometric brightness, for the debug
+   * panel.
+   *
+   * @public
+   * @param {Number} gain 0 to 10
+   */
+  static setSurfaceGain(gain) {
+    figureGainValue = Math.min(Math.max(Number(gain) || 0, 0), GAIN_MAX);
+  }
+
+  /** @public @returns {Number} the figure's multiplier */
+  static surfaceGain() {
+    return figureGainValue;
+  }
+
+  /**
+   * Retired controls the debug panel still lists. Width and reach come from
+   * the fixture's optics and the haze; these change nothing and report the
+   * fixed values.
    *
    * @public
    */
-  static setSurfaceGain() {}
-
-  /** @public @returns {Number} */
-  static surfaceGain() {
-    return 1;
-  }
-
   /** @public */
   static setBeamLength() {}
 
@@ -1568,9 +1704,9 @@ class Laser {
     return 1;
   }
 
-  /** @public @returns {Number} */
+  /** @public @returns {Number} the beams' multiplier */
   static scatterGain() {
-    return 1;
+    return beamGainValue;
   }
 
   /** @public */
@@ -1581,8 +1717,16 @@ class Laser {
     return FIGURE_MIN_PIXELS;
   }
 
-  /** @public */
-  static setScatterGain() {}
+  /**
+   * The beams' multiplier over their photometric brightness, for the debug
+   * panel.
+   *
+   * @public
+   * @param {Number} gain 0 to 10
+   */
+  static setScatterGain(gain) {
+    beamGainValue = Math.min(Math.max(Number(gain) || 0, 0), GAIN_MAX);
+  }
 
   /** @public */
   static setHazeBase() {}

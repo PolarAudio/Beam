@@ -62,8 +62,16 @@ const ROUGHNESS_LIMIT = 0.7;
 /** Brightest a reflected pixel is taken at, in scene units. */
 const FRAME_CLAMP = 32;
 
-/** Coarsest blur level a reflection reads: a spread of 64 pixels. */
-const MAX_LEVEL = 6;
+/**
+ * Coarsest blur level a reflection reads: a spread of 512 pixels.
+ *
+ * High because this is the only place roughness has room to act. The level is
+ * `roughness²` scaled by the projection, so the cap is reached at a roughness
+ * of about a quarter, and everything above it read the same 64-pixel smear: a
+ * 0.4 metal and a 0.7 one were indistinguishable, and the only way left to make
+ * a rough surface duller was to take light away from it rather than spread it.
+ */
+const MAX_LEVEL = 9;
 
 /**
  * What counts as a floor: a glossy object at most this thick, in metres, and

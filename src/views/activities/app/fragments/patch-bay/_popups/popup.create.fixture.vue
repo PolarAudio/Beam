@@ -650,7 +650,7 @@
           <uk-num-input
             v-model="apertureDiameter"
             class="field"
-            label="Diameter"
+            label="Width"
             :min="1"
             :max="1000"
           />
@@ -839,6 +839,7 @@ import {
   DEFAULT_LASER_PARAMS,
   CONTROL_DEFS as LASER_CONTROL_DEFS,
   imageSizeAt as laserImageSizeAt,
+  apertureSize,
 } from '@/models/DMX/generic/laser';
 import {
   DEFAULT_STROBE_PARAMS,
@@ -1635,11 +1636,16 @@ export default {
         [GENERIC_KINDS.DISPLAY]: () => this.screenWidth > 0
           && this.screenHeight > 0 && this.screenDepth > 0,
         [GENERIC_KINDS.LASER]: () => {
-          const radius = this.apertureDiameter / 2;
+          // The window is a rectangle, its height from the scan field.
+          const window = apertureSize({
+            apertureDiameter: this.apertureDiameter,
+            scanAngleH: this.scanAngleH,
+            scanAngleV: this.scanAngleV,
+          });
           return this.laserWidth > 0 && this.laserHeight > 0 && this.laserDepth > 0
             && this.scanAngleH > 0 && this.scanAngleV > 0
-            && Math.abs(this.apertureX) + radius <= this.laserWidth / 2
-            && Math.abs(this.apertureY) + radius <= this.laserHeight / 2;
+            && Math.abs(this.apertureX) + window.width / 2 <= this.laserWidth / 2
+            && Math.abs(this.apertureY) + window.height / 2 <= this.laserHeight / 2;
         },
         [GENERIC_KINDS.STROBE]: () => this.strobeWidth > 0 && this.strobeHeight > 0
           && this.strobeDepth > 0 && this.strobePower > 0

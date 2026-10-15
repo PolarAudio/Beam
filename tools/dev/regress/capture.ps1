@@ -8,11 +8,13 @@
 
 .EXAMPLE
   powershell -File tools/dev/regress/capture.ps1 -Scene movers -Haze 50 -Camera front -Out x.png
+  powershell -File tools/dev/regress/capture.ps1 -Scene movers -Haze 0 -House up -Out x.png
 #>
 param(
   [Parameter(Mandatory = $true)][string]$Scene,
   [Parameter(Mandatory = $true)][int]$Haze,
   [string]$Camera = 'front',
+  [ValidateSet('down', 'up')][string]$House = 'down',
   [Parameter(Mandatory = $true)][string]$Out,
   [int]$Width = 1280,
   [int]$Height = 720
@@ -28,7 +30,7 @@ if ($ready -ne 'true') {
   if ($r1 -ne 'ok' -or -not $r2) { Write-Output "Setup failed: $r1 $r2"; exit 1 }
 }
 
-$argJson = @{ scene = $Scene; haze = $Haze; camera = $Camera; width = $Width; height = $Height } | ConvertTo-Json -Compress
+$argJson = @{ scene = $Scene; haze = $Haze; camera = $Camera; house = $House; width = $Width; height = $Height } | ConvertTo-Json -Compress
 # Through a file: PowerShell 5.1 strips the quotes from a native argument.
 $argFile = Join-Path $here '..\out\regress-args.js'
 New-Item -ItemType Directory -Force (Split-Path $argFile) | Out-Null

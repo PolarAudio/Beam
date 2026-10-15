@@ -26,7 +26,7 @@ export const STROBE_ATTRIBUTES = STROBE_CHANNELS;
 
 class StrobeSettings extends DeviceSettings {
   /**
-   * @param {Object} params the profile's `asls.strobe` -- the envelope
+   * @param {Object} params the profile's `beam.strobe` -- the envelope
    * @param {Object} [data] stored values from the show
    */
   constructor(params, data = {}) {

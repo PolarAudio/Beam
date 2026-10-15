@@ -20,11 +20,16 @@
         {{ structure.members.length === 1 ? 'item' : 'items' }}
       </p>
 
+      <!-- The patch bay's list and gestures: click, Ctrl, Shift and a band
+           from beside the rows. -->
       <uk-list
+        band-select
         class="structure_members"
         :items="members"
-        :selected-id="selectedMemberId"
-        @select="displayMember"
+        :highlight-ids="highlightedIds"
+        :selected-id="highlightedIds.length === 1 ? highlightedIds[0] : null"
+        @select="selectRow"
+        @highlight="highlightRows"
       />
 
       <p class="structure_summary">
@@ -102,20 +107,24 @@ export default {
       default: null,
     },
     /**
-     * Which member is currently showing its own widgets, if any.
-     *
-     * `[Number, String]` because a member may be an object, and an object's row
-     * id is namespaced -- `object:3`. See `scene_item.rowId`.
+     * Row ids of the members highlighted in the list: the ones the fixture
+     * widgets edit and the 3D view outlines.
      */
-    selectedMemberId: {
-      type: [Number, String],
-      default: null,
+    highlightedIds: {
+      type: Array,
+      default: () => [],
     },
   },
-  emits: ['select-member', 'exploded'],
+  emits: ['highlight-members', 'exploded'],
   data() {
     return {
       saved: false,
+      /**
+       * The highlight as it stood before the list cleared it. A plain click
+       * clears the highlight and then selects the row, and the select needs
+       * to know what was highlighted before the clear.
+       */
+      beforeClear: null,
     };
   },
   computed: {
@@ -222,20 +231,42 @@ export default {
       this.structure.mappings = wanted ? [...current, id] : current;
     },
     /**
-     * Routes to a member so its own widgets open.
+     * Every member's row id.
      *
-     * Selecting one reaches its patching -- a fixture inside a truss still
-     * needs a DMX address -- while the position tool locks itself, because the
-     * structure is what places it.
+     * @returns {Array}
+     */
+    allIds() {
+      return this.members.map((row) => row.id);
+    },
+    /**
+     * A plain click: that member alone, or every member again when it was
+     * already the only one.
      *
      * @public
-     * @param {Object} item the member's list row
+     * @param {Object} row the member's list row
      */
-    displayMember(item) {
-      if (!item) return;
-      // Clicking the picked member again lets go of it, which is the only way
-      // back to the structure's own fields without leaving the structure.
-      this.$emit('select-member', item.id === this.selectedMemberId ? null : item.id);
+    selectRow(row) {
+      if (!row) return;
+      const before = this.beforeClear || this.highlightedIds;
+      this.beforeClear = null;
+      const alone = before.length === 1 && before[0] === row.id;
+      this.$emit('highlight-members', alone ? this.allIds() : [row.id]);
+    },
+    /**
+     * Ctrl, Shift and band selections. An empty highlight, from a click
+     * beside the rows, means every member.
+     *
+     * @public
+     * @param {Array} rows the highlighted rows
+     */
+    highlightRows(rows) {
+      if (!rows || !rows.length) {
+        this.beforeClear = this.highlightedIds;
+        this.$emit('highlight-members', this.allIds());
+        return;
+      }
+      this.beforeClear = null;
+      this.$emit('highlight-members', rows.map((row) => row.id));
     },
     /**
      * Stores this arrangement in the library so it can be placed again.
@@ -279,6 +310,13 @@ export default {
   /* The widget shell sets white-space: nowrap for its single-line rows, and
      clips what overflows. Prose in here has to opt back into wrapping. */
   white-space: normal;
+  /* Scrolls once the member list is at its minimum. */
+  overflow-y: auto;
+}
+/* Only the member list gives up height; the other rows keep theirs, or they
+   shrink below their content and the list draws over them. */
+.structure_modifier_body > * {
+  flex-shrink: 0;
 }
 .structure_warning {
   font-family: Roboto-Regular;
@@ -297,11 +335,11 @@ export default {
   margin: 0;
 }
 .structure_members {
-  /* Takes the space the other rows do not want, rather than a fixed height:
-     min-height lets it shrink below its content so it scrolls instead of
-     pushing the buttons off the bottom. */
-  flex: 1;
-  min-height: 0;
+  /* Takes the space the other rows do not want, rather than a fixed height,
+     and scrolls its rows instead of pushing the buttons off the bottom. Four
+     rows at least, below which the widget scrolls instead. */
+  flex: 1 1 0;
+  min-height: 96px;
 }
 .structure_actions {
   align-items: center;

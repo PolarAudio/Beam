@@ -67,6 +67,17 @@
       <uk-button
         square
         icon-only
+        label="Measure (M)"
+        icon="ruler"
+        :model-value="measure.active"
+        toggleable
+        :value="false"
+        color="var(--accent-blue)"
+        @click="toggleMeasure"
+      />
+      <uk-button
+        square
+        icon-only
         label="Fit to view"
         icon="fit"
         @click="$show.visualizerHandle.frameAll()"
@@ -163,6 +174,7 @@ import Clipboard from '@/models/DMX/clipboard';
 import Selection from '@/models/DMX/selection';
 import Studio from '@/models/DMX/studio';
 import ViewMode from '@/plugins/view_mode';
+import MeasureTool from '@/plugins/visualizer/measure_tool';
 
 /**
  * How often the live camera's stored viewpoint is refreshed while orbiting.
@@ -193,6 +205,8 @@ export default {
        * Visibility state
        */
       snapEnabled: true,
+      /** The measure tool's state, for its button. */
+      measure: MeasureTool.state,
       houseLights: true,
       /**
        * Which transform tool the gizmo is in: 'translate', 'rotate' or
@@ -379,6 +393,8 @@ export default {
     ).observe(this.$refs.visualizer);
     // After the visualizer, which is what loads the preferences.
     ViewMode.start();
+    // A show opened at launch got here first; its view waited for a camera.
+    this.$show.visualizerReady();
     EventBus.emit('visualizer_loaded', true);
     this.snapEnabled = this.$show.visualizerHandle.snapEnabled;
     this.houseLights = this.$show.visualizerHandle.houseLights;
@@ -441,6 +457,14 @@ export default {
       this.modeTick += 1;
       this.$show.visualizerHandle.gizmoMode = mode;
       this.gizmoMode = this.$show.visualizerHandle.gizmoMode;
+    },
+    /**
+     * Turns the measure tool on or off.
+     *
+     * @public
+     */
+    toggleMeasure() {
+      MeasureTool.toggle();
     },
     /**
      * Follows a tool change the scene made on its own, from the keyboard.

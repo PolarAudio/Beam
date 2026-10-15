@@ -21,13 +21,23 @@ git ignores.
 
 `regress/` builds its scenes from the blank show each time -- shipped OFL
 profiles and generic kinds, nothing from the user's library -- so it is the
-one place a script drives the scene. Movers (front and looking up into the
-beams), LED bar and panel, laser, projector and strobe, each at haze 0, 25,
-50 and 100, into `out/regress/<label>/`.
+one place a script drives the scene. Movers (front, looking up into the
+beams, and from behind the bar), one lens seen inside its field, on its
+edge, just outside it and from the side (cameras placed from the light's own
+axis), LED bar and panel, laser, projector and strobe. Each view is taken
+with the house lights down at haze 0, 25, 50 and 100 (`*_h<haze>.png`) and
+once with them up (`*_up.png`; house up clears the haze), into
+`out/regress/<label>/`.
 
 - The clock is frozen and stepped by hand, turbulence is 0, the canvas is
-  1280 x 720 and the room and bloom are pinned, so two runs of the same code
-  match to the pixel. A step not meant to change a scene must diff at 0.
+  1280 x 720, and the app runs on the preference defaults (run.ps1 moves the
+  user's preferences.json aside), so two runs of the same code match to the
+  pixel. A step not meant to change a scene must diff at 0.
+- The glare is the app's own, read from the visualizer on the first load, so
+  a change to the camera or to anything bright shows in the shots as the user
+  would see it.
+- A diff says what changed, not whether it is right. Look at every shot that
+  moved.
 - It restarts the app and loads its own scenes over whatever was open; run it
   only when nobody is working in Beam. `preferences.json` and
   `window-state.json` are copied aside and put back.

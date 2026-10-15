@@ -83,7 +83,7 @@ class BarChannel {
  */
 class BarChannels {
   /**
-   * @param {Object} bar the profile's `asls.bar` parameters
+   * @param {Object} bar the profile's `beam.bar` parameters
    */
   constructor(bar) {
     const order = String((bar && bar.order) || '').toUpperCase();

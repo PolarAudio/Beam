@@ -34,7 +34,7 @@ uniform float depthBias;         // Metres past the surface a sample may still b
 uniform sampler2D goboAtlas;     // Every gobo pattern, in a grid; pattern 0 open
 
 /** The atlas is a grid of this many patterns across, as gobo_library.js. */
-#define GOBO_GRID 16.0
+#define GOBO_GRID 8.0
 
 /**
  * How blurred a gobo reads in the air, as mip levels of its 256 px pattern:
@@ -45,9 +45,9 @@ uniform sampler2D goboAtlas;     // Every gobo pattern, in a grid; pattern 0 ope
  * so structure in a beam washes out with distance while the same pattern
  * lands crisp on the wall. The surface reads the pattern sharp.
  */
-#define GOBO_LOD_BASE 1.5
+#define GOBO_LOD_BASE 2.5
 #define GOBO_BLUR_PER_METRE 0.03
-#define GOBO_LOD_MAX 4.0
+#define GOBO_LOD_MAX 5.0
 
 /**
  * A gobo wheel is a disc turning on its own centre, so a gobo arrives at the
@@ -183,6 +183,7 @@ float dbgField = 0.0;
 uniform bool fogState;
 uniform float beamUnits;     // Light-field intensity into scene luminance, per unit of scattering coefficient
 uniform float hazeScatter;   // The haze's scattering coefficient at full haze, per metre
+uniform float hazeExtinction; // What a beam loses per metre at full haze; see HAZE_EXTINCTION_SHARE
 uniform float fogFactor;    // How much haze there is, 0..1
 uniform float fogScale;      // How wide one haze feature is, in metres
 uniform float fogTurbulence; // Global fogging turbulence factor
@@ -521,15 +522,19 @@ float beamEdge(float r) {
  * @function beamBlurLevels
  * @brief the lens's blur as gobo blur levels
  * @param float blur in field radii
- * @returns float 0 sharp to 2 the softest baked level
+ * @returns float 0 sharp to 2 the softest baked level, on to 3 the mean
  *
- * The atlas bakes a cell of 128 px, two field radii across, at Gaussian
- * sigmas of 0, 2.5 and 7 px (gobo_library.js); a blur disc of radius b
- * field radii is a sigma of about half its 64 b px.
+ * The atlas bakes a cell of 256 px, two field radii across, at Gaussian
+ * sigmas of 0, 5 and 14 px (gobo_library.js); a blur disc of radius b
+ * field radii is a sigma of about half its 128 b px. Past the softest
+ * level the pattern fades to its mean, gone at a blur of one field radius,
+ * as the pool's edge has spread by then.
  */
 float beamBlurLevels(float blur) {
-  float sigma = 32.0 * blur;
-  return sigma < 2.5 ? sigma / 2.5 : 1.0 + min((sigma - 2.5) / 4.5, 1.0);
+  float sigma = 64.0 * blur;
+  if (sigma < 5.0) return sigma / 5.0;
+  if (sigma < 14.0) return 1.0 + (sigma - 5.0) / 9.0;
+  return 2.0 + min((blur - 14.0 / 64.0) / (1.0 - 14.0 / 64.0), 1.0);
 }
 
 vec2 beamStencil(vec2 p, vec2 along, float lod) {
@@ -538,11 +543,15 @@ vec2 beamStencil(vec2 p, vec2 along, float lod) {
   // Framing blades sit in the gate with the gobos, as sharp as the focus
   // makes them.
   float bladeSoft = 0.01 + 0.06 * sampleDefocus;
+  // An animation disc sits in the gate with the gobos, never sharper than
+  // they are in the air. Its table row is the light's, as the shapers' is.
+  float discDefocus = max(sampleDefocus, 1.0);
   if (facets < 2) {
     float v = beamEdge(length(p))
       * beamGobos(p, along, lod)
       * beamIris(p)
-      * shaperMask(shaperTable, vShaperRow, p, bladeSoft);
+      * shaperMask(shaperTable, vShaperRow, p, bladeSoft)
+      * animationMask(animationTable, animationAtlas, vShaperRow, p, discDefocus, sampleBlur);
     float far = beamSplit(p);
     return vec2(v * (1.0 - far), v * far);
   }
@@ -553,7 +562,8 @@ vec2 beamStencil(vec2 p, vec2 along, float lod) {
     float v = beamEdge(length(q))
       * beamGobos(q, along, lod)
       * beamIris(q)
-      * shaperMask(shaperTable, vShaperRow, q, bladeSoft);
+      * shaperMask(shaperTable, vShaperRow, q, bladeSoft)
+      * animationMask(animationTable, animationAtlas, vShaperRow, q, discDefocus, sampleBlur);
     float far = beamSplit(q);
     sum += vec2(v * (1.0 - far), v * far);
   }
@@ -847,7 +857,7 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
   // Where the field's cone would open from behind the lens, which the
   // samples are spaced by; a prism only widens the drawn cone.
   float apexBehind = r0 / max(m / vSpread, 1e-4);
-  float extinctionPerMetre = hazeScatter * clamp(fogFactor, 0.0, 1.0);
+  float extinctionPerMetre = hazeExtinction * clamp(fogFactor, 0.0, 1.0);
   float samples = float(BEAM_PROFILE_SAMPLES);
   // Distance from the cone's virtual apex at the ends of the lit stretch,
   // which is what the irradiance falls off with.
@@ -974,31 +984,6 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
   return sumLight;
 }
 
-/**
- * @function haloPhase
- * @brief the phase the halo's source is drawn with
- * @param float cosView the beam's travel dotted with the direction to the eye
- * @returns float per steradian
- *
- * The halo is the beam's light scattered twice: out of the beam at an angle
- * t1 to its axis, then towards the eye. For the air beside the beam where a
- * view ray passes closest, the second angle is acos(cos t1 cosView), so the
- * pair weighs Q = integral over t1 of p(t1) p(acos(cos t1 cosView)). The
- * kernel in beam_halo.js was worked out for even scattering both times, where
- * the same integral is pi / (4 pi)^2; drawing the source with 4 Q instead of
- * the even 1 / (4 pi) carries the difference. Side-on that is 0.70 of the
- * even value, looking down a beam towards its lens 33 times it. Thirty-two
- * steps hold the forward lobe; it runs only in the small halo draw.
- */
-float haloPhase(float cosView) {
-  const int STEPS = 32;
-  float sum = 0.0;
-  for (int i = 0; i < STEPS; i++) {
-    float c = cos(M_PI * (float(i) + 0.5) / float(STEPS));
-    sum += hazeLobes(c) * hazeLobes(c * cosView);
-  }
-  return 4.0 * sum * M_PI / float(STEPS);
-}
 
 void main() {
   #include <clipping_planes_fragment>

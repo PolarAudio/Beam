@@ -19,6 +19,7 @@
  * Usage:
  *   npm test
  */
+import { kindOf } from '@/models/DMX/generic/fixture_kind';
 import {
   DEFAULT_PROJECTOR_PARAMS,
   PROJECTOR_CHANNELS,
@@ -184,13 +185,13 @@ console.log('\n-- the profile as a whole --');
 {
   const profile = buildProjectorProfile();
   check('is recognisable as one of ours', isProjectorProfile(profile), true);
-  check('an LED bar is not', isProjectorProfile({ asls: { bar: {} } }), false);
+  check('an LED bar is not', isProjectorProfile({ beam: { bar: {} } }), false);
   check('nor is nothing', isProjectorProfile(null), false);
-  check('carries its parameters', profile.asls.projector.pixelsWide, 1920);
+  check('carries its parameters', profile.beam.projector.pixelsWide, 1920);
   // OFL's order is width, height, depth -- which is not the renderer's axis
   // order (x across, y forward, z up). Two different questions, both right.
-  check('dimensions in millimetres', JSON.stringify(profile.physical.dimensions), '[490,200,550]');
-  check('the lens travels with the profile', profile.asls.projector.lensDiameter, 0.12);
+  check('size in millimetres, from the kind', JSON.stringify(kindOf(profile).sizeOf(profile)), '[490,200,550]');
+  check('the lens travels with the profile', profile.beam.projector.lensDiameter, 0.12);
 
   // `physical.lens.degreesMinMax` is read narrowest-first by the fixture model,
   // and a *larger* throw ratio is the narrower lens -- so the two ends swap on
@@ -203,7 +204,7 @@ console.log('\n-- the profile as a whole --');
 
   const bare = buildProjectorProfile({ channels: [] });
   check('a projector with no DMX still builds', bare.modes[0].channels.length, 0);
-  check('and still has its optics', bare.asls.projector.throwMin, params.throwMin);
+  check('and still has its optics', bare.beam.projector.throwMin, params.throwMin);
 }
 
 console.log('\n-- the frustum a coverage preview is drawn from --');

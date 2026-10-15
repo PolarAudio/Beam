@@ -9,8 +9,9 @@
  * attribute and physical value.
  *
  * Some states hold until the channel that set them moves on: a colour preset,
- * a prism, a pan/tilt speed and frost. Any other channel may be unrelated
- * and, with changed-only DMX input, never written again, so the release
+ * a prism, a pan/tilt speed, frost, a correction filter and an animation
+ * disc. Any other channel may be unrelated and, with changed-only DMX input,
+ * never written again, so the release
  * belongs to the channel that set it.
  *
  * A fixture with several lenses has a light for each. A channel acts on the
@@ -21,6 +22,24 @@
  */
 
 import { nameOf, namesClosed, namesOpen } from './name_rules';
+import { cieToHex } from './fixture_parts';
+import { stateAt } from './dmx_engine';
+
+/**
+ * The kinds the head acts on: those `gdtfAction` gives and the OFL capability
+ * types a translated function carries. A kind outside this set reaches the
+ * head and changes nothing. The guides read it through `drawsFunction` and
+ * `headActsOn`, so they say what the head does.
+ */
+const HEAD_KINDS = new Set([
+  'Intensity', 'ColorIntensity', 'ColorPreset', 'ColorTemperature', 'CorrectionFilter',
+  'Shutter', 'ShutterStrobe', 'StrobeSpeed', 'StrobeDuration',
+  'Pan', 'PanFine', 'Tilt', 'TiltFine', 'PanContinuous', 'TiltContinuous', 'PanTiltSpeed',
+  'WheelSlot', 'WheelShake', 'WheelSlotRotation', 'WheelRotation',
+  'Prism', 'PrismRotation', 'Frost', 'FrostEffect', 'Focus', 'Zoom', 'BeamAngle', 'Iris',
+  'Blade', 'ShaperRotation',
+  'AnimationSlot', 'AnimationAngle', 'AnimationRotation',
+]);
 
 /** GDTF additive and subtractive colour attributes, by the head's colour names. */
 const COLOR_NAMES = {
@@ -102,13 +121,30 @@ function gdtfAction(c, origins, type = null) {
   if (COLOR_NAMES[a]) {
     return { kind: 'ColorIntensity', values: { color: COLOR_NAMES[a], colorBrightness: physical } };
   }
-  if (a === 'CTC') return { kind: 'ColorTemperature', values: { colorTemperature: physical } };
-  // A CTO or CTB stated in kelvin is a white point too; one stated as a share
-  // of the filter is not, and the head has no filter to draw it with.
-  if ((a === 'CTO' || a === 'CTB') && Math.max(fn.physicalFrom, fn.physicalTo) > 100) {
-    return { kind: 'ColorTemperature', values: { colorTemperature: physical } };
+  // A CTC, CTO or CTB stated in kelvin is a white point. One stated as a share
+  // and linked to a filter is that filter slid into the beam, the share how
+  // far in: 0 to 1, or 0 to 100 as a percentage. A share with no filter has
+  // no colour to draw.
+  if (a === 'CTC' || a === 'CTO' || a === 'CTB') {
+    const span = Math.max(Math.abs(fn.physicalFrom), Math.abs(fn.physicalTo));
+    if (span > 100) return { kind: 'ColorTemperature', values: { colorTemperature: physical } };
+    const filter = fn.filter && type && type.physical
+      ? type.physical.filters.find((f) => f.name === fn.filter) : null;
+    if (filter && filter.color) {
+      const { Y } = filter.color;
+      return {
+        kind: 'CorrectionFilter',
+        values: {
+          color: cieToHex(filter.color),
+          transmission: Y > 0 && Y < 100 ? Y / 100 : null,
+          amount: Math.min(Math.max(span > 1 ? physical / 100 : physical, 0), 1),
+        },
+      };
+    }
   }
   if (/^Focus\d+$/.test(a)) return { kind: 'Focus', values: { focus: physical * 100 } };
+  // Autofocus by distance: the file's range is in metres.
+  if (/^Focus\d+Distance$/.test(a)) return { kind: 'Focus', values: { focusDistance: physical } };
   if (a === 'Iris') return { kind: 'Iris', values: { openPercent: physical * 100 } };
   // Framing blades: each end's insertion, 0 out to 1 across the whole field,
   // and the blade's own turn in degrees; the shaper's turn in degrees.
@@ -118,6 +154,41 @@ function gdtfAction(c, origins, type = null) {
   }
   if (a === 'ShaperRot') return { kind: 'ShaperRotation', values: { degrees: physical } };
   if (/^Frost\d+$/.test(a)) return { kind: 'Frost', values: { frostIntensity: physical * 100 } };
+
+  // An animation wheel or system: the main attribute picks the disc's slot,
+  // and for a system says how far in it is; Pos holds it at an angle and
+  // PosRotate or Spin turns it. Ayrton's files write AnimationWheelSpin with
+  // no wheel number.
+  const animation = /^Animation(Wheel|System)(\d*)(|Pos|PosRotate|Spin|WheelSpin)$/.exec(a);
+  if (animation) {
+    const [, kind, , suffix] = animation;
+    if (suffix === '') {
+      if (!fn.wheel) return null;
+      const span = Math.max(Math.abs(fn.physicalFrom), Math.abs(fn.physicalTo));
+      let insertion = 1;
+      if (kind === 'System') insertion = span > 1 ? physical / 100 : physical;
+      return {
+        kind: 'AnimationSlot',
+        values: {
+          wheel: fn.wheel,
+          slotNumber: set && set.wheelSlotIndex ? set.wheelSlotIndex : 0,
+          insertion: Math.min(Math.max(insertion, 0), 1),
+        },
+      };
+    }
+    // An index whose preset names a slot puts that disc in as well, as
+    // Robe's do: "proportional indexing" on the animation slot.
+    if (suffix === 'Pos' && fn.wheel && set && set.wheelSlotIndex) {
+      return {
+        kind: 'AnimationSlot',
+        values: {
+          wheel: fn.wheel, slotNumber: set.wheelSlotIndex, insertion: 1, angle: physical,
+        },
+      };
+    }
+    if (suffix === 'Pos') return { kind: 'AnimationAngle', values: { angle: physical } };
+    return { kind: 'AnimationRotation', values: { rpm: physical * RPM_PER_DEGREE_PER_SECOND } };
+  }
 
   const wheel = /^(Color|Gobo|Prism)(\d+)(.*)$/.exec(a);
   if (wheel && fn.wheel) {
@@ -196,6 +267,35 @@ function gdtfAction(c, origins, type = null) {
   return null;
 }
 
+/**
+ * Whether the head acts on a kind of action or OFL capability type.
+ *
+ * @param {String} kind
+ * @returns {Boolean}
+ */
+export function headActsOn(kind) {
+  return HEAD_KINDS.has(kind);
+}
+
+/**
+ * Whether the head draws anything for a channel function: what `gdtfAction`
+ * makes of it at its start and at each of its sets, or, for a translated OFL
+ * function, its capability type.
+ *
+ * @param {Object} fn a channel function
+ * @param {Object} [type] the fixture type, for its filters and attributes
+ * @returns {Boolean}
+ */
+export function drawsFunction(fn, type = null) {
+  if (fn.attribute === 'NoFeature') return false;
+  if (fn.ofl) return HEAD_KINDS.has(fn.ofl.type);
+  const values = [fn.dmxFrom, ...fn.sets.map((s) => s.dmxFrom)];
+  return values.some((value) => {
+    const action = gdtfAction({ value, state: stateAt(fn, value) }, { pan: 0, tilt: 0 }, type);
+    return !!action && HEAD_KINDS.has(action.kind);
+  });
+}
+
 export default class HeadDispatch {
   /**
    * @param {Object} head the light it drives: a `Light`, or a `MovingHead`
@@ -213,6 +313,8 @@ export default class HeadDispatch {
     this.prism = null;
     this.panTiltSpeed = null;
     this.frost = null;
+    this.correction = null;
+    this.animation = null;
     /** The wheel each channel last put on a slot, by channel. */
     this.wheelOf = new Map();
     // The head counts pan and tilt up from zero, and GDTF often centres them
@@ -300,6 +402,8 @@ export default class HeadDispatch {
       prism: this.prism,
       panTiltSpeed: this.panTiltSpeed,
       frost: this.frost,
+      correction: this.correction,
+      animation: this.animation,
       wheel: this.wheelOf.get(c),
     };
     for (let i = 0; i < heads.length; i += 1) {
@@ -308,6 +412,8 @@ export default class HeadDispatch {
         this.prism = before.prism;
         this.panTiltSpeed = before.panTiltSpeed;
         this.frost = before.frost;
+        this.correction = before.correction;
+        this.animation = before.animation;
         if (before.wheel === undefined) this.wheelOf.delete(c);
         else this.wheelOf.set(c, before.wheel);
       }
@@ -349,6 +455,16 @@ export default class HeadDispatch {
       && typeof head.setFrost === 'function') {
       head.setFrost(0);
       this.frost = null;
+    }
+    if (this.correction === c && kind !== 'CorrectionFilter'
+      && typeof head.setCorrectionFilter === 'function') {
+      head.setCorrectionFilter(null, 0);
+      this.correction = null;
+    }
+    if (this.animation === c && kind !== 'AnimationSlot'
+      && typeof head.setAnimation === 'function') {
+      head.setAnimation(null);
+      this.animation = null;
     }
     // A wheel's place follows the channel's current value only. A range
     // whose function positions no slot -- a wheel mode such as
@@ -441,6 +557,24 @@ export default class HeadDispatch {
         break;
       case 'ColorTemperature':
         head.colorTemperature = values.colorTemperature;
+        break;
+      case 'CorrectionFilter':
+        if (typeof head.setCorrectionFilter === 'function') {
+          head.setCorrectionFilter(values, values.amount);
+          this.correction = c;
+        }
+        break;
+      case 'AnimationSlot':
+        if (typeof head.setAnimation === 'function') {
+          head.setAnimation(values);
+          this.animation = c;
+        }
+        break;
+      case 'AnimationAngle':
+        if (typeof head.setAnimationAngle === 'function') head.setAnimationAngle(values.angle);
+        break;
+      case 'AnimationRotation':
+        if (typeof head.setAnimationRotation === 'function') head.setAnimationRotation(values.rpm);
         break;
       case 'ColorPreset': {
         const preset = values.color ? values.color[0] : null;

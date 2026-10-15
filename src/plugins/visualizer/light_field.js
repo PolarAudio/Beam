@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 import Shapers, { SHAPER_GLSL } from './shapers';
+import Animation, { ANIMATION_GLSL } from './animation_wheel';
 import DisplayLight from './display_light';
 
 RectAreaLightUniformsLib.init();
@@ -94,8 +95,7 @@ const SCENE_INTENSITY_PER_UNIT = CANDELA_PER_UNIT * LUX_SCALE;
  * A source that has a tile passes it in its record, and the loop drops the
  * light on any point past the tile's surface. One depth from one camera
  * serves the beam and the pool, so they cannot disagree about where the
- * light stops. Heads that cast a three shadow keep a real `THREE.SpotLight`
- * and three's own path, capped as before.
+ * light stops. A head with no tile lights with no shadow.
  */
 
 /**
@@ -120,7 +120,8 @@ const SCENE_INTENSITY_PER_UNIT = CANDELA_PER_UNIT * LUX_SCALE;
  *      1 / focus distance, 1/m, 0 infinity; cosine of the cone's outer edge.
  *      An iris of -1 marks an area light, a display: the lens radius is then
  *      the radius of a disc of the panel's area
- *  11: the light's row of the shaper table, -1 for no blades
+ *  11: the light's row of the shaper table, -1 for no blades; y its row of
+ *      the animation table, -1 for no disc
  *
  * An area light uses texels 7 and 8, which it has no gobo or prism for, for
  * its rectangle: the half-width and half-height vectors, world. 7.w is its
@@ -194,6 +195,8 @@ const record = {
   iris: 1,
   /** The light's row of the shaper table, -1 for no blades. */
   shaperRow: -1,
+  /** The light's row of the animation table, -1 for no disc in the gate. */
+  animationRow: -1,
   /** An area light's atlas tile, signed and 1-based as texel 7.w; 0 none. */
   pictureSlot: 0,
   /** An area light's half-width and half-height, world; read when iris is -1. */
@@ -226,6 +229,11 @@ const uniforms = {
   lightFieldGobo: { value: null },
   // Every light's framing blades; see shapers.js.
   lightFieldShapers: { value: Shapers.texture },
+  // Every light's animation disc and the discs' images; see animation_wheel.js.
+  lightFieldAnimation: { value: Animation.table },
+  // Built on first read: the atlas is a canvas, and this module also loads
+  // where there is no document.
+  lightFieldAnimationAtlas: { get value() { return Animation.atlas; } },
   // The rectangle-light tables three's own RectAreaLight reads; half float is
   // filterable on every WebGL2 device.
   lightFieldLtc1: { value: THREE.UniformsLib.LTC_HALF_1 },
@@ -359,8 +367,8 @@ const FIELD_LIGHT_CHUNK = /* glsl */`
         // The lens's blur at this surface, in field radii: the lens radius times
         // how far the surface is from the focus, over the field's radius here.
         float blur = packedLens.y * abs( 1.0 - along * packedLens.z ) / max( along * tanField, 1e-5 );
-        float shaperRow = texelFetch( lightField, ivec2( 11, i ), 0 ).x;
-        vec2 sides = fieldStencil( aperture, packedOrigin.w, packedGobo, packedPrism, packedColorB.w, packedLens.x, blur, shaperRow );
+        vec2 rows = texelFetch( lightField, ivec2( 11, i ), 0 ).xy;
+        vec2 sides = fieldStencil( aperture, packedOrigin.w, packedGobo, packedPrism, packedColorB.w, packedLens.x, blur, rows.x, rows.y );
         float shape = sides.x + sides.y;
         if ( shape <= 0.0 ) continue;
         attenuation *= shape;
@@ -447,11 +455,14 @@ uniform float lightFieldDepthTile;
 uniform float lightFieldSoftShadow;
 uniform sampler2D lightFieldGobo;
 uniform sampler2D lightFieldShapers;
+uniform sampler2D lightFieldAnimation;
+uniform sampler2D lightFieldAnimationAtlas;
 uniform sampler2D lightFieldLtc1;
 uniform sampler2D lightFieldLtc2;
 uniform float lightFieldAreaSpecular;
 uniform sampler2D lightFieldPictures;
 ${SHAPER_GLSL}
+${ANIMATION_GLSL}
 
 // The display atlas, as display_light.js: GRID tiles across of TILE texels.
 #define FIELD_PICTURE_GRID ${DisplayLight.GRID.toFixed(1)}
@@ -572,7 +583,7 @@ vec2 fieldPrismOffset( int k, int facets, bool linear, float angle, float spread
 // The most facets a prism is drawn with.
 #define FIELD_PRISM_FACETS 8
 // The gobo atlas is a grid of this many patterns across, as gobo_library.js.
-#define FIELD_GOBO_GRID 16.0
+#define FIELD_GOBO_GRID 8.0
 
 // A gobo's stencil at a point of the aperture, (0,0) the axis and 1 the
 // field's radius; 1 where light passes. Pattern 0 is open and skips the
@@ -678,16 +689,19 @@ float fieldEdge( float r, float inner, float blur ) {
   return height * ( 1.0 - smoothstep( lo, 1.0 + blur, r ) );
 }
 
-// The lens's blur as gobo blur levels. The atlas bakes a cell of 128 px,
-// two field radii across, at Gaussian sigmas of 0, 2.5 and 7 px, as
+// The lens's blur as gobo blur levels. The atlas bakes a cell of 256 px,
+// two field radii across, at Gaussian sigmas of 0, 5 and 14 px, as
 // gobo_library.js; a blur disc of radius b field radii is a sigma of about
-// half its 64 b px.
+// half its 128 b px. Past the softest level, 2, the pattern fades to its
+// mean, gone at a blur of one field radius, as the pool's edge has spread.
 float fieldBlurLevels( float blur ) {
-  float sigma = 32.0 * blur;
-  return sigma < 2.5 ? sigma / 2.5 : 1.0 + min( ( sigma - 2.5 ) / 4.5, 1.0 );
+  float sigma = 64.0 * blur;
+  if ( sigma < 5.0 ) return sigma / 5.0;
+  if ( sigma < 14.0 ) return 1.0 + ( sigma - 5.0 ) / 9.0;
+  return 2.0 + min( ( blur - 14.0 / 64.0 ) / ( 1.0 - 14.0 / 64.0 ), 1.0 );
 }
 
-vec2 fieldStencil( vec2 p, float inner, vec4 gobo, vec4 prism, float split, float iris, float blur, float shaperRow ) {
+vec2 fieldStencil( vec2 p, float inner, vec4 gobo, vec4 prism, float split, float iris, float blur, float shaperRow, float animationRow ) {
   int facets = int( abs( prism.x ) );
   bool linear = prism.x < 0.0;
   // The gobo is as soft as the frost or the lens makes it, whichever is more.
@@ -698,7 +712,8 @@ vec2 fieldStencil( vec2 p, float inner, vec4 gobo, vec4 prism, float split, floa
     float v = fieldEdge( length( p ), inner, blur )
       * fieldGobos( p, gobo, defocus )
       * fieldIris( p, iris, defocus )
-      * shaperMask( lightFieldShapers, shaperRow, p, bladeSoft );
+      * shaperMask( lightFieldShapers, shaperRow, p, bladeSoft )
+      * animationMask( lightFieldAnimation, lightFieldAnimationAtlas, animationRow, p, defocus, blur );
     float far = fieldSplit( p, split, defocus );
     return vec2( v * ( 1.0 - far ), v * far );
   }
@@ -709,7 +724,8 @@ vec2 fieldStencil( vec2 p, float inner, vec4 gobo, vec4 prism, float split, floa
     float v = fieldEdge( length( q ), inner, blur )
       * fieldGobos( q, gobo, defocus )
       * fieldIris( q, iris, defocus )
-      * shaperMask( lightFieldShapers, shaperRow, q, bladeSoft );
+      * shaperMask( lightFieldShapers, shaperRow, q, bladeSoft )
+      * animationMask( lightFieldAnimation, lightFieldAnimationAtlas, animationRow, q, defocus, blur );
     float far = fieldSplit( q, split, defocus );
     sum += vec2( v * ( 1.0 - far ), v * far );
   }
@@ -783,6 +799,7 @@ const LightField = {
       record.invFocus = 0;
       record.cosReach = null;
       record.shaperRow = -1;
+      record.animationRow = -1;
       record.pictureSlot = 0;
       if (sources[i].readLight(record)) {
         LightField.ensureCapacity(count + 1);
@@ -845,7 +862,7 @@ const LightField = {
         data[at + 43] = record.cosOuter;
 
         data[at + 44] = record.shaperRow;
-        data[at + 45] = 0;
+        data[at + 45] = record.animationRow;
         data[at + 46] = 0;
         data[at + 47] = 0;
         count += 1;

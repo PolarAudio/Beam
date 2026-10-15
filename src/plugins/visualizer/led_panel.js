@@ -3,7 +3,7 @@ import DMXStore from './dmx_store';
 import SceneEnv from './scene_env';
 import SceneManager from './scene_manager';
 import {
-  EMITTER_UNIFORMS, GLOW_UNIFORMS, GLOW_SCALE, HALO_PITCH_LIMIT,
+  GLOW_UNIFORMS, GLOW_SCALE, HALO_PITCH_LIMIT,
   GLOW_BASE_SIZE, STANDOFF,
 } from './led_field';
 import {
@@ -32,7 +32,7 @@ import { castsContactShadow } from './contact_shadows';
  *      order, serpentine, universe straddling -- happens here,
  *      in parallel, and lands as a plain 2D image.
  *
- *   2. Draw. One textured quad. The die and halo are evaluated per fragment
+ *   2. Draw. One textured quad. The dies are evaluated per fragment
  *      from the local grid coordinate, so cost follows screen area and nothing
  *      else. A 256 x 256 tile then costs what a 16 x 16 one does.
  *
@@ -52,52 +52,18 @@ import { castsContactShadow } from './contact_shadows';
  */
 
 /**
- * Emitters at their real luminance, from the fixture's lumens, rather than
- * at the tuned gain with a halo and near-camera dimming. False restores the
- * tuned look.
- *
- * @constant {Boolean}
- */
-const PHOTOMETRIC_LEDS = true;
-
-/**
  * Cells a screen pixel may span before the fragment stops resolving individual
  * dies and reads the averaged mip instead.
  *
  * Below the first figure a cell is comfortably larger than a pixel and the
  * die-and-gap structure is real detail worth drawing. Above the second it is
  * smaller than a pixel and drawing that structure only aliases. Between them
- * the two crossfade, and they agree there because the far field is scaled by
- * the near field's own mean -- see `cellNorm`.
+ * the two crossfade, and they agree there because the far field is the near
+ * field's mean over a cell.
  *
  * @constant {Array}
  */
 const DETAIL_RANGE = [0.5, 2.0];
-
-/**
- * Mean of the halo over its own footprint, weighted by radius.
- *
- * The halo is `(1 - u)^3`, so this is the exact value of `2 * integral of
- * (1-u)^3 * u du` over the unit disc: 1/20. Constant, because the halo's shape
- * is -- which is what lets the far field be matched to the near one without
- * sampling anything.
- *
- * @constant {Number}
- */
-const HALO_MEAN = 0.05;
-
-/**
- * The die's equivalent, as a coefficient on its radius squared.
- *
- * The die is a disc with a smoothstep edge running from 0.6r to r, so its
- * weighted integral is about `(0.36 r^2 + r^2) / 4`. Left as a coefficient
- * rather than folded into a number because `coreScale` moves the radius live,
- * and the far field has to follow it -- otherwise tuning the die would change
- * a panel's brightness close up but not at distance.
- *
- * @constant {Number}
- */
-const DIE_MEAN_COEFFICIENT = 0.34;
 
 /**
  * How far a fixture's halo reaches past its edge, as a fraction of its
@@ -297,7 +263,6 @@ function readPanelLight(panel, record) {
 // Every lit panel's picture goes into the display atlas, for its light.
 DisplayLight.provide(() => {
   const pictures = [];
-  if (!PHOTOMETRIC_LEDS) return pictures;
   panels.forEach((panel) => {
     if (panel.mesh.visible && panel.faceLuminance > 0) {
       pictures.push({
@@ -430,8 +395,6 @@ const UNSCRAMBLE_FRAGMENT = `${SHADER_DEFINES + ADDRESSING /* glsl */}
 `;
 
 const PANEL_VERTEX = /* glsl */`
-  uniform float dimStartDistance;
-
   varying vec2 vUv;
   varying vec3 vNormalWorld;
   varying vec3 vToCamera;
@@ -439,9 +402,9 @@ const PANEL_VERTEX = /* glsl */`
   void main() {
     vUv = uv;
     vec4 world = modelMatrix * vec4(position, 1.0);
-    // Orthographic: the view's direction, at a length that does not dim.
+    // Orthographic: the view's direction.
     vToCamera = isOrthographic
-      ? vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2]) * dimStartDistance
+      ? vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2])
       : cameraPosition - world.xyz;
     vNormalWorld = normalize(mat3(modelMatrix) * normal);
     gl_Position = projectionMatrix * viewMatrix * world;
@@ -459,130 +422,19 @@ const PANEL_FRAGMENT_HEAD = /* glsl */`
   uniform vec2 halfQuad;
   /** Drawn footprint of one emitter, matching the billboard path's quad. */
   uniform float quadSize;
-  /** The die's radius, as a fraction of that footprint. */
-  uniform float dieRadius;
-  /**
-   * The kernel's footprint area against a cell's. Turns a per-emitter shape
-   * into a per-cell mean, which is what the far field needs.
-   */
-  uniform float cellNorm;
   uniform float beamCutoff;
   /** One die's luminance at full white, in scene units. */
   uniform float dieLuminance;
   /** One die's real radius, in metres. */
   uniform float dieRadiusMetres;
 
-  // Shared by reference with the billboard emitters, so a strip and a tile
-  // standing side by side cannot drift and one debug panel drives both.
-  uniform float gain;
-  uniform float dimStartDistance;
-  uniform float dimFloor;
-  uniform float coreScale;
-  uniform float haloStrength;
-  uniform float backScatter;
-
   varying vec2 vUv;
   varying vec3 vNormalWorld;
   varying vec3 vToCamera;
-
-  /**
-   * One emitter's contribution at distance u from its centre, measured
-   * against half its drawn footprint. The same die-and-halo the billboard
-   * emitters draw, so the two paths agree wherever they meet.
-   */
-  float kernel(float u, float distanceScale) {
-    float dieR = dieRadius * coreScale;
-    float die = 1.0 - smoothstep(dieR * 0.6, dieR, u);
-    float halo = pow(max(0.0, 1.0 - u), 3.0);
-    return die + halo * haloStrength * distanceScale;
-  }
 `;
 
-/** The tuned emitter: gain, a halo, and dimming as the camera closes in. */
-const PANEL_MAIN_TUNED = /* glsl */`
-  void main() {
-    vec3 normal = normalize(vNormalWorld);
-    vec3 toCamera = normalize(vToCamera);
-
-    // Full brightness across most of the cone, falling away only near its edge.
-    float facing = dot(normal, toCamera);
-    float visibility = smoothstep(beamCutoff, mix(beamCutoff, 1.0, 0.15), facing);
-    // Never quite zero: the dies are hidden when the panel faces away, but
-    // light scattering off it still reaches the eye.
-    visibility = mix(backScatter, 1.0, visibility);
-
-    // Emitters dim as the camera closes in, so their glare recedes and the
-    // individual LEDs stay readable up close.
-    float distanceScale = clamp(length(vToCamera) / dimStartDistance, dimFloor, 1.0);
-
-    // Grid coordinates, counting rows from the top so they match the image.
-    // Panel-local metres, centred on the emitter face. The quad is drawn larger
-    // than the face by one emitter halo, so an emitter at the edge is not sliced
-    // off -- on a single-row bar the halo is wider than the face itself, and
-    // clipping it to the face makes a bar look cut out.
-    vec2 p = (vUv - 0.5) * (halfQuad * 2.0);
-
-    // Grid coordinates, counting rows from the top so they match the image.
-    vec2 grid = vec2(
-      (p.x + halfFace.x) / cellSize.x,
-      (halfFace.y - p.y) / cellSize.y
-    );
-    float cellsPerPixel = max(fwidth(grid.x), fwidth(grid.y));
-    float farness = smoothstep(
-      ${DETAIL_RANGE[0].toFixed(2)},
-      ${DETAIL_RANGE[1].toFixed(2)},
-      cellsPerPixel
-    );
-
-    // Far field: the mip chain has already averaged every cell this fragment
-    // covers, so a single tap is the anti-aliased answer. Scaled by the
-    // kernel's mean over a cell, or the panel would brighten as it receded --
-    // most of a cell is dark body, and only the average knows that.
-    float dieR = dieRadius * coreScale;
-    float coverage = cellNorm * (
-      ${DIE_MEAN_COEFFICIENT.toFixed(2)} * dieR * dieR
-      + ${HALO_MEAN.toFixed(2)} * haloStrength * distanceScale
-    );
-    // Beyond the face there are no emitters, so the averaged read has to fade
-    // across the margin rather than smearing the edge colour over it.
-    vec2 faceUv = (p + halfFace) / (halfFace * 2.0);
-    float beyond = length(max(abs(p) - halfFace, vec2(0.0)));
-    float within = pow(max(0.0, 1.0 - beyond / (quadSize * 0.5)), 3.0);
-    vec3 far = texture2D(panelTexture, clamp(faceUv, 0.0, 1.0)).rgb * coverage * within;
-
-    // Near field: every emitter whose halo can reach this fragment. The halo is
-    // capped at one cell's reach, so the 3x3 neighbourhood is all of them.
-    vec3 near = vec3(0.0);
-    if (farness < 0.999) {
-      ivec2 cell = ivec2(floor(grid));
-      for (int dy = -1; dy <= 1; dy += 1) {
-        for (int dx = -1; dx <= 1; dx += 1) {
-          ivec2 at = cell + ivec2(dx, dy);
-          if (at.x < 0 || at.y < 0 || at.x >= gridSize.x || at.y >= gridSize.y) continue;
-          // Offset from that emitter's centre in metres, so the halo stays
-          // round rather than being stretched along with a non-square cell.
-          vec2 delta = (grid - (vec2(at) + 0.5)) * cellSize;
-          float u = length(delta) * 2.0 / quadSize;
-          if (u > 1.0) continue;
-          vec3 emitted = texelFetch(
-            panelTexture,
-            ivec2(at.x, gridSize.y - 1 - at.y),
-            0
-          ).rgb;
-          near += emitted * kernel(u, distanceScale);
-        }
-      }
-    }
-
-    vec3 color = mix(near, far, farness) * gain * distanceScale * visibility;
-
-    // Linear HDR on purpose: tone mapping happens in the composer.
-    gl_FragColor = vec4(color, 1.0);
-  }
-`;
-
-/** The photometric emitter. */
-const PANEL_MAIN_PHOTOMETRIC = /* glsl */`
+/** The emitter. */
+const PANEL_MAIN = /* glsl */`
   // Photometric: each die is a disc of its real size at its real luminance.
   // Smaller than a pixel, it is drawn about a pixel wide at the luminance
   // that keeps its flux, so it neither vanishes nor shimmers. Glare is the
@@ -649,8 +501,7 @@ const PANEL_MAIN_PHOTOMETRIC = /* glsl */`
   }
 `;
 
-const PANEL_FRAGMENT = PANEL_FRAGMENT_HEAD
-  + (PHOTOMETRIC_LEDS ? PANEL_MAIN_PHOTOMETRIC : PANEL_MAIN_TUNED);
+const PANEL_FRAGMENT = PANEL_FRAGMENT_HEAD + PANEL_MAIN;
 
 /**
  * Scattered light from a fixture, marched through the air around it.
@@ -904,7 +755,7 @@ function scanFlags(params) {
  * Everything the two shaders need about one bar's geometry.
  *
  * @param {Object} params bar parameters
- * @returns {Object} sizes in metres, plus the derived kernel constants
+ * @returns {Object} sizes in metres
  */
 function geometryOf(params) {
   const { stepX, stepY } = gridSteps(params);
@@ -913,7 +764,6 @@ function geometryOf(params) {
   // its neighbours' spacing piles up into a white sheet, and costs the fill
   // rate to do it.
   const quadSize = Math.min(params.emitterSize * GLOW_SCALE, pitch * HALO_PITCH_LIMIT);
-  const cellArea = stepX * stepY;
   return {
     // The cells tile the emitter face exactly, each emitter in the middle of
     // its own, so the span is just the grid times the step.
@@ -927,12 +777,6 @@ function geometryOf(params) {
     // halo is wider than the 12 mm face, and without it the run reads as a
     // strip of light cut out with scissors.
     margin: quadSize / 2,
-    dieRadius: Math.min(0.5, params.emitterSize / quadSize),
-    // Area of the kernel's footprint against a cell's, which is what turns the
-    // per-emitter shape into the per-cell mean the far field is scaled by.
-    cellNorm: cellArea > 0
-      ? (2 * Math.PI * (quadSize / 2) ** 2) / cellArea
-      : 0,
   };
 }
 
@@ -1007,19 +851,9 @@ function createPanel(params) {
       halfFace: { value: new THREE.Vector2(0.5, 0.5) },
       halfQuad: { value: new THREE.Vector2(0.5, 0.5) },
       quadSize: { value: 1 },
-      dieRadius: { value: 0.15 },
-      cellNorm: { value: 1 },
       beamCutoff: { value: 0 },
       dieLuminance: { value: 0 },
       dieRadiusMetres: { value: 0.0025 },
-      // By reference, not by value: one copy of each tunable, shared with the
-      // billboard emitters so neither can drift from the other.
-      gain: EMITTER_UNIFORMS.gain,
-      dimStartDistance: EMITTER_UNIFORMS.dimStartDistance,
-      dimFloor: EMITTER_UNIFORMS.dimFloor,
-      coreScale: EMITTER_UNIFORMS.coreScale,
-      haloStrength: EMITTER_UNIFORMS.haloStrength,
-      backScatter: EMITTER_UNIFORMS.backScatter,
     },
     vertexShader: PANEL_VERTEX,
     fragmentShader: PANEL_FRAGMENT,
@@ -1092,7 +926,7 @@ function createPanel(params) {
   panel.faceLuminance = 0;
   panel.readLight = (record) => readPanelLight(panel, record);
   panels.add(panel);
-  if (PHOTOMETRIC_LEDS) LightField.register(panel);
+  LightField.register(panel);
   return panel;
 }
 
@@ -1169,8 +1003,6 @@ function sync(panel, {
     geometry.spanY / 2 + geometry.margin,
   );
   uniforms.quadSize.value = geometry.quadSize;
-  uniforms.dieRadius.value = geometry.dieRadius;
-  uniforms.cellNorm.value = geometry.cellNorm;
   uniforms.beamCutoff.value = Math.cos((params.beamAngle / 2) * (Math.PI / 180));
   const output = emitterOutput(params);
   live.halfFace.set(geometry.spanX / 2, geometry.spanY / 2);
@@ -1196,9 +1028,7 @@ function sync(panel, {
   glowUniforms.boxHalf.value.fromArray(halo.boxHalf);
   glowUniforms.reach.value = halo.reach;
   glowUniforms.mipLevel.value = halo.mip;
-  glowUniforms.glowScale.value = PHOTOMETRIC_LEDS
-    ? output.faceLuminance / REFERENCE_FACE_LUMINANCE
-    : 1;
+  glowUniforms.glowScale.value = output.faceLuminance / REFERENCE_FACE_LUMINANCE;
   // On the body's centre, not the emitter face: the volume wraps the whole
   // profile, which is what lets a bar glow all the way round rather than off
   // one side. Scale stays 1 -- the box is sized by uniform, so the model matrix

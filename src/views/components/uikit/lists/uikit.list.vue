@@ -183,7 +183,7 @@ export default {
     },
     /** Whether the list is disabled */
     disabled: Boolean,
-    /** Whether Delete and Backspace report the selection for deletion */
+    /** Whether the Delete key reports the selection for deletion */
     deletable: Boolean,
     /**
      * Whether a search box filters the rows by name: every word, in any
@@ -637,6 +637,8 @@ export default {
     /** Handler for list focus-out. */
     handleFocusOut() {
       this.hasFocus = false;
+      // The keys belong to the list only while it has focus.
+      window.removeEventListener('keydown', this.keydownListener);
       this.$emit('focused', false);
     },
     /**
@@ -685,8 +687,13 @@ export default {
      * @param {Event} e keydown event
      */
     keydownListener(e) {
+      // Keys typed into a field, the list's own search box included, edit the
+      // text and nothing else.
+      const { target } = e;
+      if (target && (target.isContentEditable
+        || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return;
       const { key } = e;
-      if (key === 'Backspace' || key === 'Delete') {
+      if (key === 'Delete') {
         this.handleDeletion();
       } else if (key === 'Escape') {
         this.clearHighlighted(true);

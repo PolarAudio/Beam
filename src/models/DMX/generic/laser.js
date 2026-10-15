@@ -7,7 +7,7 @@
  *
  * Like `led_bar.js` and `projector.js`, the generated document is OFL-shaped so
  * `Fixture` reads it through the same path as a library profile, and everything
- * OFL cannot express lives under `asls.laser`.
+ * OFL cannot express lives under `beam.laser`.
  *
  * **A laser is not driven over DMX; it is driven by a point stream.** The picture
  * -- every position and colour -- arrives from a DAC (Ether Dream or LaserCube,
@@ -25,9 +25,11 @@
  * divergence set how thick that ray is drawn and how it grows with distance.
  */
 import { COMMON_CONTROLS } from '../device_settings';
+import { efficacyAt } from './spectral';
 import {
-  ControlSet, ControlDef, PercentType, SwitchType, orderOf, labelsOf,
+  ControlSet, ControlDef, PercentType, SwitchType, EnumType, ChoiceType, orderOf, labelsOf,
 } from '../device_control';
+import { TEST_PATTERN_IDS, TEST_PATTERN_LABELS, TEST_PATTERN_OFF } from '../laser_clips';
 
 /** Radians to degrees, and back, for the scan-angle maths below. */
 const DEG = 180 / Math.PI;
@@ -61,6 +63,33 @@ export const LASER_CHANNELS = {
   Y_POS: 'yPos',
   MIRROR_X: 'mirrorX',
   MIRROR_Y: 'mirrorY',
+  MODE: 'mode',
+  CLIP: 'clip',
+  TEST_PATTERN: 'testPattern',
+  SCAN_RATE: 'scanRate',
+  SPEED: 'speed',
+  DIMMER_LIMIT: 'dimmerLimit',
+  X_SIZE_LIMIT: 'xSizeLimit',
+  Y_SIZE_LIMIT: 'ySizeLimit',
+  ZOOM: 'zoom',
+  ZONE_ROTATION: 'zoneRotation',
+  ROTATION: 'rotation',
+  SPIN: 'spin',
+  CUE_X: 'cueX',
+  CUE_Y: 'cueY',
+};
+
+/**
+ * What the Mode channel can make the laser do: follow its Protocol, play its
+ * standalone list whatever the Protocol says, or nothing at all.
+ */
+export const LASER_MODES = ['input', 'standalone', 'off'];
+
+/** What each mode is called on screen. */
+export const MODE_LABELS = {
+  input: 'As set',
+  standalone: 'Standalone',
+  off: 'Off',
 };
 
 /**
@@ -82,11 +111,12 @@ const atFull = () => new PercentType({ initial: 100 });
 
 /**
  * A galvo cannot deflect past its own maximum, so a laser can only be scaled
- * *down* from full scan -- 100 % is as large as the picture gets.
+ * *down* from full scan -- 100 % is as large as the picture gets. A file's
+ * size may go below 0 to -100 %, the figure at that size turned over.
  *
  * @returns {PercentType}
  */
-const scale = () => new PercentType({ initial: 100 });
+const scale = () => new PercentType({ initial: 100, min: -100 });
 
 /**
  * A -100..+100 % offset, centred by default: moves the figure within the scan
@@ -95,6 +125,16 @@ const scale = () => new PercentType({ initial: 100 });
  * @returns {PercentType}
  */
 const offset = () => new PercentType({ initial: 0, limit: () => 100 });
+
+/**
+ * An angle in degrees, clockwise: a channel's level is 0-360, a file's
+ * range may name -360 to 360.
+ *
+ * @returns {PercentType}
+ */
+const angle = () => new PercentType({
+  initial: 0, min: -360, max: 360, unit: '°',
+});
 
 /**
  * A mounting flip: off by default.
@@ -120,6 +160,39 @@ export const CONTROL_DEFS = [
   new ControlDef(LASER_CHANNELS.Y_POS, 'Y Position', offset()),
   new ControlDef(LASER_CHANNELS.MIRROR_X, 'Mirror X', mirror()),
   new ControlDef(LASER_CHANNELS.MIRROR_Y, 'Mirror Y', mirror()),
+  // The input from the desk: follow the Protocol, play the standalone list,
+  // or nothing. On a channel the range is split evenly in that order.
+  new ControlDef(LASER_CHANNELS.MODE, 'Mode', new EnumType({
+    options: LASER_MODES, initial: 'input', labels: MODE_LABELS,
+  }), { fixable: false }),
+  // The playing standalone clip: an id by hand, a one-based position from a
+  // channel, where 0 plays nothing.
+  new ControlDef(LASER_CHANNELS.CLIP, 'Clip', new ChoiceType({ source: 'laserClips' }), { fixable: false }),
+  // Overrides whatever the laser is fed. On a channel the range is split
+  // evenly over Off and the patterns, Off first.
+  new ControlDef(LASER_CHANNELS.TEST_PATTERN, 'Test Pattern', new EnumType({
+    options: TEST_PATTERN_IDS, initial: TEST_PATTERN_OFF, labels: TEST_PATTERN_LABELS,
+  }), { fixable: false }),
+  // A played clip's clock, the two multiplied: the share of the point rate
+  // the scanners run at, and the cue's playback speed.
+  // Pangolin's channels run the scan rate to 200 % and the speed to 400 %.
+  new ControlDef(LASER_CHANNELS.SCAN_RATE, 'Scan Rate', new PercentType({ initial: 100, max: 200 })),
+  new ControlDef(LASER_CHANNELS.SPEED, 'Speed', new PercentType({ initial: 100, max: 400 })),
+  // A projection zone's limits, as a desk sets them over every cue: the
+  // light out is the dimmer times its limit, the size the scale times its.
+  new ControlDef(LASER_CHANNELS.DIMMER_LIMIT, 'Dimmer Limit', atFull()),
+  new ControlDef(LASER_CHANNELS.X_SIZE_LIMIT, 'X Size Limit', scale()),
+  new ControlDef(LASER_CHANNELS.Y_SIZE_LIMIT, 'Y Size Limit', scale()),
+  // Both sizes at once, multiplying them.
+  new ControlDef(LASER_CHANNELS.ZOOM, 'Zoom', new PercentType({ initial: 100, min: -100, max: 400 })),
+  // The zone's angle and the cue's, in degrees clockwise, which add.
+  new ControlDef(LASER_CHANNELS.ZONE_ROTATION, 'Zone Rotation', angle()),
+  new ControlDef(LASER_CHANNELS.ROTATION, 'Rotation', angle()),
+  // A turn on top, clockwise positive, centred on a channel: see SPIN_AT_FULL.
+  new ControlDef(LASER_CHANNELS.SPIN, 'Spin', new PercentType({ initial: 0, limit: () => 100 })),
+  // The cue's place within the zone, as X/Y Position is the zone's.
+  new ControlDef(LASER_CHANNELS.CUE_X, 'Cue X Position', offset()),
+  new ControlDef(LASER_CHANNELS.CUE_Y, 'Cue Y Position', offset()),
 ];
 
 /** Derived, so a parameter cannot be in one of these and missing from another. */
@@ -195,8 +268,25 @@ export const DEFAULT_LASER_PARAMS = {
    */
   apertureX: 0,
   apertureY: 0,
-  /** The aperture opening, in metres, drawn on the front panel. */
+  /**
+   * The aperture window's width, in metres, drawn on the front panel. Its
+   * height follows from the scan field; see `apertureSize`. Named for the
+   * round opening it once was, which stored definitions still carry.
+   */
   apertureDiameter: 0.03,
+  /**
+   * Where the beam starts, `{ x, y, z }` in metres in the body's frame, for a
+   * laser whose body is a model rather than the box: a GDTF file says where
+   * its Laser geometry sits. Null for the box, whose aperture is on its front
+   * panel at `apertureX` / `apertureY`.
+   */
+  aperture: null,
+  /**
+   * The laser's colour lines, `[{ nm, watts }]`, when the maker gives them:
+   * each diode's wavelength and optical power. Null spreads `power` evenly
+   * over `DEFAULT_LINES`.
+   */
+  lines: null,
   /**
    * How each controllable parameter is decided, keyed as the attributes are.
    *
@@ -207,6 +297,80 @@ export const DEFAULT_LASER_PARAMS = {
    */
   controls: {},
 };
+
+/**
+ * The usual RGB show-laser lines, in nm, for a laser that gives only its total
+ * power.
+ *
+ * @constant {Object}
+ */
+export const DEFAULT_LINES = Object.freeze({ red: 638, green: 520, blue: 450 });
+
+/**
+ * Which colour channel drives a wavelength: red from 590 nm, blue below 490.
+ *
+ * @public
+ * @param {Number} nm
+ * @returns {String} 'red' | 'green' | 'blue'
+ */
+export function channelOf(nm) {
+  if (nm >= 590) return 'red';
+  if (nm < 490) return 'blue';
+  return 'green';
+}
+
+/**
+ * Each colour channel's light at full output: its lumens, from each line's
+ * watts times the eye's response at its wavelength, and the wavelength it is
+ * drawn as -- the strongest line's when two share a channel.
+ *
+ * @public
+ * @param {Object} params laser parameters
+ * @returns {Object} `{ red, green, blue }`, each `{ lumens, nm }`
+ */
+export function laserChannelLumens(params) {
+  const lines = Array.isArray(params.lines) && params.lines.length
+    ? params.lines
+    : Object.values(DEFAULT_LINES).map((nm) => ({
+      nm, watts: Math.max(Number(params.power) || 0, 0) / 3,
+    }));
+  const out = {
+    red: { lumens: 0, nm: DEFAULT_LINES.red, watts: 0 },
+    green: { lumens: 0, nm: DEFAULT_LINES.green, watts: 0 },
+    blue: { lumens: 0, nm: DEFAULT_LINES.blue, watts: 0 },
+  };
+  lines.forEach(({ nm, watts }) => {
+    const w = Math.max(Number(watts) || 0, 0);
+    const c = out[channelOf(nm)];
+    c.lumens += w * efficacyAt(nm);
+    if (w > c.watts) { c.watts = w; c.nm = nm; }
+  });
+  return {
+    red: { lumens: out.red.lumens, nm: out.red.nm },
+    green: { lumens: out.green.lumens, nm: out.green.nm },
+    blue: { lumens: out.blue.lumens, nm: out.blue.nm },
+  };
+}
+
+/**
+ * The aperture window's size, in metres.
+ *
+ * A laser's window is a rectangle cut to pass its scan field, so its height
+ * is its width scaled by the field's shape: tan of half the vertical scan over
+ * tan of half the horizontal one. Equal angles make it square.
+ *
+ * @public
+ * @param {Object} params laser parameters
+ * @returns {Object} `{ width, height }`
+ */
+export function apertureSize(params) {
+  const stated = Number(params.apertureDiameter) || DEFAULT_LASER_PARAMS.apertureDiameter;
+  const width = Math.max(stated, 0.001);
+  const h = Number(params.scanAngleH) || DEFAULT_LASER_PARAMS.scanAngleH;
+  const v = Number(params.scanAngleV) || DEFAULT_LASER_PARAMS.scanAngleV;
+  const half = (deg) => Math.tan((Math.min(Math.max(deg, 1), 170) * Math.PI) / 360);
+  return { width, height: width * (half(v) / half(h)) };
+}
 
 /**
  * Where the aperture sits, in the fixture's own space, in metres.
@@ -222,6 +386,8 @@ export const DEFAULT_LASER_PARAMS = {
  * @returns {Object} `{ x, y, z }` -- x across, y forward (negative), z up
  */
 export function apertureOrigin(params) {
+  const at = params.aperture;
+  if (at && [at.x, at.y, at.z].every(Number.isFinite)) return { x: at.x, y: at.y, z: at.z };
   const depth = Number(params.depth) || DEFAULT_LASER_PARAMS.depth;
   return {
     x: Number(params.apertureX) || 0,
@@ -288,14 +454,14 @@ export function imageSizeAt(distance, params) {
  * Whether a profile was made here.
  *
  * Asked of the geometry rather than a category, for the same reason
- * `prepare3DModelInstance` asks it of `asls.bar` and `asls.projector`.
+ * `prepare3DModelInstance` asks it of `beam.bar` and `beam.projector`.
  *
  * @public
  * @param {Object} profile
  * @returns {Boolean}
  */
 export function isLaserProfile(profile) {
-  return !!(profile && profile.asls && profile.asls.laser);
+  return !!(profile && profile.beam && profile.beam.laser);
 }
 
 /**
@@ -316,10 +482,8 @@ export function buildLaserProfile(overrides = {}) {
     categories: ['Other'],
     meta: { generated: true },
     physical: {
-      // OFL's order is width, height, depth, in millimetres. Nothing reads it
-      // -- the geometry the renderer needs is in `asls.laser` -- but a profile
-      // stating its size wrongly is a trap for whatever reads it next.
-      dimensions: [params.width * 1000, params.height * 1000, params.depth * 1000],
+      // No `dimensions`: the size is the parameters', read through
+      // `FixtureKind.sizeOf`. A second copy drifts when a file is edited by hand.
       bulb: { type: 'Laser' },
       // The full scan angle, widest first, in the shape `physical.lens` uses.
       // A laser has no lens, but the field is where anything already reading a
@@ -335,7 +499,7 @@ export function buildLaserProfile(overrides = {}) {
     modes,
     // Everything OFL cannot express: the optics, the box, the scan and beam,
     // and which channels this model actually has.
-    asls: { laser: params },
+    beam: { laser: params },
   };
 }
 

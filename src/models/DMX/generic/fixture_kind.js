@@ -58,7 +58,7 @@ export class FixtureKind {
    * @param {String} spec.label what a list calls it
    * @param {String} spec.icon a uikit icon name
    * @param {String} spec.paramsKey where the profile keeps this kind's
-   *   parameters: `profile.asls[paramsKey]`
+   *   parameters: `profile.beam[paramsKey]`
    * @param {Object} spec.defaults the parameters a new one starts from
    * @param {Array} [spec.controlDefs] its controllable parameters -- see
    *   `device_control.js`; empty for a kind whose channels are pixel data
@@ -66,9 +66,11 @@ export class FixtureKind {
    * @param {Function} spec.matches `(profile) => Boolean`
    * @param {Function} [spec.Settings] the DeviceSettings subclass that holds a
    *   placement's parameters, for a kind that has any
+   * @param {Function} spec.size `(params) => [width, height, depth]` of the
+   *   whole body in millimetres, OFL's order
    */
   constructor({
-    id, label, icon, paramsKey, defaults, controlDefs = [], build, matches, Settings = null,
+    id, label, icon, paramsKey, defaults, controlDefs = [], build, matches, Settings = null, size,
   }) {
     this.id = id;
     this.label = label;
@@ -79,6 +81,7 @@ export class FixtureKind {
     this._build = build;
     this._matches = matches;
     this.Settings = Settings;
+    this._size = size;
   }
 
   /**
@@ -102,7 +105,7 @@ export class FixtureKind {
   /**
    * Whether a profile was made by this kind.
    *
-   * Asked of the profile's own contents -- what it carries under `asls` --
+   * Asked of the profile's own contents -- what it carries under `beam` --
    * rather than of a category string, which says nothing about what the thing
    * is.
    *
@@ -118,7 +121,21 @@ export class FixtureKind {
    * @returns {Object|null}
    */
   paramsOf(profile) {
-    return (profile && profile.asls && profile.asls[this.paramsKey]) || null;
+    return (profile && profile.beam && profile.beam[this.paramsKey]) || null;
+  }
+
+  /**
+   * The body's size in millimetres, width, height and depth, from the
+   * parameters: the one place a generic fixture's size is kept.
+   *
+   * @param {Object} profile
+   * @returns {Array<Number>|null}
+   */
+  sizeOf(profile) {
+    const params = this.paramsOf(profile);
+    if (!params || !this._size) return null;
+    const size = this._size(params).map((mm) => Math.round(Number(mm) * 10) / 10);
+    return size.every(Number.isFinite) ? size : null;
   }
 
   /**
@@ -135,6 +152,14 @@ export class FixtureKind {
 }
 
 /**
+ * A box's size from width, height and depth in metres.
+ *
+ * @param {Object} p parameters
+ * @returns {Array<Number>} millimetres
+ */
+const boxSize = (p) => [p.width * 1000, p.height * 1000, p.depth * 1000];
+
+/**
  * Every kind, in the order a list offers them.
  *
  * @constant {Array}
@@ -147,7 +172,8 @@ export const FIXTURE_KINDS = [
     paramsKey: 'bar',
     defaults: DEFAULT_BAR_PARAMS,
     build: buildLedBarProfile,
-    matches: (profile) => !!(profile.asls && profile.asls.bar),
+    matches: (profile) => !!(profile.beam && profile.beam.bar),
+    size: (p) => [p.length * 1000, p.width * 1000, p.height * 1000],
   }),
   new FixtureKind({
     id: GENERIC_KINDS.PROJECTOR,
@@ -159,6 +185,7 @@ export const FIXTURE_KINDS = [
     build: buildProjectorProfile,
     matches: isProjectorProfile,
     Settings: ProjectorSettings,
+    size: boxSize,
   }),
   new FixtureKind({
     id: GENERIC_KINDS.DISPLAY,
@@ -172,6 +199,11 @@ export const FIXTURE_KINDS = [
     build: buildDisplayProfile,
     matches: isDisplayProfile,
     Settings: DisplaySettings,
+    // The whole box, so the bezel counts on both sides.
+    size: (p) => {
+      const bezel = Number(p.bezel) || 0;
+      return [(p.width + bezel * 2) * 1000, (p.height + bezel * 2) * 1000, p.depth * 1000];
+    },
   }),
   new FixtureKind({
     id: GENERIC_KINDS.LASER,
@@ -183,6 +215,7 @@ export const FIXTURE_KINDS = [
     build: buildLaserProfile,
     matches: isLaserProfile,
     Settings: LaserSettings,
+    size: boxSize,
   }),
   new FixtureKind({
     id: GENERIC_KINDS.STROBE,
@@ -194,6 +227,7 @@ export const FIXTURE_KINDS = [
     build: buildStrobeProfile,
     matches: isStrobeProfile,
     Settings: StrobeSettings,
+    size: boxSize,
   }),
 ];
 

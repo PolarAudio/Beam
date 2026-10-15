@@ -1,10 +1,12 @@
 <template>
   <uk-flex class="fixture_modifier">
+    <!-- Shown while measuring. -->
+    <measure-widget v-if="showsMeasure" />
     <structure-widget
       v-if="selectedStructure"
       :structure="selectedStructure"
-      :selected-member-id="memberId"
-      @select-member="selectMember"
+      :highlighted-ids="memberIds"
+      @highlight-members="setMemberIds"
       @exploded="clearStructure"
     />
     <object-widget
@@ -12,27 +14,16 @@
       :object="selectedObject"
     />
     <!-- High level to detail: what the fixture *is* (its definition), then
-<<<<<<< Updated upstream
          what this one is set to, then where it stands. -->
     <!-- Several fixtures of one definition share these: the Model widget
          speaks for the definition anyway, and the settings write to all. -->
     <model-widget
       v-show="shownFixture"
-=======
-         what this one is set to, then where it stands. A geometry member of a
-         structure has no definition and no channels, so it skips both. -->
-    <model-widget
-      v-show="editedFixture && !selectedMemberIsObject"
->>>>>>> Stashed changes
       ref="model"
       :fixture="shownFixture"
     />
     <fixture-settings-widget
-<<<<<<< Updated upstream
       v-show="shownFixture"
-=======
-      v-show="editedFixture && !selectedMemberIsObject"
->>>>>>> Stashed changes
       ref="settings"
       :fixture="shownFixture"
       :fixtures="sharedFixtures"
@@ -43,9 +34,10 @@
       v-if="selectedItem"
       :fixture="selectedItem"
     />
-    <!-- A structure's member gets its own, beside the structure's: the member
-         is reachable but not movable, and the two side by side need different
-         titles to say which is which. -->
+    <!-- One highlighted structure member gets its own, beside the structure's:
+         the member is reachable but not movable, and the two side by side need
+         different titles to say which is which. Several get none; moving them
+         together is what moving the structure is for. -->
     <placement-widget
       v-if="selectedMember"
       :fixture="selectedMember"
@@ -65,7 +57,7 @@
       :items="selectedItems"
     />
     <h3
-      v-if="!selectedItem && !showsManyItems && !selectedGroup"
+      v-if="!selectedItem && !showsManyItems && !selectedGroup && !showsMeasure"
       class="empty_text"
     >
       Nothing Selected
@@ -74,10 +66,12 @@
 </template>
 
 <script>
+import { toRaw } from 'vue';
 import EventBus from '@/plugins/eventbus';
 import Selection from '@/models/DMX/selection';
 import SelectionTransform from '@/models/DMX/selection_transform';
-import { SCENE_ITEM_KINDS, kindOf, rowId } from '@/models/DMX/scene_item';
+import MeasureTool from '@/plugins/visualizer/measure_tool';
+import { SCENE_ITEM_KINDS, kindOf } from '@/models/DMX/scene_item';
 
 import FixtureSettingsWidget from './_widgets/fixture.modifier.widget.settings.vue';
 import PlacementWidget from '../placement/placement.widget.vue';
@@ -86,6 +80,7 @@ import ArrangeWidget from './_widgets/fixture.modifier.widget.arrange.vue';
 import GroupWidget from '../group/group.modifier.widget.vue';
 import StructureWidget from '../structure/structure.modifier.widget.vue';
 import ObjectWidget from '../object/object.modifier.widget.vue';
+import MeasureWidget from '../measure/measure.widget.vue';
 
 export default {
   name: 'FixtureModifierFragment',
@@ -101,6 +96,7 @@ export default {
     GroupWidget,
     StructureWidget,
     ObjectWidget,
+    MeasureWidget,
   },
   data() {
     return {
@@ -115,10 +111,18 @@ export default {
        */
       arrangeOpen: false,
       /**
-       * Which member of the selected structure the panel has opened, by
-       * fixture id, or null for none. See `selectedMember`.
+       * Row ids of the selected structure's members highlighted in its list:
+       * what the fixture widgets edit. Every member when the structure is
+       * first selected.
        */
-      memberId: null,
+      memberIds: [],
+      /**
+       * A member picked in the 3D view with Alt, waiting for its structure to
+       * become the selected one: `{ structure, rowId }`.
+       */
+      memberPick: null,
+      /** The measure tool's state, for whether its widget shows. */
+      measure: MeasureTool.state,
     };
   },
   computed: {
@@ -165,7 +169,9 @@ export default {
      * @returns {Array}
      */
     sharedFixtures() {
-      const items = this.selectedItems;
+      // Highlighted structure members follow the same rule as selected
+      // fixtures.
+      const items = this.selectedStructure ? this.highlightedMembers : this.selectedItems;
       if (items.length < 2) return [];
       if (!items.every((item) => kindOf(item) === SCENE_ITEM_KINDS.FIXTURE)) return [];
       const key = items[0].profileKey;
@@ -186,12 +192,21 @@ export default {
       return member ? null : this.selectedFixture;
     },
     /**
-     * The structure member being looked at, or null.
+     * The selected structure's members highlighted in its list, in member
+     * order. The structure is what is *selected*; which of its members the
+     * panel edits is this panel's own state.
      *
-     * Component state rather than a view of the selection store, because that
-     * is what it is: the structure is what is *selected*, and which of its
-     * members the panel has opened is this panel's own business.
-     * `selectedFixture` is a computed, and Vue refuses a write to it.
+     * @returns {Array}
+     */
+    highlightedMembers() {
+      if (!this.selectedStructure) return [];
+      // By row id: row ids are namespaced by kind, so this finds an object
+      // member as readily as a fixture.
+      return this.selectedStructure.members
+        .filter((member) => this.memberIds.includes(member.listable.id));
+    },
+    /**
+     * The one highlighted structure member, or null for none or several.
      *
      * Found among the structure's own members rather than through the fixture
      * pool, because a member may be an object: a structure holds fixtures *and*
@@ -202,32 +217,11 @@ export default {
      * @returns {Object|null}
      */
     selectedMember() {
-      if (!this.selectedStructure || this.memberId === null) return null;
-<<<<<<< Updated upstream
+      return this.highlightedMembers.length === 1 ? this.highlightedMembers[0] : null;
       // By row id among the structure's own members: row ids are namespaced
       // by kind, so this finds an object member as readily as a fixture.
       return this.selectedStructure.members
         .find((member) => member.listable.id === this.memberId) || null;
-=======
-      return this.selectedStructure.members
-        .find((member) => rowId(kindOf(member), member.id) === this.memberId) || null;
-    },
-    /**
-     * Whether the member on screen is geometry rather than a fixture.
-     *
-     * An object member has no channels, no profile and no mode, so the two
-     * fixture widgets have nothing to say about it and would be handed numbers
-     * that do not mean anything. Its own widgets are not shown here either --
-     * it is inside a structure, and its library entry is not what is being
-     * edited -- which leaves it with its placement, the one thing that is true
-     * of it and worth seeing.
-     *
-     * @returns {Boolean}
-     */
-    selectedMemberIsObject() {
-      const member = this.selectedMember;
-      return !!member && kindOf(member) === SCENE_ITEM_KINDS.OBJECT;
->>>>>>> Stashed changes
     },
     /**
      * Everything in the selection, of whatever kind.
@@ -293,6 +287,14 @@ export default {
     showsManyItems() {
       return !this.selectedGroup && this.selectedItems.length > 1;
     },
+    /**
+     * Whether the Measure widget shows: while measuring.
+     *
+     * @returns {Boolean}
+     */
+    showsMeasure() {
+      return this.measure.active;
+    },
   },
   watch: {
     /**
@@ -302,9 +304,20 @@ export default {
      * resolves against the pool to a fixture this structure does not hold.
      */
     selectedStructure(structure, previous) {
-      if (structure === previous) return;
-      this.highlightMember(false);
-      this.memberId = null;
+      if (toRaw(structure) === toRaw(previous)) return;
+      if (previous && previous._3DModel) previous._3DModel.setLitMembers(null);
+      const pick = this.memberPick;
+      this.memberPick = null;
+      if (structure && pick && toRaw(pick.structure) === toRaw(structure)) {
+        this.memberIds = [pick.rowId];
+      } else {
+        this.memberIds = structure ? structure.members.map((member) => member.listable.id) : [];
+      }
+    },
+    /** Only the highlighted members are outlined in the 3D view. */
+    highlightedMembers(members) {
+      const structure = this.selectedStructure;
+      if (structure && structure._3DModel) structure._3DModel.setLitMembers(members);
     },
     '$route.query.fixtureId': function routeQueryFixtureIdWatcher(fixtureId) {
       this.selectFixture(fixtureId);
@@ -318,11 +331,15 @@ export default {
     this.selectGroup(this.$route.query.groupId);
     EventBus.on('fixture_picked', this.handleFixturePicked);
     EventBus.on('arrange_toggled', this.setArrangeOpen);
+    EventBus.on('structure_member_picked', this.handleMemberPicked);
   },
   beforeUnmount() {
-    this.highlightMember(false);
+    if (this.selectedStructure && this.selectedStructure._3DModel) {
+      this.selectedStructure._3DModel.setLitMembers(null);
+    }
     EventBus.off('fixture_picked', this.handleFixturePicked);
     EventBus.off('arrange_toggled', this.setArrangeOpen);
+    EventBus.off('structure_member_picked', this.handleMemberPicked);
     if (this.selectedFixture && this.selectedFixture.id) {
       this.selectedFixture.highlightSingle(false);
     }
@@ -386,49 +403,40 @@ export default {
       this.arrangeOpen = !!open;
     },
     /**
-     * Opens a structure member's own widgets, keeping the structure up.
-     *
-     * A member is reachable but not movable: its settings and patching are the
-     * point of picking it, and the position tool locks itself on the way in.
+     * Sets which structure members the widgets edit, from the member list.
      *
      * @public
-     * @param {Number|String|null} id the member's row id, or null when there is none
+     * @param {Array} ids member row ids
      */
-    selectMember(id) {
-      this.highlightMember(false);
-      // Null is "no member", not "no structure": clicking the picked member
-      // again drops it and leaves the structure showing, which is how you get
-      // back to placing the structure itself.
-      this.memberId = (id === null || id === undefined) ? null : id;
-      this.highlightMember(true);
+    setMemberIds(ids) {
+      this.memberIds = Array.isArray(ids) ? ids : [];
     },
     /**
-     * Shows, or stops showing, which member is being looked at.
-     *
-     * `highlight(state, false)` and never true: the second argument is what
-     * attaches the gizmo, and a structure's member is not the user's to drag.
-     * The structure keeps the gizmo the whole time.
+     * A member Alt-clicked in the 3D view: its structure is selected, and the
+     * member is highlighted alone. The structure may be selected already, in
+     * which case `selectedStructure` does not change and the pick is applied
+     * here; otherwise the watcher applies it.
      *
      * @public
-     * @param {Boolean} state whether the member should be lit
+     * @param {Object} payload `{ structure, member }`
      */
-    highlightMember(state) {
-      const member = this.selectedMember;
-      if (!member || !member.highlight) return;
-      member.highlight(state, false);
+    handleMemberPicked({ structure, member }) {
+      if (!structure || !member || !member.listable) return;
+      const rowId = member.listable.id;
+      this.memberPick = { structure, rowId };
+      if (toRaw(this.selectedStructure) === toRaw(structure)) this.memberIds = [rowId];
     },
     /**
      * Drops the structure entirely, once it has stopped being one item.
      *
-     * Only the member is let go here. Which structure is selected belongs to
+     * Only the member highlight is let go here. Which structure is selected belongs to
      * the selection store; the panel empties because exploding a structure
      * changes the selection.
      *
      * @public
      */
     clearStructure() {
-      this.highlightMember(false);
-      this.memberId = null;
+      this.memberIds = [];
     },
     /**
      * Follows the selection made anywhere else -- the 3D view or the patch bay
@@ -446,7 +454,6 @@ export default {
       // Nothing to copy. The primary, the fixtures and the whole typed
       // selection are computed views of the selection store, and a view cannot
       // be stale or be overwritten by whichever channel happened to fire last.
-      this.highlightMember(false);
       if (!payload) this.selectedGroup = null;
     },
   },

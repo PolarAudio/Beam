@@ -4,15 +4,12 @@ import * as THREE from 'three';
 import LightField from './light_field';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
-<<<<<<< Updated upstream
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/examples/jsm/loaders/MTLLoader.js';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
-=======
 import { parseAnchorName, collectAnchors } from './model_anchors';
 import { worldAnchor } from './anchor_snap';
->>>>>>> Stashed changes
 import SceneManager from './scene_manager';
 import primitiveGeometry from './primitive_geometry';
 import { castsContactShadow, standsUp } from './contact_shadows';

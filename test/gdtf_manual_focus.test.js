@@ -68,9 +68,9 @@ check('and saves it', byHand.showData.focusDistance, 7.5);
 const legacy = (focus) => new Fixture({
   id: 1, manufacturer: 'Beam', model: 'Spot', mode: 0, address: 0, OFLData: null, fixtureType, focus,
 }).focusDistance;
-check('a show saved in percent: 50 is twice the nearest', legacy(50), 2);
+check('a show saved in percent: 50 is twice the nearest', legacy(50), 5);
 check('a show saved in percent: 100 is the farthest', legacy(100), 100);
-check('a show saved in percent: 0 is the nearest', legacy(0), 1);
+check('a show saved in percent: 0 is the nearest', legacy(0), 2.5);
 check('a mode without one does not', make(1).hasManualFocus, false);
 check('a focus on DMX is not by hand', make(2).hasManualFocus, false);
 

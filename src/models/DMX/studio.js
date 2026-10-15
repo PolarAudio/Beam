@@ -410,7 +410,13 @@ const Studio = {
   viewpointOf(id) {
     const camera = state.cameras.find((entry) => entry.id === id);
     if (!camera) return null;
-    return { position: { ...camera.position }, target: { ...camera.target } };
+    return {
+      position: { ...camera.position },
+      target: { ...camera.target },
+      // The editor view's lens shift and projection, when it holds them.
+      ...(camera.shift ? { shift: { ...camera.shift } } : {}),
+      ...(typeof camera.orthographic === 'boolean' ? { orthographic: camera.orthographic } : {}),
+    };
   },
 
   /**
@@ -429,6 +435,12 @@ const Studio = {
     if (!camera || !viewpoint) return;
     if (viewpoint.position) camera.position = { ...viewpoint.position };
     if (viewpoint.target) camera.target = { ...viewpoint.target };
+    // Only the editor view keeps the lens shift and projection: a placed
+    // camera is a lens on a tripod, aimed and nothing more.
+    if (id === SCENE_CAMERA_ID) {
+      camera.shift = viewpoint.shift ? { ...viewpoint.shift } : null;
+      if (typeof viewpoint.orthographic === 'boolean') camera.orthographic = viewpoint.orthographic;
+    }
   },
 
   /**
@@ -526,6 +538,8 @@ const Studio = {
       target: { ...camera.target },
       ...(camera.locked ? { locked: true } : {}),
       ...(camera.id === SCENE_CAMERA_ID ? { editor: true } : {}),
+      ...(camera.id === SCENE_CAMERA_ID && camera.shift ? { shift: { ...camera.shift } } : {}),
+      ...(camera.id === SCENE_CAMERA_ID && camera.orthographic ? { orthographic: true } : {}),
     }));
   },
 
@@ -554,6 +568,10 @@ const Studio = {
       }
       if (stored.position) editor.position = { ...stored.position };
       if (stored.target) editor.target = { ...stored.target };
+      const shift = stored.shift || {};
+      editor.shift = Number.isFinite(shift.x) && Number.isFinite(shift.y)
+        ? { x: shift.x, y: shift.y } : null;
+      editor.orthographic = !!stored.orthographic;
       editor.locked = !!stored.locked;
     }
 

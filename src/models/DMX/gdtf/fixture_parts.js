@@ -8,7 +8,9 @@
  */
 
 import { walkGeometry } from './gdtf_reader';
-import { slotKind } from './name_rules';
+import {
+  slotKind, namesLaser, namesLaserAttribute, namesScaleAttribute,
+} from './name_rules';
 import { isOwnPretty } from './standard_attributes';
 
 /** Old channel types by GDTF attribute, for the quick accessors and the UI. */
@@ -81,10 +83,12 @@ export function attributeLabel(attribute, pretty = '') {
   if (isOwnPretty(attribute, pretty)) return pretty.trim();
   const colour = /^Color(Add|Sub)_(\w+)$/.exec(attribute);
   if (colour && COLOUR_LETTERS[colour[2]]) return COLOUR_LETTERS[colour[2]];
-  const families = 'Color|Gobo|Prism|AnimationWheel|Animation|Effects|Frost|Focus|Shutter|Control|ColorMacro';
+  const families = 'Color|Gobo|Prism|AnimationWheel|AnimationSystem|Animation|Effects|Frost|Focus|Shutter|Control|ColorMacro';
   const wheel = new RegExp(`^(${families})(\\d+)(\\w*)$`).exec(attribute);
   if (wheel && WHEEL_SUFFIXES[wheel[3]] !== undefined) {
-    const renamed = { AnimationWheel: 'Animation', ColorMacro: 'Colour macro', Color: 'Colour' };
+    const renamed = {
+      AnimationWheel: 'Animation', AnimationSystem: 'Animation system', ColorMacro: 'Colour macro', Color: 'Colour',
+    };
     const family = renamed[wheel[1]] || wheel[1];
     const single = ['Frost', 'Focus', 'Shutter', 'Control'].includes(wheel[1]) && wheel[2] === '1';
     return `${family}${single ? '' : ` ${wheel[2]}`}${WHEEL_SUFFIXES[wheel[3]]}`;
@@ -237,6 +241,8 @@ export function wheelsForHead(type) {
           ...(kind === 'Prism' ? { facets: slot.facets.length } : {}),
           ...(slot.mediaFileName ? { resource: slot.mediaFileName } : {}),
           ...(image ? { image } : {}),
+          // Where an animation disc's window travels as it goes in.
+          ...(slot.animationSystem ? { animationSystem: slot.animationSystem } : {}),
         };
       }),
     };
@@ -305,6 +311,46 @@ export function moves(type) {
   if (type.geometries.some(axis)) return true;
   return type.modes.some((mode) => mode.channels.some((c) => c.logicalChannels
     .some((l) => l.functions.some((f) => f.attribute === 'Pan' || f.attribute === 'Tilt'))));
+}
+
+/** Whether a fixture type carries a Laser geometry anywhere. */
+function hasLaser(type) {
+  let found = false;
+  (type.geometries || []).forEach((root) => walkGeometry(root, (g) => {
+    if (g.type === 'Laser') found = true;
+  }));
+  return found;
+}
+
+/** Every attribute a fixture type's modes address. */
+function attributesOf(type) {
+  const found = new Set();
+  type.modes.forEach((mode) => mode.channels.forEach((c) => c.logicalChannels
+    .forEach((l) => found.add(l.attribute))));
+  return found;
+}
+
+/**
+ * Whether a fixture type with no Laser geometry is a scanning laser, as most
+ * laser files are: by an attribute only a laser has, or by its name and a
+ * figure scale. A named laser on a yoke is a moving head that carries a
+ * laser, unless a channel picks its content.
+ *
+ * @param {Object} type a fixture type
+ * @returns {Boolean}
+ */
+export function laserByChannels(type) {
+  const attributes = [...attributesOf(type)];
+  if (attributes.some(namesLaserAttribute)) return true;
+  if (!namesLaser(`${type.manufacturer || ''} ${type.name || ''}`)) return false;
+  if (!attributes.some(namesScaleAttribute)) return false;
+  const axis = (g) => g.type === 'Axis' || g.children.some(axis);
+  return !type.geometries.some(axis) || attributes.includes('MediaContent1');
+}
+
+/** Whether a fixture type is drawn as a laser. */
+export function isLaserType(type) {
+  return hasLaser(type) || laserByChannels(type);
 }
 
 /**
@@ -399,7 +445,11 @@ export function headInputs(type, mode) {
   let category = 'Other';
   // A light that pans or tilts is a moving head in every mode, including one
   // that leaves pan and tilt out; a light that does neither is static.
-  if (beams.length) category = moves(type) ? 'Moving Head' : 'Static';
+  // A laser known by its channels may model its beam and its position axes
+  // as a light's, so it is a laser before it is a light.
+  if (laserByChannels(type)) category = 'Laser';
+  else if (beams.length) category = moves(type) ? 'Moving Head' : 'Static';
+  else if (hasLaser(type)) category = 'Laser';
   return {
     category,
     minAngle: zoom ? zoom[0] : fixed,
@@ -426,8 +476,8 @@ export function headInputs(type, mode) {
  * fixture list shows and the one a placed fixture takes.
  *
  * @param {Object} type a fixture type
- * @returns {String} 'Moving Head', 'Static', or 'Other' for a type that
- *   gives no light
+ * @returns {String} 'Moving Head', 'Static', 'Laser', or 'Other' for a type
+ *   that gives no light
  */
 export function fixtureCategory(type) {
   return headInputs(type, type.modes[0] || { channels: [] }).category;

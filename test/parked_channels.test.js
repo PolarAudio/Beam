@@ -107,6 +107,17 @@ if (!channels) {
   check('while the rest are still carried', reopened.showData.channelValues[1], 0);
   reopened.unparkChannel(1);
   check('and with none left, nothing is written', reopened.showData.channelValues, undefined);
+
+  console.log('\n-- a device loads with its bytes and its values --');
+  const device = makeFixture();
+  device.parkChannel(0, 255);
+  device.parkChannel(1, 128);
+  device.device.set('dimmer', 40);
+  const { channelValues, device: values } = device.showData;
+  const back = makeFixture({ channelValues, device: values });
+  check('the table shows the bytes it was saved with', back.channels[1].value.DMX, 128);
+  check('a byte drives its control', Math.round(back.device.value('red')), 50);
+  check('a value set by hand after its byte wins', back.device.value('dimmer'), 40);
 }
 
 console.log(`\n${failures ? `${failures} failed` : 'all passed'}`);

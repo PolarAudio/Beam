@@ -404,7 +404,6 @@ import { DMX_UNIVERSE_LENGTH, channelAddress } from '@/models/DMX/patch.model';
 import { buildMadMapperFixture } from '@/models/DMX/generic/madmapper';
 import Fixture from '@/models/DMX/fixture.model';
 import { normaliseMatrixProfile } from '@/models/DMX/ofl_matrix';
-<<<<<<< Updated upstream
 import importGdtfFiles from '@/plugins/gdtf_import';
 import confirm from '@/plugins/confirm';
 import { kindOf, categoryIcon, fixtureOrigin } from '@/models/DMX/generic/fixture_kind';
@@ -412,19 +411,13 @@ import { searchWords } from '@/plugins/word_search';
 import {
   shareFixtures, searchFixtures, shareFixtureName, uploaderText, modesText,
 } from '@/models/DMX/gdtf/share_list';
-=======
 import { generateMissing } from '@/plugins/visualizer/thumbnailer';
->>>>>>> Stashed changes
 import CreateFixturePopup from './popup.create.fixture.vue';
 import CreateObjectPopup from './popup.create.object.vue';
 import ImportObjectPopup from './popup.import.object.vue';
 import ObjectBrowser from './object.browser.vue';
-<<<<<<< Updated upstream
 import SharePanel from './share.panel.vue';
 import FilterMenu from './filter.menu.vue';
-import { generateMissing } from '@/plugins/visualizer/thumbnailer';
-=======
->>>>>>> Stashed changes
 
 /** How long the export button confirms for, in ms. */
 const EXPORT_FEEDBACK_MS = 1500;
@@ -827,7 +820,7 @@ export default {
      */
     alignmentPixelSize() {
       if (!this.fixture.loaded || !this.fixture.universeAligned) return 1;
-      const { components } = (this.fixture.OFLData || {}).asls || {};
+      const { components } = (this.fixture.OFLData || {}).beam || {};
       if (components && components.length) return components.length;
       const mode = this.fixture.modes[this.fixture.mode];
       return (mode && mode.channels && mode.channels.length) || 1;
@@ -1384,6 +1377,10 @@ export default {
     async removeFromLibrary() {
       const item = this.selectedItem;
       if (!item || !item.gdtf) return;
+      if (item.shipped) {
+        this.share.error = `${item.name} ships with Beam and is not in your library to remove.`;
+        return;
+      }
       const used = this.selectedInUse;
       let inShow = '';
       if (used === 1) inShow = '1 fixture in this project uses it. ';
@@ -1909,6 +1906,7 @@ export default {
         contents,
         defaultName: `${this.madMapperProduct.replace(/[<>:"/\\|?*]/g, ' ').trim()}.mmfl`,
         startIn: 'madmapperFixtures',
+        folderKey: 'madmapper-fixture',
         title: 'Export fixture to MadMapper',
         filters: [{ name: 'MadMapper fixture', extensions: ['mmfl'] }],
       });

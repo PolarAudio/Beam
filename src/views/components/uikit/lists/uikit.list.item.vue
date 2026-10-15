@@ -319,6 +319,9 @@ export default {
   font-size: 10px;
   min-width: 0;
   opacity: 0.75;
+  /* A long name gives up the width, not the button: shrinking it squeezes
+     the glyph narrower than on the other rows. */
+  flex-shrink: 0;
 }
 
 /* An icon on its own is a state, not a button. The background is the button's

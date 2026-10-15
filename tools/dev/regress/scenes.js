@@ -43,6 +43,63 @@
     };
   }
 
+  async function lens() {
+    // One head, no wall, seen from set angles off its own beam axis: inside
+    // the field, on its edge, just outside it and from the side. The lens face
+    // and its glare change sharply across the edge; the focus (Focus 120) is
+    // nearer than the cameras, so the face fills across the lens there.
+    const f = await bt.place(...MOVER, { x: 0, y: 0, z: 4 }, { x: 180, y: 0, z: 0 }, 'Standard');
+    const ch = (name) => bt.channel(f, name);
+    bt.setCh(f, ch('Strobe'), 30);
+    bt.setCh(f, ch('Dimmer'), 255);
+    bt.setCh(f, ch('Zoom'), 60);
+    bt.setCh(f, ch('Focus'), 120);
+    bt.setCh(f, ch('Pan'), 128);
+    bt.setCh(f, ch('Tilt'), 106);
+    bt.flush();
+    if (f._3DModel && f._3DModel.snapOrientation) f._3DModel.snapOrientation();
+
+    const DISTANCE = 6;
+    // Cameras are placed from the light's axis when a shot is taken, after
+    // the head has settled: degrees off the axis, as a share of the field's
+    // half angle plus a fixed margin.
+    const view = (share, extraDeg) => {
+      let light = null;
+      for (let i = 0; i < 256 && !light; i++) {
+        const l = bt.Light.getInstance(i);
+        if (l && l._spotLight && l.intensity > 0) light = l;
+      }
+      if (!light) throw new Error('lens: no lit light');
+      const s = light._spotLight;
+      let root = s;
+      while (root.parent) root = root.parent;
+      root.updateMatrixWorld(true);
+      const p = s.getWorldPosition(s.position.clone());
+      const axis = s.target.getWorldPosition(s.position.clone()).sub(p).normalize();
+      const up = Math.abs(axis.z) > 0.9 ? p.clone().set(1, 0, 0) : p.clone().set(0, 0, 1);
+      const side = axis.clone().cross(up).normalize();
+      const deg = ((s.angle * 180) / Math.PI) * share + extraDeg;
+      const r = (deg * Math.PI) / 180;
+      const c = p.clone()
+        .addScaledVector(axis, DISTANCE * Math.cos(r))
+        .addScaledVector(side, DISTANCE * Math.sin(r));
+      return {
+        position: { x: c.x, y: c.y, z: c.z },
+        target: { x: p.x, y: p.y, z: p.z },
+        fov: 12,
+      };
+    };
+    return {
+      settle: 40,
+      cameras: {
+        get inside() { return view(0.5, 0); },
+        get edge() { return view(1, 0); },
+        get outside() { return view(1, 2); },
+        get side() { return view(0, 60); },
+      },
+    };
+  }
+
   async function leds() {
     const bar = await bt.generic('T Bar', { ...bt.barDefaults, columns: 60, rows: 1, emitterSize: 0.012, order: 'RGB' }, 'bar',
       { x: -1, y: 0, z: 2.8 }, { x: 0, y: 0, z: 0 });
@@ -72,26 +129,47 @@
     const l = await bt.generic('T Laser', {}, 'laser', { x: 0, y: 0, z: 1.5 }, { x: 0, y: 0, z: 180 });
     await wall('screen', { x: 8, y: 0.2, z: 5 }, { x: 0, y: 8, z: 0 });
     bt.device(l, { protocol: 'ponk', source: 'ponk:777', dimmer: 100, shutter: true });
-    // A triangle with a red, a green and a blue side: three colours, and
-    // three sharp corners where the scanner turns.
+    // A triangle of dots with a red, a green and a blue side: three colours,
+    // and three corners. Each dot is a Ponk path of its own, since the points
+    // of one path are drawn as a single stroke.
     const corners = [[0, 0.6], [0.52, -0.3], [-0.52, -0.3]];
     const colours = [[255, 0, 0], [0, 255, 0], [0, 0, 255]];
     const PER_SIDE = 24;
-    const paths = corners.map((from, s) => {
+    const paths = [];
+    corners.forEach((from, s) => {
       const to = corners[(s + 1) % 3];
-      const xy = new Float32Array((PER_SIDE + 1) * 2);
-      const rgb = new Uint8Array((PER_SIDE + 1) * 3);
       for (let k = 0; k <= PER_SIDE; k++) {
         const t = k / PER_SIDE;
-        xy[2 * k] = from[0] + (to[0] - from[0]) * t;
-        xy[2 * k + 1] = from[1] + (to[1] - from[1]) * t;
-        rgb.set(colours[s], 3 * k);
+        const xy = new Float32Array([from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t]);
+        const rgb = new Uint8Array(colours[s]);
+        paths.push({ count: 1, xy, rgb });
       }
-      return { count: PER_SIDE + 1, xy, rgb };
     });
     bt.LaserStream.push({ protocol: 'ponk', service: 777, name: 'test', paths });
     const stream = bt.LaserStream.ponk.get(777);
     if (stream) stream.stale = () => false;
+    return {
+      settle: 5,
+      cameras: { front: { position: { x: 3, y: -6, z: 2.5 }, target: { x: 0, y: 3, z: 2 } } },
+    };
+  }
+
+  async function laserclip() {
+    // The ILDA 30K test pattern played from the laser's own clip list, with
+    // nothing streamed: the ILDA reader, the default palette and the clip
+    // player. Waits for the file to load before the shot is taken.
+    const l = await bt.generic('T Laser', {}, 'laser', { x: 0, y: 0, z: 1.5 }, { x: 0, y: 0, z: 180 });
+    await wall('screen', { x: 8, y: 0.2, z: 5 }, { x: 0, y: 8, z: 0 });
+    const clip = {
+      id: 'ilda-30k', name: 'ILDA test pattern 30K', kind: 'file', file: 'ILDA test pattern 30K.ild', rate: 30000,
+    };
+    bt.device(l, {
+      protocol: 'clips', clips: [clip], clip: clip.id, dimmer: 100, shutter: true,
+    });
+    const player = await import(window.__live('/src/plugins/visualizer/laser_clip_player.js'));
+    for (let i = 0; i < 100 && player.clipStatus(clip).state !== 'ready'; i++) {
+      await new Promise((resolve) => { setTimeout(resolve, 50); });
+    }
     return {
       settle: 5,
       cameras: { front: { position: { x: 3, y: -6, z: 2.5 }, target: { x: 0, y: 3, z: 2 } } },
@@ -176,6 +254,8 @@
     };
   }
 
-  window.__scenes = { movers, leds, laser, projector, display, strobe, reflect };
+  window.__scenes = {
+    movers, lens, leds, laser, laserclip, projector, display, strobe, reflect,
+  };
   return Object.keys(window.__scenes).join(',');
 })()

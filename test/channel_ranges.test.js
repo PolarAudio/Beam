@@ -211,7 +211,7 @@ console.log('--- gobo thumbnails');
   };
   const star = goboThumbnail(wheel, 2);
   check('a named gobo is the profile\'s own', star.named, true);
-  check('it is served from the gobo folder', star.url.endsWith('gobos/5-pointed-star.svg'), true);
+  check('it is served from the gobo folder', star.url.endsWith('gobos/5-pointed-star.png'), true);
   check('an unnamed gobo is a stand-in', goboThumbnail(wheel, 3).named, false);
   check('one Beam does not ship is a stand-in', goboThumbnail(wheel, 4).named, false);
   check('open has no thumbnail', goboThumbnail(wheel, 1), null);

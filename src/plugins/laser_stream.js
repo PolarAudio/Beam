@@ -418,9 +418,11 @@ class LaserStream {
   }
 
   /**
-   * Every Ponk stream heard, for a dropdown: live ones first, then the ones
-   * that have gone quiet, since a show may name a stream that is not sending
-   * right now and the fixture should still show what it is bound to.
+   * Every Ponk stream heard, for a dropdown, quiet ones included, since a show
+   * may name a stream that is not sending right now and the fixture should
+   * still show what it is bound to. In name order only: a stream drops out
+   * for a moment whenever its picture goes blank, and an order that followed
+   * that would move entries under an open list.
    *
    * @public
    * @returns {Array} each `{ id, name, live }`
@@ -428,10 +430,7 @@ class LaserStream {
   ponkStreams() {
     return [...this.ponk.values()]
       .map((b) => ({ id: b.id, name: b.name, live: !b.stale() }))
-      .sort((a, b) => {
-        if (a.live !== b.live) return a.live ? -1 : 1;
-        return a.name.localeCompare(b.name);
-      });
+      .sort((a, b) => a.name.localeCompare(b.name) || a.id - b.id);
   }
 
   /**

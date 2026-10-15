@@ -82,7 +82,7 @@ measureTable.needsUpdate = true;
  * shaped by the disc's measures, rather than tracing the light.
  */
 export const GLASS_CAUSTIC = 0.7;
-export const GLASS_FLOW = 2.5;
+export const GLASS_FLOW = 10;
 export const GLASS_SIZE = 1;
 
 const glass = {
@@ -310,17 +310,33 @@ float animationWeb( vec2 uv, float t, float exponent ) {
 // while it moves and stand still when it stops. The lens blurs it by its
 // blur against the web's cell: crisp lines in focus, wider and fainter as
 // the blur grows, even light once the blur spans a cell. The mean stays.
-float animationGlass( vec4 a, vec4 b, vec2 q, float turns, float blurDisc ) {
+// The web's coordinates at a point of the disc, turned to the features'
+// direction, stretched along it and scaled to the cell.
+vec2 animationWebUv( vec4 a, vec4 b, vec2 q ) {
   float c = cos( -b.z );
   float s = sin( -b.z );
   vec2 r = vec2( c * q.x - s * q.y, s * q.x + c * q.y );
+  return vec2( r.x / ( 1.0 + 2.0 * b.y ), r.y ) / ( max( a.y, 0.02 ) * animationSize );
+}
+float animationGlass( vec4 a, vec4 b, vec2 q, float turns, float blurDisc, float angle ) {
   float cell = max( a.y, 0.02 ) * animationSize;
-  vec2 uv = vec2( r.x / ( 1.0 + 2.0 * b.y ), r.y ) / cell;
-  // One tile of the web holds three to four of its cells.
-  float soft = clamp( blurDisc / ( cell / 3.5 ), 0.0, 1.0 );
+  vec2 uv = animationWebUv( a, b, q );
+  // A second, fainter web turning against the disc at 0.6 of its speed,
+  // with its own flow: refracted light does not all travel with the glass,
+  // and the brighter of the two puts some lines against the disc's travel.
+  float back = angle * 1.6;
+  vec2 qb = vec2( cos( back ) * q.x - sin( back ) * q.y, sin( back ) * q.x + cos( back ) * q.y );
+  vec2 uvb = animationWebUv( a, b, qb ) * 1.3 + vec2( 0.37, 0.11 );
+  // One tile of the web holds three to four of its cells. Glass caustics
+  // form where light converges, so they are sharp only near focus and wash
+  // out four times faster than a stencil's edge.
+  float soft = clamp( 4.0 * blurDisc / ( cell / 3.5 ), 0.0, 1.0 );
   float exponent = mix( 8.0, 1.5, soft );
-  float web = animationWeb( uv, turns * animationFlow, exponent );
-  float webMean = 0.79 * exp( -0.19 * ( exponent - 1.0 ) );
+  float web = max( animationWeb( uv, turns * animationFlow, exponent ),
+    0.5 * animationWeb( uvb, turns * animationFlow * 0.7 + 17.3, exponent ) );
+  // The brighter of two raises the mean by about 1 + 0.0084 (exponent - 1.5)^1.5.
+  float webMean = 0.79 * exp( -0.19 * ( exponent - 1.0 ) )
+    * ( 1.0 + 0.0084 * pow( max( exponent - 1.5, 0.0 ), 1.5 ) );
   float shaped = mix( a.z, a.w, web / webMean * 0.5 );
   float meanShaped = mix( a.z, a.w, 0.5 );
   shaped = mix( shaped, meanShaped, smoothstep( 0.4, 1.0, soft ) );
@@ -376,7 +392,7 @@ float animationMask( sampler2D table, sampler2D atlas, float row, vec2 p, float 
     if ( ma.x > 0.5 ) {
       vec4 mb = texelFetch( animationParams, ivec2( 1, int( index ) ), 0 );
       float rim = 1.0 - smoothstep( 0.9, 1.0, length( q ) );
-      v = mix( v, animationGlass( ma, mb, q, window.y, blur * radius ), animationCaustic * rim );
+      v = mix( v, animationGlass( ma, mb, q, window.y, blur * radius, disc.y ), animationCaustic * rim );
     }
   }
   return v;

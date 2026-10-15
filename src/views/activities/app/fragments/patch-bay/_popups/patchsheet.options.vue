@@ -1,78 +1,68 @@
 <template>
-  <uk-popup
-    v-model="state"
-    validate-txt="Export..."
-    cancel-txt="Cancel"
-    :header="headerData"
-    :valid="anything"
-    backdrop
-    @submit="submit()"
-    @input="update()"
+  <uk-flex
+    col
+    :gap="10"
   >
+    <p class="sheet_hint">
+      {{ scopeText }}
+    </p>
     <uk-flex
       col
-      :gap="10"
-      class="sheet"
+      :gap="6"
     >
-      <uk-flex
-        col
-        :gap="6"
-      >
-        <span class="sheet_label">Print</span>
-        <uk-checkbox
-          v-for="section in sections"
-          :key="section.key"
-          v-model="options[section.key]"
-          :label="section.label"
-        />
-      </uk-flex>
-      <uk-flex
-        col
-        :gap="6"
-      >
-        <span class="sheet_label">Views, one page each</span>
-        <uk-checkbox
-          v-for="view in views"
-          :key="view.key"
-          v-model="options[view.key]"
-          :label="view.label"
-        />
-        <uk-checkbox
-          v-model="options.moverArrows"
-          label="Mover arrows on the plan"
-          :disabled="!options.viewTop"
-        />
-        <uk-checkbox
-          v-model="options.grid"
-          label="Grid"
-          :disabled="!anyView"
-        />
-      </uk-flex>
-      <uk-flex
-        col
-        :gap="6"
-      >
-        <span class="sheet_label">Fixtures</span>
-        <uk-checkbox
-          v-model="options.unpatched"
-          label="Fixtures that are not patched"
-        />
-      </uk-flex>
-      <uk-select-input
-        v-model="paperIndex"
-        style="width: 140px"
-        label="Paper, landscape"
-        :options="papers"
+      <span class="sheet_label">Print</span>
+      <uk-checkbox
+        v-for="section in sections"
+        :key="section.key"
+        v-model="options[section.key]"
+        :label="section.label"
       />
-      <p class="sheet_hint">
-        {{ hint }}
-      </p>
     </uk-flex>
-  </uk-popup>
+    <uk-flex
+      col
+      :gap="6"
+    >
+      <span class="sheet_label">Views, one page each</span>
+      <uk-checkbox
+        v-for="view in views"
+        :key="view.key"
+        v-model="options[view.key]"
+        :label="view.label"
+      />
+      <uk-checkbox
+        v-model="options.moverArrows"
+        label="Mover arrows on the plan"
+        :disabled="!options.viewTop"
+      />
+      <uk-checkbox
+        v-model="options.grid"
+        label="Grid"
+        :disabled="!anyView"
+      />
+    </uk-flex>
+    <uk-flex
+      col
+      :gap="6"
+    >
+      <span class="sheet_label">Fixtures</span>
+      <uk-checkbox
+        v-model="options.unpatched"
+        label="Fixtures that are not patched"
+      />
+    </uk-flex>
+    <uk-select-input
+      v-model="paperIndex"
+      style="width: 140px"
+      label="Paper, landscape"
+      :options="papers"
+    />
+    <p class="sheet_hint">
+      {{ hint }}
+    </p>
+  </uk-flex>
 </template>
 
 <script>
-import PopupMixin from '@/views/mixins/popup.mixin';
 import { PAPER, PATCH_SHEET_DEFAULTS } from '@/models/DMX/patch_sheet';
 import MeasureTool from '@/plugins/visualizer/measure_tool';
 
@@ -95,22 +85,38 @@ function remembered() {
   }
 }
 
+/**
+ * The patch sheet's choices, shown in the export popup. Reports them with
+ * `change` as `{ options, anything }`; `remember` stores them for next time.
+ */
 export default {
-  name: 'UkPopupPatchSheet',
+  name: 'UkPatchSheetOptions',
   compatConfig: {
     MODE: 3,
   },
-  mixins: [PopupMixin],
-  emits: ['export'],
+  props: {
+    /** From `itemsScope`: what the sheet covers, or null for the whole scene. */
+    scope: {
+      type: Object,
+      default: null,
+    },
+  },
+  emits: ['change'],
   data() {
     return {
-      headerData: { title: 'Export Patch Sheet', icon: 'export' },
-      options: { ...PATCH_SHEET_DEFAULTS },
+      options: remembered(),
       papers: Object.keys(PAPER),
       measure: MeasureTool.state,
     };
   },
   computed: {
+    scopeText() {
+      if (!this.scope) return 'Nothing is selected, so the whole scene is printed.';
+      const fixtures = this.scope.fixtures.size;
+      const objects = this.scope.objects.size;
+      return `The selection only: ${fixtures} ${fixtures === 1 ? 'fixture' : 'fixtures'}`
+        + `, ${objects} ${objects === 1 ? 'object' : 'objects'}.`;
+    },
     sections() {
       const count = this.measure.measurements.length;
       return [
@@ -157,38 +163,35 @@ export default {
     },
   },
   watch: {
-    modelValue(state) {
-      this.state = state;
-      if (state) this.options = remembered();
+    options: {
+      deep: true,
+      immediate: true,
+      handler() {
+        this.$emit('change', { options: { ...this.options }, anything: this.anything });
+      },
+    },
+    anything() {
+      this.$emit('change', { options: { ...this.options }, anything: this.anything });
     },
   },
   methods: {
     /**
-     * Remembers the choices and hands them to the export.
+     * Stores the choices for the next export.
      *
      * @public
      */
-    submit() {
-      if (!this.anything) return;
+    remember() {
       try {
         window.localStorage.setItem(STORE_KEY, JSON.stringify(this.options));
       } catch (err) {
         // Not remembered; the export goes ahead.
       }
-      const options = { ...this.options };
-      this.close();
-      this.$emit('export', options);
     },
   },
 };
 </script>
 
 <style scoped>
-.sheet {
-  padding: 16px;
-  width: 320px;
-  white-space: normal;
-}
 .sheet_label {
   font-family: Roboto-Medium;
   font-size: 11px;

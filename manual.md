@@ -344,7 +344,7 @@ If nothing happens, jump to [when something goes wrong](#when-something-goes-wro
 
 The good bit.
 
-**File → Export MadMapper Layout.**
+Select nothing, press **Export** at the top of the patch bay and choose **MadMapper layout** under **Export to**.
 
 The dialog tells you what it's about to write: how many patched fixtures, how many groups, and how many **squares** — one 1024-unit square per group per mapping, plus one for anything in no group.
 
@@ -695,14 +695,14 @@ The picture comes from the stream; the fixture only corrects it. Each of these i
 
 ## The patch sheet
 
-**File → Export Patch Sheet (PDF)...** writes a PDF for whoever sets up the fixtures. It first asks what to print:
+**Export** at the top of the patch bay, with **Patch sheet (PDF)** chosen under **Export to**, writes a PDF for whoever sets up the fixtures. With nothing selected it covers the whole scene; with a selection, only the selected fixtures and objects and the members of selected structures and groups. The dialog stays open while you change the selection and says what will be printed. It asks what to print:
 
 - **Print**: project notes, the instructions for the crew, the patch list, the fixture types, and the measurements. Without a view, measurements are printed as a table only.
 - **Views, one page each**: the plan from above, the front from the audience, the back from upstage, and the sides from stage left and stage right. Mover arrows go on the plan; the grid on every view.
 - **Fixtures**: whether fixtures that are not patched are listed and drawn. Left out, they are still counted under the title.
 - **Paper**: A4 or Letter, landscape.
 
-The choices are remembered on this computer for the next export. **File → Project Details...** holds the project's author, version and notes, saved with the project. Author and version are printed under the title; the notes (venue, contact, power, anything the crew needs) go in a box at the top of the first page. A patch table that would start in the lower half of a page starts on the next one.
+A list with nothing in it is left out, heading included. The choices are remembered on this computer for the next export. **File → Project Details...** holds the project's author, version and notes, saved with the project. Author and version are printed under the title; the notes (venue, contact, power, anything the crew needs) go in a box at the top of the first page. A patch table that would start in the lower half of a page starts on the next one.
 
 - **The table** has one row per fixture, grouped by universe: number, name, type, mode, channel count, Art-Net universe, sACN universe, start and end channel, position, and whether it is hung, standing or sideways. Art-Net counts universes from 0 and sACN from 1, so both are given. Fixtures that are not patched are listed at the end.
 - **Fixture types** lists each type once, with its channel count and how many there are.
@@ -712,7 +712,7 @@ The choices are remembered on this computer for the next export. **File → Proj
 
 ## The MadMapper export in detail
 
-**File → Export MadMapper Layout.**
+**Export** at the top of the patch bay, with **MadMapper layout** chosen under **Export to**. It writes the selection, or every group, structure and fixture when nothing is selected.
 
 ### The projections
 
@@ -817,7 +817,7 @@ Files are MP4, H.264 video and AAC audio, constant frame rate. They play on phon
 
 ## Menus
 
-**File** — New Project, Open Project, Save Project, Save Project As..., Import GDTF..., Export Project to..., Project Details..., Export Patch Sheet (PDF)..., Refresh from Library
+**File** — New Project, Open Project, Save Project, Save Project As..., Import GDTF..., Export Project to..., Project Details..., Refresh from Library
 
 **Edit** — Undo, Redo, Copy, Paste, Preferences.
 
@@ -827,7 +827,7 @@ Files are MP4, H.264 video and AAC audio, constant frame rate. They play on phon
 
 ## Files and where they live
 
-**A project is a `.beam` file** you name and place; the save dialog starts in `Documents\Beatline\Beam`. **Save Project** writes the project. It names the fixture profiles and models it uses and leaves them in your library, so editing a profile reaches every project that places it. **Export Project to...** writes a copy with everything the project references collected into the file: profiles, your overrides, and the models it places, shipped ones included. That is the one to hand to someone else or keep as a record of a show as it was performed. Opened on any Beam, an exported project draws from what it carries first and the local library second, and saving it keeps everything it carried.
+**A project is a `.beam` file** you name and place; the save dialog starts in `Documents\Beatline\Beam`. **Save Project** writes the project. It names the fixture profiles and models it uses and leaves them in your library, so editing a profile reaches every project that places it. **Export Project to...** writes a copy with everything the project references collected into the file: profiles, your overrides, and the models it places, shipped ones included. That is the one to hand to someone else or keep as a record of a show as it was performed. Its save dialog suggests the project's name with `_Export` added. Opened on any Beam, an exported project draws from what it carries first and the local library second, and saving it keeps everything it carried.
 
 **Image and video files** for video input are in `Documents\Beatline\Beam\Library\Media`.
 

@@ -25,13 +25,13 @@
         :disabled="!canArrange"
         @click="toggleArrange"
       />
-      <!-- Acts on the selection, as structure and arrange do. -->
+      <!-- Acts on the selection, or on everything when nothing is selected. -->
       <uk-button
         icon="export"
         style="margin-right: 8px"
         label="export"
         :icon-only="compactButtons"
-        title="export the selection"
+        title="export the selection, or everything when nothing is selected"
         :disabled="!canExport"
         @click="openExport"
       />
@@ -74,6 +74,7 @@
     <export-popup
       v-model="exportPopupState"
       :items="exportItems"
+      :whole-scene="exportWholeScene"
     />
   </div>
 </template>
@@ -141,8 +142,6 @@ export default {
       arrangeOpen: false,
       /** Whether the export popup is open. */
       exportPopupState: false,
-      /** What the export popup was opened on: the selection at that moment. */
-      exportItems: [],
       /**
        * Whether the header buttons are down to their icons.
        *
@@ -156,6 +155,24 @@ export default {
     };
   },
   computed: {
+    /** Whether nothing is selected, so an export covers the whole scene. */
+    exportWholeScene() {
+      return !Selection.size;
+    },
+    /**
+     * What the export popup writes: the selection, or every group, structure
+     * and fixture when nothing is selected. Live, so the open popup follows
+     * the selection.
+     *
+     * @returns {Array}
+     */
+    exportItems() {
+      return Selection.size
+        ? Selection.items
+          .map((entry) => this.itemOfKind(entry.kind, entry))
+          .filter(Boolean)
+        : [...this.$show.groups, ...this.$show.structures, ...this.$show.fixturePool.fixtures];
+    },
     /**
      * Which rows are lit, straight from the selection store.
      *
@@ -194,12 +211,12 @@ export default {
       return this.highlightedIds.length > 1;
     },
     /**
-     * Whether anything is selected to export.
+     * Whether there is anything to export: the selection, or the whole scene.
      *
      * @property {Boolean} canExport
      */
     canExport() {
-      return this.highlightedIds.length > 0;
+      return this.highlightedIds.length > 0 || this.$show.fixturePool.fixtures.length > 0;
     },
     /**
      * The patch bay as a tree: groups first, holding their members, then
@@ -540,15 +557,11 @@ export default {
      * @public
      */
     /**
-     * Opens the export popup on what is selected, taken now so that selecting
-     * something else while it is open does not change what it writes.
+     * Opens the export popup on `exportItems`.
      *
      * @public
      */
     openExport() {
-      this.exportItems = Selection.items
-        .map((entry) => this.itemOfKind(entry.kind, entry))
-        .filter(Boolean);
       if (!this.exportItems.length) return;
       this.exportPopupState = true;
     },

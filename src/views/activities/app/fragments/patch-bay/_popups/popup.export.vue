@@ -1,9 +1,9 @@
 <template>
   <uk-popup
     v-model="state"
-    :valid="!!fixtureCount"
+    :valid="sheet ? sheetAnything : !!fixtureCount"
     :header="headerData"
-    @submit="exportLayout"
+    @submit="submit"
     @input="update()"
   >
     <uk-flex
@@ -11,95 +11,103 @@
       :gap="8"
       class="layout_export"
     >
-      <!-- Which program the selection is written for. One today; each added
-           application brings its own options below. -->
+      <!-- What the items are written as; each target brings its own options below. -->
       <uk-select-input
         v-model="applicationIndex"
-        label="Application"
+        label="Export to"
         :options="applicationNames"
       />
 
-      <uk-select-input
-        v-model="protocolIndex"
-        label="MadMapper is driving"
-        :options="protocolNames"
+      <patch-sheet-options
+        v-if="sheet"
+        ref="sheetOptions"
+        :scope="sheetScope"
+        @change="sheetChange"
       />
 
-      <p class="layout_hint">
-        {{ protocolHint }}
-      </p>
-
-      <uk-select-input
-        v-model="projectionIndex"
-        label="Default mapping"
-        :options="projectionNames"
-      />
-
-      <p class="layout_hint">
-        Used for groups and structures that tick no mapping of their own, and
-        for fixtures in neither. Their own choices are made in their widgets,
-        and each may ask for several.
-      </p>
-
-      <p class="layout_summary">
-        {{ fixtureCount }} patched
-        {{ fixtureCount === 1 ? 'fixture' : 'fixtures' }},
-        {{ groupCount }} {{ groupCount === 1 ? 'island' : 'islands' }},
-        {{ islandCount }} {{ islandCount === 1 ? 'square' : 'squares' }}
-      </p>
-
-      <p class="layout_hint">
-        {{ hint }}
-      </p>
-
-      <uk-flex
-        v-if="cameraView"
-        :gap="8"
-        center-v
-      >
-        <uk-checkbox
-          v-model="usePerspective"
-          label="Perspective"
+      <template v-else>
+        <uk-select-input
+          v-model="protocolIndex"
+          label="MadMapper is driving"
+          :options="protocolNames"
         />
-        <uk-num-input
-          v-if="usePerspective"
-          v-model="eyeDistance"
-          class="field"
-          label="Eye (radii)"
-          :min="1.1"
-          :max="20"
-          :step="0.1"
+
+        <p class="layout_hint">
+          {{ protocolHint }}
+        </p>
+
+        <uk-select-input
+          v-model="projectionIndex"
+          label="Default mapping"
+          :options="projectionNames"
         />
-      </uk-flex>
 
-      <p
-        v-if="cameraView && usePerspective"
-        class="layout_hint"
-      >
-        Flattening along an axis loses anything lying on it, so a bar aimed at
-        the view keeps its pixels but has nowhere to put them. A camera at a
-        finite distance has no such direction: bring the eye close and the near
-        face opens out while the far one nests inside it.
-      </p>
+        <p class="layout_hint">
+          Used for groups and structures that tick no mapping of their own, and
+          for fixtures in neither. Their own choices are made in their widgets,
+          and each may ask for several.
+        </p>
 
-      <p
-        v-if="edgeOn.length"
-        class="layout_warning"
-      >
-        {{ edgeOn.length }}
-        {{ edgeOn.length === 1 ? 'fixture points' : 'fixtures point' }}
-        straight at this view and cannot be drawn at its real angle:
-        {{ edgeOn.slice(0, 4).join(', ') }}{{ edgeOn.length > 4 ? '…' : '' }}.
-        Exported at a token length so nothing is lost, but worth placing by
-        hand or choosing another view.
-      </p>
+        <p class="layout_summary">
+          {{ fixtureCount }} patched
+          {{ fixtureCount === 1 ? 'fixture' : 'fixtures' }},
+          {{ groupCount }} {{ groupCount === 1 ? 'island' : 'islands' }},
+          {{ islandCount }} {{ islandCount === 1 ? 'square' : 'squares' }}
+        </p>
 
-      <p class="layout_hint">
-        The fixture definitions are written alongside the layout. MadMapper
-        resolves a layout's fixtures by name, so import the definitions first.
-        {{ definitionCount }}
-        {{ definitionCount === 1 ? 'definition' : 'definitions' }} in this export.
-      </p>
+        <p class="layout_hint">
+          {{ hint }}
+        </p>
+
+        <uk-flex
+          v-if="cameraView"
+          :gap="8"
+          center-v
+        >
+          <uk-checkbox
+            v-model="usePerspective"
+            label="Perspective"
+          />
+          <uk-num-input
+            v-if="usePerspective"
+            v-model="eyeDistance"
+            class="field"
+            label="Eye (radii)"
+            :min="1.1"
+            :max="20"
+            :step="0.1"
+          />
+        </uk-flex>
+
+        <p
+          v-if="cameraView && usePerspective"
+          class="layout_hint"
+        >
+          Flattening along an axis loses anything lying on it, so a bar aimed at
+          the view keeps its pixels but has nowhere to put them. A camera at a
+          finite distance has no such direction: bring the eye close and the near
+          face opens out while the far one nests inside it.
+        </p>
+
+        <p
+          v-if="edgeOn.length"
+          class="layout_warning"
+        >
+          {{ edgeOn.length }}
+          {{ edgeOn.length === 1 ? 'fixture points' : 'fixtures point' }}
+          straight at this view and cannot be drawn at its real angle:
+          {{ edgeOn.slice(0, 4).join(', ') }}{{ edgeOn.length > 4 ? '…' : '' }}.
+          Exported at a token length so nothing is lost, but worth placing by
+          hand or choosing another view.
+        </p>
+
+        <p class="layout_hint">
+          The fixture definitions are written alongside the layout. MadMapper
+          resolves a layout's fixtures by name, so import the definitions first.
+          {{ definitionCount }}
+          {{ definitionCount === 1 ? 'definition' : 'definitions' }} in this export.
+        </p>
+      </template>
     </uk-flex>
   </uk-popup>
 </template>
@@ -119,9 +127,28 @@ import {
 import { buildMadMapperLibrary, showDefinitions } from '@/models/DMX/generic/madmapper';
 import { SCENE_ITEM_KINDS, kindOf } from '@/models/DMX/scene_item';
 import { labelOf } from '@/models/DMX/item_naming';
+import { exportPatchSheet, itemsScope } from '@/models/DMX/patch_sheet';
+import EventBus from '@/plugins/eventbus';
+import PatchSheetOptions from './patchsheet.options.vue';
 
-/** The programs a selection can be exported for. */
-const APPLICATIONS = ['MadMapper'];
+/** What the items can be exported as. */
+const APPLICATIONS = ['MadMapper layout', 'Patch sheet (PDF)'];
+const SHEET_INDEX = 1;
+
+/** Where the last choice of target is kept, on this machine only. */
+const TARGET_KEY = 'beam.exportTarget';
+
+/**
+ * @returns {Number} the target chosen last time
+ */
+function rememberedTarget() {
+  try {
+    const index = Number(window.localStorage.getItem(TARGET_KEY));
+    return index >= 0 && index < APPLICATIONS.length ? index : 0;
+  } catch (err) {
+    return 0;
+  }
+}
 
 /** What each choice does to the rig, in one line. */
 const HINTS = {
@@ -149,16 +176,23 @@ const PROTOCOL_HINTS = {
 
 export default {
   name: 'UkPopupExport',
+  components: { PatchSheetOptions },
   mixins: [PopupMixin],
   props: {
     /**
-     * The scene items to export: the selection when the popup was opened.
+     * The scene items to export: the selection, or every group, structure and
+     * fixture when nothing is selected. Follows the selection while open.
      * Fixtures go as themselves, structures and groups with their members.
      * Hidden ones are included -- what is exported is what was chosen.
      */
     items: {
       type: Array,
       default: () => [],
+    },
+    /** Whether nothing is selected, so the patch sheet prints the whole scene. */
+    wholeScene: {
+      type: Boolean,
+      default: false,
     },
   },
   compatConfig: {
@@ -167,8 +201,11 @@ export default {
   },
   data() {
     return {
-      headerData: { title: 'Export selection', icon: 'export' },
-      applicationIndex: 0,
+      headerData: { title: 'Export', icon: 'export' },
+      applicationIndex: rememberedTarget(),
+      /** The patch sheet's choices, from its options. */
+      sheetOptions: null,
+      sheetAnything: false,
       applicationNames: APPLICATIONS,
       // Looked up rather than written as a number, so reordering the list
       // cannot quietly change which one a fresh export starts on.
@@ -185,6 +222,13 @@ export default {
     };
   },
   computed: {
+    sheet() {
+      return this.applicationIndex === SHEET_INDEX;
+    },
+    /** What the patch sheet covers: null for the whole scene. */
+    sheetScope() {
+      return this.wholeScene ? null : itemsScope(this.items);
+    },
     projection() {
       return (PROJECTION_LABELS[this.projectionIndex] || PROJECTION_LABELS[0]).id;
     },
@@ -296,7 +340,47 @@ export default {
         || kindOf(item) === SCENE_ITEM_KINDS.GROUP);
     },
   },
+  watch: {
+    applicationIndex(index) {
+      try {
+        window.localStorage.setItem(TARGET_KEY, String(index));
+      } catch (err) {
+        // Not remembered.
+      }
+    },
+  },
   methods: {
+    sheetChange({ options, anything }) {
+      this.sheetOptions = options;
+      this.sheetAnything = anything;
+    },
+    /**
+     * Writes the chosen export.
+     *
+     * @public
+     */
+    submit() {
+      if (this.sheet) this.exportSheet();
+      else this.exportLayout();
+    },
+    /**
+     * Writes the patch sheet as a PDF.
+     *
+     * @public
+     * @async
+     */
+    async exportSheet() {
+      if (!this.sheetAnything) return;
+      if (this.$refs.sheetOptions) this.$refs.sheetOptions.remember();
+      const options = { ...this.sheetOptions };
+      const scope = this.sheetScope;
+      this.close();
+      try {
+        await exportPatchSheet(this.$show, options, scope);
+      } catch (err) {
+        EventBus.emit('app_error', new Error(`Could not export the patch sheet: ${err.message}`));
+      }
+    },
     /**
      * Writes the scene as a MadMapper fixture layout.
      *

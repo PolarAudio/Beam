@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import PatchSingleton, { DMX_UNIVERSE_LENGTH } from './patch.model';
 import { SHOW_SCOPE } from './definition_store';
+import { SCENE_ITEM_KINDS, kindOf } from './scene_item';
 import MovingHead from '../../plugins/visualizer/moving_head';
 import SceneObjects from '../../plugins/visualizer/scene_objects';
 import MeasureTool, { MEASURE_MODES, detailsOf } from '../../plugins/visualizer/measure_tool';
@@ -60,17 +61,10 @@ export const PATCH_SHEET_DEFAULTS = Object.freeze({
 });
 
 /**
- * Plot height in CSS pixels at 96 dpi; the width follows the paper. Shorter
- * when the view shares the first page with the title.
+ * Plot height in CSS pixels at 96 dpi; the width follows the paper. Every
+ * view has a page of its own.
  */
 const PLOT_HEIGHT = 540;
-const PLOT_HEIGHT_TITLE_PAGE = 430;
-
-/**
- * @param {Object} opt every option
- * @returns {Boolean} whether the first view starts on the title page
- */
-const viewsOnTitlePage = (opt) => !opt.patchList && !opt.fixtureTypes;
 /** Room beside the plot for the stage-side labels, in CSS pixels. */
 const PLOT_SIDES = 42;
 const PX_PER_MM = 96 / 25.4;
@@ -358,13 +352,36 @@ export function splitAddress(address) {
 }
 
 /**
+ * The fixtures and objects among scene items, counting the members of
+ * structures and groups.
+ *
+ * @param {Array} items scene items, as the export popup is given them
+ * @returns {{ fixtures: Set, objects: Set }}
+ */
+export function itemsScope(items) {
+  const scope = { fixtures: new Set(), objects: new Set() };
+  const add = (item) => {
+    const kind = kindOf(item);
+    if (kind === SCENE_ITEM_KINDS.FIXTURE) scope.fixtures.add(item);
+    else if (kind === SCENE_ITEM_KINDS.OBJECT) scope.objects.add(item);
+  };
+  items.forEach((item) => {
+    add(item);
+    (item.members || []).forEach(add);
+  });
+  return scope;
+}
+
+/**
  * Everything the sheet prints, read from the show and its renderers.
  *
  * @param {Object} show the Show
+ * @param {Object|null} [scope] from `itemsScope`; null for the whole scene
  * @returns {Object} `{ title, date, rows, types, objects, measurements }`
  */
-export function collectPatchSheet(show) {
-  const fixtures = show.fixturePool.fixtures.slice();
+export function collectPatchSheet(show, scope = null) {
+  const fixtures = show.fixturePool.fixtures
+    .filter((f) => !scope || scope.fixtures.has(f));
   const patched = fixtures.filter((f) => PatchSingleton.isPatched(f))
     .sort((a, b) => a.address - b.address);
   const unpatched = fixtures.filter((f) => !PatchSingleton.isPatched(f))
@@ -410,6 +427,7 @@ export function collectPatchSheet(show) {
 
   const objects = show.objects
     .filter((object) => !object.isHidden && !object._hidden)
+    .filter((object) => !scope || scope.objects.has(object))
     .map((object) => ({ corners: objectCorners(object) }))
     .filter((object) => object.corners);
 
@@ -421,6 +439,7 @@ export function collectPatchSheet(show) {
     appVersion: import.meta.env.VITE_APP_VERSION || '',
     // Local date: the UTC one is a day out for half of each day east of Greenwich.
     date: new Date().toLocaleDateString('en-CA'),
+    selection: !!scope,
     rows,
     types: [...types.values()]
       .sort((a, b) => a.type.localeCompare(b.type) || a.mode.localeCompare(b.mode)),
@@ -490,10 +509,9 @@ export function numberList(numbers) {
  * @param {Object} sheet from `collectPatchSheet`
  * @param {String} key a key of `VIEWS`
  * @param {Object} [options] as `PATCH_SHEET_DEFAULTS`
- * @param {Boolean} [titlePage] whether the view shares the first page
  * @returns {Object|null} null when there is nothing to draw
  */
-export function layoutView(sheet, key, options, titlePage = false) {
+export function layoutView(sheet, key, options) {
   const opt = withDefaults(options);
   const view = VIEWS[key];
   const project = projector(view);
@@ -518,7 +536,7 @@ export function layoutView(sheet, key, options, titlePage = false) {
   const margin = Math.max(maxU - minU, maxV - minV, 2) * 0.06 + 0.5;
   minU -= margin; maxU += margin; minV -= margin; maxV += margin;
   const plotWidth = Math.round(PAPER[opt.paper].width * PX_PER_MM) - PLOT_SIDES;
-  const plotHeight = titlePage ? PLOT_HEIGHT_TITLE_PAGE : PLOT_HEIGHT;
+  const plotHeight = PLOT_HEIGHT;
   const scale = Math.min(plotWidth / (maxU - minU), plotHeight / (maxV - minV));
   const width = (maxU - minU) * scale;
   const height = (maxV - minV) * scale;
@@ -736,6 +754,7 @@ tr.unpatched td { color: #777; }
 .arrow line { stroke: #111; stroke-width: 1.6; }
 .arrow path { fill: #111; }
 .plotpage.newpage { page-break-before: always; }
+.measurepage { page-break-before: always; }
 .keep { break-inside: avoid; }
 table.types { width: auto; min-width: 50%; }
 .plotwrap { display: grid; grid-template-columns: auto auto auto; justify-content: center;
@@ -836,6 +855,9 @@ export function patchSheetHtml(sheet, options) {
     unpatchedRows.forEach((r) => body.push(row(r)));
   }
 
+  // Empty lists are left out, headings included.
+  const listed = opt.patchList && body.length > 0;
+
   const types = sheet.types.map((t) => '<tr>'
     + `<td>${escapeHtml(t.type)}</td>`
     + `<td class="num">${t.channels}</td><td class="num">${t.count}</td>`
@@ -854,7 +876,7 @@ export function patchSheetHtml(sheet, options) {
     'A start and end in different universes means the fixture continues into the next universe.',
     'Position is x, y, z in metres. +x is stage left, +y is upstage, z is height. The audience is at -y.',
   ];
-  if (movers && (opt.patchList || (opt.viewTop && opt.moverArrows))) {
+  if (movers && (listed || (opt.viewTop && opt.moverArrows))) {
     notes.push('Movers: the arrow shows where the beam moves when tilt is raised above its centre with pan at its centre. '
       + 'The arrow does not show where the display or controls on the base face. '
       + 'To check a mover on site, set pan to centre and tilt slightly above centre, then turn the base until the beam points along the arrow.');
@@ -874,28 +896,25 @@ export function patchSheetHtml(sheet, options) {
       + '<th>#</th><th>Values</th><th>Between</th>'
       + `</tr></thead><tbody>${measureRows}</tbody></table>` : '';
   const views = Object.keys(VIEWS).filter((key) => opt[VIEWS[key].option])
-    .map((key, index) => {
+    .map((key) => {
       const drawn = sheet.views && sheet.views[key];
-      const titlePage = index === 0 && viewsOnTitlePage(opt);
-      return { layout: drawn ? drawn.layout : layoutView(shown, key, opt, titlePage), drawn };
+      return { layout: drawn ? drawn.layout : layoutView(shown, key, opt), drawn };
     })
     .filter((view) => view.layout);
-  const viewPage = ({ layout, drawn }, index) => {
+  const viewPage = ({ layout, drawn }) => {
     const note = [layout.seen];
-    if (opt.patchList) note.push('Numbers match the # column.');
+    if (listed) note.push('Numbers match the # column.');
     if (layout.key === 'top' && movers && opt.moverArrows) note.push('Red arrows: where each mover\'s beam moves when tilt is raised above centre with pan at centre.');
     if (unpatchedRows.length) note.push('Dashed circles are not patched.');
     if (layout.key !== 'top') note.push('Grey dashed outlines are fixtures hidden behind something in this view.');
     if (measurements.length) note.push('Blue: measurements, seen from this side; the full values are listed after the last view.');
-    const first = index === 0 && viewsOnTitlePage(opt);
     const label = (text, cls) => `<div class="stage${cls}">${text}</div>`;
-    return `<div class="plotpage${first ? '' : ' newpage'}"><h1>${layout.title}</h1>`
+    return `<div class="plotpage newpage"><h1>${layout.title}</h1>`
       + `<div class="meta">${note.join(' ')}</div>`
       + `<div class="plotwrap"><div></div>${label(layout.labels.top, '')}<div></div>`
       + `${label(layout.labels.left, ' side right')}${viewSvg(shown, layout, opt, drawn)}`
       + `${label(layout.labels.right, ' side')}`
-      + `<div></div>${label(layout.labels.bottom, '')}<div></div></div>`
-      + `${index === views.length - 1 ? measureTable : ''}</div>`;
+      + `<div></div>${label(layout.labels.bottom, '')}<div></div></div></div>`;
   };
 
   return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(sheet.title)} patch sheet</title>`
@@ -909,15 +928,17 @@ export function patchSheetHtml(sheet, options) {
     + '<div class="meta">'
     + `${sheet.version ? `Version ${escapeHtml(sheet.version)} &nbsp;&middot;&nbsp; ` : ''}`
     + `${sheet.author ? `${escapeHtml(sheet.author)} &nbsp;&middot;&nbsp; ` : ''}`
+    + `${sheet.selection ? 'Selection only &nbsp;&middot;&nbsp; ' : ''}`
     + `${sheet.date} &nbsp;&middot;&nbsp; ${patchedRows.length} patched `
     + `${patchedRows.length === 1 ? 'fixture' : 'fixtures'}${allUnpatched.length ? `, ${allUnpatched.length} not patched` : ''}`
     + ` &nbsp;&middot;&nbsp; ${universes.length} ${universes.length === 1 ? 'universe' : 'universes'}</div>`
     + `${opt.notes && sheet.notes.trim() ? `<div class="usernotes"><h3>Notes</h3>${escapeHtml(sheet.notes.trim())}</div>` : ''}`
     + `${opt.instructions ? `<ul class="notes">${notes.map((n) => `<li>${n}</li>`).join('')}</ul>` : ''}`
-    + `${opt.patchList ? patchTable : ''}`
-    + `${opt.fixtureTypes ? typesTable : ''}`
+    + `${listed ? patchTable : ''}`
+    + `${opt.fixtureTypes && sheet.types.length ? typesTable : ''}`
     + `${views.map(viewPage).join('')}`
-    + `${views.length ? '' : `<div class="keep">${measureTable}</div>`}`
+    // The measurements after the views, on a page of their own.
+    + `${measureTable ? `<div class="keep${views.length ? ' measurepage' : ''}">${measureTable}</div>` : ''}`
     + `<div class="pagebox" id="pagebox"></div><script>${BREAK_IF_LOW}</script>`
     + '</body></html>';
 }
@@ -934,8 +955,8 @@ export function drawViews(sheet, options) {
   const opt = withDefaults(options);
   const shown = opt.unpatched ? sheet : { ...sheet, rows: sheet.rows.filter((r) => r.patched) };
   const views = {};
-  Object.keys(VIEWS).filter((key) => opt[VIEWS[key].option]).forEach((key, index) => {
-    const layout = layoutView(shown, key, opt, index === 0 && viewsOnTitlePage(opt));
+  Object.keys(VIEWS).filter((key) => opt[VIEWS[key].option]).forEach((key) => {
+    const layout = layoutView(shown, key, opt);
     if (!layout) return;
     const drawing = LineDrawing.drawObjects(layout);
     const project = projector(layout);
@@ -973,11 +994,12 @@ async function logoDataUrl() {
  *
  * @param {Object} show the Show
  * @param {Object} [options] as `PATCH_SHEET_DEFAULTS`
+ * @param {Object|null} [scope] from `itemsScope`; null for the whole scene
  * @returns {Promise<String|null>} the path written, or null when cancelled
  */
-export async function exportPatchSheet(show, options) {
+export async function exportPatchSheet(show, options, scope = null) {
   if (!window.fileExport) return null;
-  const sheet = collectPatchSheet(show);
+  const sheet = collectPatchSheet(show, scope);
   sheet.logo = await logoDataUrl();
   sheet.views = drawViews(sheet, options);
   return window.fileExport.save({

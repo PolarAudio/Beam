@@ -1017,6 +1017,10 @@ class Light {
     this._animation = null;
     this._animationAngle = 0;
     this._animationRpm = 0;
+    // Where a glass disc's caustic web starts in its flow: well past the
+    // formula's symmetric start, which looks like a grid, and different for
+    // every light.
+    this._animationTurns = 50 + Math.random() * 400;
     this._prism = {
       on: false, facets: PRISM_DEFAULT_FACETS, linear: false, angle: 0, speedRpm: 0,
     };
@@ -2172,6 +2176,7 @@ class Light {
       x,
       y,
       radius: disc.system.radius > 0 ? disc.system.radius : DEFAULT_ANIMATION_SYSTEM.radius,
+      turns: this._animationTurns || 0,
     });
   }
 
@@ -2337,6 +2342,10 @@ class Light {
     if (this._animationRpm !== 0) {
       this._animationAngle = (this._animationAngle
         + (this._animationRpm / 60) * Math.PI * 2 * dt) % (Math.PI * 2);
+      // How far the disc has turned either way, which moves a glass disc's
+      // caustic web; kept within a range a shader's float holds exactly.
+      this._animationTurns = ((this._animationTurns || 0)
+        + Math.abs(this._animationRpm / 60) * dt) % 1000;
       if (this._animation) this.writeAnimation();
     }
     if (moving) this.writeOptics();
@@ -3676,6 +3685,7 @@ class Light {
         // see animation_wheel.js.
         animationTable: { value: Animation.table },
         animationAtlas: { value: Animation.atlas },
+        ...Animation.glass,
         // What each beam's own lens sees, from `renderDepth`.
         depthAtlas: { value: null },
         depthColumns: { value: MOVER_DEPTH.columns },

@@ -541,8 +541,10 @@ vec2 beamStencil(vec2 p, vec2 along, float lod) {
   int facets = int(abs(vPrism.x));
   bool linear = vPrism.x < 0.0;
   // Framing blades sit in the gate with the gobos, as sharp as the focus
-  // makes them.
-  float bladeSoft = 0.01 + 0.06 * sampleDefocus;
+  // makes them: at least as soft as the lens's blur here, so near the lens,
+  // where the blur covers the lens, the beam leaves the whole lens, dimmed by
+  // the blades, rather than narrowing to the planes their edges make.
+  float bladeSoft = max(0.01 + 0.06 * sampleDefocus, sampleBlur);
   // An animation disc sits in the gate with the gobos, never sharper than
   // they are in the air. Its table row is the light's, as the shapers' is.
   float discDefocus = max(sampleDefocus, 1.0);

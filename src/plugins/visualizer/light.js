@@ -234,7 +234,7 @@ const PENUMBRA_DEFOCUSED = 1.0;
  * the shape of the beam in the air, which narrows from the lens onto the
  * image at the focus and widens past it.
  */
-const FOCUS_NEAR = 1;
+const FOCUS_NEAR = 2.5;
 
 /**
  * The nearest surface whose blur the pool's cone test allows for, in metres:

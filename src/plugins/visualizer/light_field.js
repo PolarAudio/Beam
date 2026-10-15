@@ -692,10 +692,13 @@ float fieldEdge( float r, float inner, float blur ) {
 // The lens's blur as gobo blur levels. The atlas bakes a cell of 256 px,
 // two field radii across, at Gaussian sigmas of 0, 5 and 14 px, as
 // gobo_library.js; a blur disc of radius b field radii is a sigma of about
-// half its 128 b px.
+// half its 128 b px. Past the softest level, 2, the pattern fades to its
+// mean, gone at a blur of one field radius, as the pool's edge has spread.
 float fieldBlurLevels( float blur ) {
   float sigma = 64.0 * blur;
-  return sigma < 5.0 ? sigma / 5.0 : 1.0 + min( ( sigma - 5.0 ) / 9.0, 1.0 );
+  if ( sigma < 5.0 ) return sigma / 5.0;
+  if ( sigma < 14.0 ) return 1.0 + ( sigma - 5.0 ) / 9.0;
+  return 2.0 + min( ( blur - 14.0 / 64.0 ) / ( 1.0 - 14.0 / 64.0 ), 1.0 );
 }
 
 vec2 fieldStencil( vec2 p, float inner, vec4 gobo, vec4 prism, float split, float iris, float blur, float shaperRow, float animationRow ) {
@@ -710,7 +713,7 @@ vec2 fieldStencil( vec2 p, float inner, vec4 gobo, vec4 prism, float split, floa
       * fieldGobos( p, gobo, defocus )
       * fieldIris( p, iris, defocus )
       * shaperMask( lightFieldShapers, shaperRow, p, bladeSoft )
-      * animationMask( lightFieldAnimation, lightFieldAnimationAtlas, animationRow, p, defocus );
+      * animationMask( lightFieldAnimation, lightFieldAnimationAtlas, animationRow, p, defocus, blur );
     float far = fieldSplit( p, split, defocus );
     return vec2( v * ( 1.0 - far ), v * far );
   }
@@ -722,7 +725,7 @@ vec2 fieldStencil( vec2 p, float inner, vec4 gobo, vec4 prism, float split, floa
       * fieldGobos( q, gobo, defocus )
       * fieldIris( q, iris, defocus )
       * shaperMask( lightFieldShapers, shaperRow, q, bladeSoft )
-      * animationMask( lightFieldAnimation, lightFieldAnimationAtlas, animationRow, q, defocus );
+      * animationMask( lightFieldAnimation, lightFieldAnimationAtlas, animationRow, q, defocus, blur );
     float far = fieldSplit( q, split, defocus );
     sum += vec2( v * ( 1.0 - far ), v * far );
   }

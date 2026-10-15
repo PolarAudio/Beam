@@ -3,9 +3,9 @@
  * placement to swap into an animation wheel.
  *
  * Each disc is a square image, the disc centred and filling it, black where
- * it is metal and white where light passes, transparent or white round it;
- * beside it a JSON with its title and source. Listed here because the
- * renderer cannot list a folder it is served from. Beam's own discs come
+ * it is metal and white where light passes, transparent or white round it,
+ * 768 px to match the atlas cell. Listed here because the renderer cannot
+ * list a folder it is served from. Beam's own discs come
  * first, then those taken from GDTF files (`gdtf_discs.js`).
  */
 import GDTF_DISCS from './gdtf_discs';

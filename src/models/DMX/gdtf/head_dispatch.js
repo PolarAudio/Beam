@@ -143,6 +143,8 @@ function gdtfAction(c, origins, type = null) {
     }
   }
   if (/^Focus\d+$/.test(a)) return { kind: 'Focus', values: { focus: physical * 100 } };
+  // Autofocus by distance: the file's range is in metres.
+  if (/^Focus\d+Distance$/.test(a)) return { kind: 'Focus', values: { focusDistance: physical } };
   if (a === 'Iris') return { kind: 'Iris', values: { openPercent: physical * 100 } };
   // Framing blades: each end's insertion, 0 out to 1 across the whole field,
   // and the blade's own turn in degrees; the shaper's turn in degrees.

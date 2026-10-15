@@ -151,7 +151,7 @@ const DEFAULT_COLOR_TEMP = 8000;
  * @constant {Number}
  */
 const DEFAULT_FOCUS_DISTANCE = 5;
-const FOCUS_DISTANCE_MIN = 1;
+const FOCUS_DISTANCE_MIN = 2.5;
 const FOCUS_DISTANCE_MAX = 100;
 
 /**

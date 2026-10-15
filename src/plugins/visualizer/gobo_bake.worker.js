@@ -1,10 +1,12 @@
 /**
- * @file Bakes one gobo image into an atlas cell's pixels, off the main
- * thread: the sharp pattern in red and two blurred copies in green and blue.
- * See gobo_library.js for the rules; this only does the drawing.
+ * @file Bakes one gobo or animation disc image into an atlas cell's pixels,
+ * off the main thread: the sharp pattern in red and two blurred copies in
+ * green and blue. See gobo_library.js and animation_wheel.js for the rules;
+ * this only does the drawing.
  *
- * In: `{ id, bitmap, lightOnDark, size, sigmas, aperture }`, the bitmap
- * transferred. Out: `{ id, pixels }`, RGBA bytes for one cell, transferred.
+ * In: `{ id, bitmap, disc, lightOnDark, size, sigmas, aperture }`, the bitmap
+ * transferred; `disc` for an animation disc, drawn whole over white. Out:
+ * `{ id, pixels }`, RGBA bytes for one cell, transferred.
  */
 
 /**
@@ -88,14 +90,41 @@ function drawSharp(image, lightOnDark, size, aperture) {
   return sharp;
 }
 
-/** Each blur level into its own channel; luminance, so glass passes its grey. */
-function pack(sharp, size, sigmas) {
+/**
+ * An animation disc: the whole image over white, so whatever it leaves
+ * transparent passes light, stretched to the cell because its window path
+ * is in the image's own coordinates, -1 to 1 along each side. The disc is
+ * round: outside its inscribed circle is open whatever the image's corners
+ * hold, set before the blur so every level holds the disc's real edge.
+ */
+function drawDisc(image, size) {
+  const sharp = new OffscreenCanvas(size, size);
+  const s = sharp.getContext('2d');
+  s.imageSmoothingEnabled = true;
+  s.imageSmoothingQuality = 'high';
+  s.fillStyle = '#fff';
+  s.fillRect(0, 0, size, size);
+  s.drawImage(image, 0, 0, size, size);
+  const centre = size / 2;
+  s.beginPath();
+  s.rect(0, 0, size, size);
+  s.arc(centre, centre, centre, 0, Math.PI * 2);
+  s.fill('evenodd');
+  return sharp;
+}
+
+/**
+ * Each blur level into its own channel; luminance, so glass passes its
+ * grey. The ground is what the blur pulls in past the cell's edge: metal
+ * for a gobo, open for a disc.
+ */
+function pack(sharp, size, sigmas, ground) {
   const work = new OffscreenCanvas(size, size);
   const w = work.getContext('2d', { willReadFrequently: true });
   const packed = new Uint8ClampedArray(size * size * 4);
   sigmas.forEach((sigma, level) => {
     w.filter = 'none';
-    w.fillStyle = '#000';
+    w.fillStyle = ground;
     w.fillRect(0, 0, size, size);
     w.filter = sigma > 0 ? `blur(${sigma}px)` : 'none';
     w.drawImage(sharp, 0, 0);
@@ -111,9 +140,11 @@ function pack(sharp, size, sigmas) {
 // eslint-disable-next-line no-restricted-globals
 self.onmessage = ({ data }) => {
   const {
-    id, bitmap, lightOnDark, size, sigmas, aperture,
+    id, bitmap, disc, lightOnDark, size, sigmas, aperture,
   } = data;
-  const pixels = pack(drawSharp(bitmap, lightOnDark, size, aperture), size, sigmas);
+  const pixels = disc
+    ? pack(drawDisc(bitmap, size), size, sigmas, '#fff')
+    : pack(drawSharp(bitmap, lightOnDark, size, aperture), size, sigmas, '#000');
   bitmap.close();
   // eslint-disable-next-line no-restricted-globals
   self.postMessage({ id, pixels }, [pixels.buffer]);

@@ -98,11 +98,6 @@ export default [
     title: 'Circular Beams',
   },
   {
-    name: 'circular-droplets',
-    file: 'circular-droplets.png',
-    title: 'Circular droplets',
-  },
-  {
     name: 'circular-drops',
     file: 'circular-drops.png',
     title: 'Circular Drops',
@@ -201,11 +196,6 @@ export default [
     name: 'square-outline',
     file: 'square-outline.png',
     title: 'Square outline',
-  },
-  {
-    name: 'stars',
-    file: 'stars.png',
-    title: 'Stars',
   },
   {
     name: 'stones',

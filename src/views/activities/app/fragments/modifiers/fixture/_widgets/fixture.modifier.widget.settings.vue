@@ -79,7 +79,7 @@
         style="width: 92px"
         label="Focus at (m)"
         :precision="1"
-        :min="1"
+        :min="2.5"
         :max="100"
         @update:model-value="writeFocus"
       />

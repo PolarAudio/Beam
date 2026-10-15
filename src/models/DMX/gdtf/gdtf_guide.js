@@ -192,6 +192,7 @@ function partsOf(type, fn, bytes) {
   if (a === 'Pan' || a === 'Tilt') return whole(a, `${a.toLowerCase()} ${span}`);
   if (a === 'Zoom') return whole('Zoom', `zoom ${span}`);
   if (/^Focus\d+$/.test(a)) return whole('Focus', `focus ${span}`);
+  if (/^Focus\d+Distance$/.test(a)) return whole('Focus', `focus at ${span} m`);
   if (a === 'Iris') return whole('Iris', `iris ${span}`);
   if (/^Frost\d+$/.test(a)) return whole('Frost', `frost ${span}`);
   const blade = /^Blade(\d+)(A|B|Rot)$/.exec(a);

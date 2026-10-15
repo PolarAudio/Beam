@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import BakeWorker from './gobo_bake.worker?worker';
 
 /**
  * @file Animation wheels: a patterned disc slid part way into the beam at
@@ -14,19 +15,24 @@ import * as THREE from 'three';
  * centre x, y), texel 1 is (the window's radius, 0, 0, 0). The discs' images
  * are drawn into their own atlas, larger than the gobo atlas's cells
  * because the gate sees only a part of the disc, with the same three baked
- * blur levels in red, green and blue.
+ * blur levels in red, green and blue. A disc is drawn into its cell by the
+ * gobo bake worker and uploaded on its own; until then its cell is open.
  */
 
-/** Cells across the atlas, and their size in pixels. */
+/**
+ * Cells across the atlas, and their size in pixels: the usual window, 0.35
+ * of the disc's diameter, then spans about 270 px, as a gobo's 256 px cell.
+ * 3072 px square, 36 MB on the GPU.
+ */
 const ANIMATION_GRID = 4;
-const ANIMATION_CELL = 512;
+const ANIMATION_CELL = 768;
 
 /**
  * Blur levels baked per cell, sharp to soft, in pixels: the gobo atlas's
- * levels (0, 2.5 and 7 px of a 64 px field radius) at the field radius the
- * usual window gives, 0.35 of the disc's half width, 90 px here.
+ * levels (0, 5 and 14 px of a 128 px field radius) at the field radius the
+ * usual window gives, 0.35 of the disc's half width, 134 px here.
  */
-const ANIMATION_BLUR_SIGMAS = [0, 3.5, 10];
+const ANIMATION_BLUR_SIGMAS = [0, 5.25, 14.7];
 
 /** Rows in the table: one per light, as many as the renderer allows. */
 const ROWS = 4096;
@@ -46,7 +52,13 @@ export const DEFAULT_ANIMATION_SYSTEM = {
 
 let canvas = null;
 let texture = null;
+let worker = null;
 const cells = new Map();
+/** Bakes asked of the worker, by number: the cell each is for. */
+const baking = new Map();
+let bakes = 0;
+/** Cells drawn since the last upload: `{ index, pixels }`. */
+const pending = [];
 
 const data = new Float32Array(ROWS * TEXELS * 4);
 const table = new THREE.DataTexture(data, TEXELS, ROWS, THREE.RGBAFormat, THREE.FloatType);
@@ -69,46 +81,37 @@ function loadImage(url) {
   });
 }
 
-/**
- * Draws a disc image into its cell: the whole image over white, so whatever
- * the image leaves transparent round the disc passes light, then its
- * luminance at each blur level into red, green and blue.
- */
-function drawDisc(index, image) {
+/** A cell's top-left corner in the atlas, in pixels. */
+function cellOrigin(index) {
   const x = (index % ANIMATION_GRID) * ANIMATION_CELL;
-  const y = Math.floor(index / ANIMATION_GRID) * ANIMATION_CELL;
-  const sharp = document.createElement('canvas');
-  sharp.width = ANIMATION_CELL;
-  sharp.height = ANIMATION_CELL;
-  const s = sharp.getContext('2d');
-  s.fillStyle = '#fff';
-  s.fillRect(0, 0, ANIMATION_CELL, ANIMATION_CELL);
-  s.imageSmoothingEnabled = true;
-  s.imageSmoothingQuality = 'high';
-  // Stretched to the cell: the path is in the image's own coordinates,
-  // -1 to 1 along each side whatever its proportions.
-  s.drawImage(image, 0, 0, ANIMATION_CELL, ANIMATION_CELL);
+  return [x, Math.floor(index / ANIMATION_GRID) * ANIMATION_CELL];
+}
 
-  const work = document.createElement('canvas');
-  work.width = ANIMATION_CELL;
-  work.height = ANIMATION_CELL;
-  const w = work.getContext('2d', { willReadFrequently: true });
-  const c = canvas.getContext('2d');
-  const packed = c.createImageData(ANIMATION_CELL, ANIMATION_CELL);
-  ANIMATION_BLUR_SIGMAS.forEach((sigma, level) => {
-    w.filter = 'none';
-    w.fillStyle = '#fff';
-    w.fillRect(0, 0, ANIMATION_CELL, ANIMATION_CELL);
-    w.filter = sigma > 0 ? `blur(${sigma}px)` : 'none';
-    w.drawImage(sharp, 0, 0);
-    const pixels = w.getImageData(0, 0, ANIMATION_CELL, ANIMATION_CELL).data;
-    for (let i = 0; i < pixels.length; i += 4) {
-      packed.data[i + level] = 0.3 * pixels[i] + 0.59 * pixels[i + 1] + 0.11 * pixels[i + 2];
-    }
-  });
-  for (let i = 3; i < packed.data.length; i += 4) packed.data[i] = 255;
-  c.putImageData(packed, x, y);
-  if (texture) texture.needsUpdate = true;
+/**
+ * Asks the worker to draw a disc image into its cell: the whole image over
+ * white, stretched to the cell, its luminance at each blur level in red,
+ * green and blue.
+ */
+function bakeDisc(index, image) {
+  bakes += 1;
+  const id = bakes;
+  baking.set(id, index);
+  createImageBitmap(image).then((bitmap) => {
+    worker.postMessage({
+      id, bitmap, disc: true, size: ANIMATION_CELL, sigmas: ANIMATION_BLUR_SIGMAS,
+    }, [bitmap]);
+  }, () => baking.delete(id));
+}
+
+/** A baked disc back from the worker: into the atlas, and queued for upload. */
+function onBaked({ data: baked }) {
+  const index = baking.get(baked.id);
+  baking.delete(baked.id);
+  if (index === undefined) return;
+  const [x, y] = cellOrigin(index);
+  const pixels = new Uint8ClampedArray(baked.pixels.buffer);
+  canvas.getContext('2d').putImageData(new ImageData(pixels, ANIMATION_CELL, ANIMATION_CELL), x, y);
+  pending.push({ index, pixels: new Uint8Array(baked.pixels.buffer) });
 }
 
 const Animation = {
@@ -134,7 +137,28 @@ const Animation = {
     texture.colorSpace = THREE.NoColorSpace;
     texture.flipY = false;
     texture.needsUpdate = true;
+    worker = new BakeWorker();
+    worker.onmessage = onBaked;
     return texture;
+  },
+
+  /**
+   * Uploads the discs drawn since the last call, each cell on its own.
+   * Called once a frame, before drawing.
+   *
+   * @param {THREE.WebGLRenderer} renderer
+   */
+  flush(renderer) {
+    if (!texture || !pending.length || !renderer) return;
+    const at = new THREE.Vector2();
+    pending.splice(0, pending.length).forEach(({ index, pixels }) => {
+      const source = new THREE.DataTexture(pixels, ANIMATION_CELL, ANIMATION_CELL);
+      source.flipY = false;
+      source.needsUpdate = true;
+      at.set(...cellOrigin(index));
+      renderer.copyTextureToTexture(source, texture, null, at);
+      source.dispose();
+    });
   },
 
   /** @type {THREE.DataTexture} a row per light; see the file header */
@@ -161,7 +185,7 @@ const Animation = {
     }
     const index = cells.size;
     cells.set(key, index);
-    loadImage(url).then((image) => { if (image) drawDisc(index, image); });
+    loadImage(url).then((image) => { if (image) bakeDisc(index, image); });
     return index;
   },
 
@@ -211,12 +235,20 @@ export function windowCentre(system, t) {
 /**
  * The disc's share of the light at a point of the gate, shared by the beam
  * and the pool shaders. 1 where the disc is out or open, the image's
- * luminance where it is in, at the blur the focus gives, `defocus` 0 sharp
- * to 2 the softest baked level.
+ * luminance where it is in, at the blur the focus gives: `defocus` 0 sharp
+ * to 2 the softest baked level and on to 3, and `blur` the lens's blur in
+ * field radii.
  */
 export const ANIMATION_GLSL = `
 #define ANIMATION_GRID ${ANIMATION_GRID}.0
-float animationMask( sampler2D table, sampler2D atlas, float row, vec2 p, float defocus ) {
+// The disc's softest level at a point of the disc image; 1 past the image,
+// where there is no disc.
+float animationSoftest( sampler2D atlas, vec2 cell, vec2 q ) {
+  if ( max( abs( q.x ), abs( q.y ) ) >= 1.0 ) return 1.0;
+  vec2 uv = clamp( vec2( q.x, -q.y ) * 0.5 + 0.5, 0.002, 0.998 );
+  return textureLod( atlas, ( cell + uv ) / ANIMATION_GRID, 0.0 ).b;
+}
+float animationMask( sampler2D table, sampler2D atlas, float row, vec2 p, float defocus, float blur ) {
   if ( row < 0.0 ) return 1.0;
   vec4 disc = texelFetch( table, ivec2( 0, int( row ) ), 0 );
   if ( disc.x < 0.5 ) return 1.0;
@@ -227,19 +259,32 @@ float animationMask( sampler2D table, sampler2D atlas, float row, vec2 p, float 
   float c = cos( -disc.y );
   float s = sin( -disc.y );
   q = vec2( c * q.x - s * q.y, s * q.x + c * q.y );
-  // The disc is round: past the circle its image is inscribed in there is
-  // no disc and the light passes, its rim softened as the focus softens the
-  // pattern. The image's square corners are not part of it.
-  float r = length( q );
-  float rim = 0.01 + 0.03 * defocus;
-  if ( r >= 1.0 ) return 1.0;
-  vec2 uv = clamp( vec2( q.x, -q.y ) * 0.5 + 0.5, 0.002, 0.998 );
+  // The cell holds the disc with everything outside its circle open, its
+  // edge blurred with the pattern at every level (gobo_bake.worker.js), so
+  // the edge softens with the focus and stays where it is. Past the image
+  // there is no disc.
+  float spread = blur * radius;
   float index = disc.x - 1.0;
   vec2 cell = vec2( mod( index, ANIMATION_GRID ), floor( index / ANIMATION_GRID ) );
-  vec3 levels = textureLod( atlas, ( cell + uv ) / ANIMATION_GRID, 0.0 ).rgb;
-  float v = mix( mix( levels.r, levels.g, clamp( defocus, 0.0, 1.0 ) ), levels.b,
-    clamp( defocus - 1.0, 0.0, 1.0 ) );
-  return mix( v, 1.0, smoothstep( 1.0 - rim, 1.0, r ) );
+  float v = 1.0;
+  if ( max( abs( q.x ), abs( q.y ) ) < 1.0 ) {
+    vec2 uv = clamp( vec2( q.x, -q.y ) * 0.5 + 0.5, 0.002, 0.998 );
+    vec3 levels = textureLod( atlas, ( cell + uv ) / ANIMATION_GRID, 0.0 ).rgb;
+    v = mix( mix( levels.r, levels.g, clamp( defocus, 0.0, 1.0 ) ), levels.b,
+      clamp( defocus - 1.0, 0.0, 1.0 ) );
+  }
+  // Past the softest level the pattern and its edge blur on: the softest
+  // level averaged over a ring as wide as the lens's blur.
+  float wash = clamp( defocus - 2.0, 0.0, 1.0 );
+  if ( wash > 0.0 ) {
+    float sum = animationSoftest( atlas, cell, q );
+    for ( int k = 0; k < 6; k ++ ) {
+      float a = float( k ) * 1.0472;
+      sum += animationSoftest( atlas, cell, q + vec2( cos( a ), sin( a ) ) * spread * 0.6 );
+    }
+    v = mix( v, sum / 7.0, wash );
+  }
+  return v;
 }
 `;
 

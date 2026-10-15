@@ -12,6 +12,7 @@ import Controls, { ORTHO_STANDOFF, ORTHO_REFERENCE_FOV, setOrthoHalfHeight } fro
 import ViewCube from './view_cube';
 import Light from './light';
 import { flushGoboCells } from './gobo_library';
+import Animation from './animation_wheel';
 import InfiniteGridHelper from './grid';
 import LEDField from './led_field';
 import LightField, { SCENE_PER_NIT } from './light_field';
@@ -1162,8 +1163,9 @@ class Visualizer {
 
     AnimationManager.add((t) => {
       Light.update(t);
-      // Gobo cells the lights asked for this frame, uploaded before drawing.
+      // Gobo and disc cells drawn since the last frame, uploaded before drawing.
       flushGoboCells(this.renderer);
+      Animation.flush(this.renderer);
       LEDField.update(t);
       // The strobes' flash trains, before the field packs them and before the
       // wash reads what they did to the camera.

@@ -522,15 +522,19 @@ float beamEdge(float r) {
  * @function beamBlurLevels
  * @brief the lens's blur as gobo blur levels
  * @param float blur in field radii
- * @returns float 0 sharp to 2 the softest baked level
+ * @returns float 0 sharp to 2 the softest baked level, on to 3 the mean
  *
  * The atlas bakes a cell of 256 px, two field radii across, at Gaussian
  * sigmas of 0, 5 and 14 px (gobo_library.js); a blur disc of radius b
- * field radii is a sigma of about half its 128 b px.
+ * field radii is a sigma of about half its 128 b px. Past the softest
+ * level the pattern fades to its mean, gone at a blur of one field radius,
+ * as the pool's edge has spread by then.
  */
 float beamBlurLevels(float blur) {
   float sigma = 64.0 * blur;
-  return sigma < 5.0 ? sigma / 5.0 : 1.0 + min((sigma - 5.0) / 9.0, 1.0);
+  if (sigma < 5.0) return sigma / 5.0;
+  if (sigma < 14.0) return 1.0 + (sigma - 5.0) / 9.0;
+  return 2.0 + min((blur - 14.0 / 64.0) / (1.0 - 14.0 / 64.0), 1.0);
 }
 
 vec2 beamStencil(vec2 p, vec2 along, float lod) {
@@ -547,7 +551,7 @@ vec2 beamStencil(vec2 p, vec2 along, float lod) {
       * beamGobos(p, along, lod)
       * beamIris(p)
       * shaperMask(shaperTable, vShaperRow, p, bladeSoft)
-      * animationMask(animationTable, animationAtlas, vShaperRow, p, discDefocus);
+      * animationMask(animationTable, animationAtlas, vShaperRow, p, discDefocus, sampleBlur);
     float far = beamSplit(p);
     return vec2(v * (1.0 - far), v * far);
   }
@@ -559,7 +563,7 @@ vec2 beamStencil(vec2 p, vec2 along, float lod) {
       * beamGobos(q, along, lod)
       * beamIris(q)
       * shaperMask(shaperTable, vShaperRow, q, bladeSoft)
-      * animationMask(animationTable, animationAtlas, vShaperRow, q, discDefocus);
+      * animationMask(animationTable, animationAtlas, vShaperRow, q, discDefocus, sampleBlur);
     float far = beamSplit(q);
     sum += vec2(v * (1.0 - far), v * far);
   }

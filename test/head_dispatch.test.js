@@ -66,6 +66,7 @@ const xml = `<?xml version="1.0" encoding="UTF-8"?>
   <Attribute Name="CTO"/><Attribute Name="CTB"/><Attribute Name="CTC"/><Attribute Name="Blade1A"/><Attribute Name="Effects1"/>
   <Attribute Name="AnimationWheel1"/><Attribute Name="AnimationWheel1Pos"/><Attribute Name="AnimationWheel1PosRotate"/>
   <Attribute Name="AnimationSystem1"/><Attribute Name="AnimationWheelSpin"/>
+  <Attribute Name="Focus1"/><Attribute Name="Focus1Distance" PhysicalUnit="Length"/>
 </Attributes></AttributeDefinitions>
 <Wheels><Wheel Name="Gobo Wheel"><Slot Name="Open"/><Slot Name="Star"/></Wheel>
   <Wheel Name="Anim"><Slot Name="Open"/><Slot Name="Disc" MediaFileName="disc"/></Wheel></Wheels>
@@ -104,6 +105,8 @@ ${channel(17, 'Yoke', 'AnimationSystem1', `<ChannelFunction Name="System" Attrib
       <ChannelSet Name="Disc" DMXFrom="0/1" WheelSlotIndex="2"/>
     </ChannelFunction>`)}
 ${channel(18, 'Base', 'AnimationWheelSpin', '<ChannelFunction Name="Spin" Attribute="AnimationWheelSpin" DMXFrom="0/1" PhysicalFrom="720" PhysicalTo="-720"/>')}
+${channel(19, 'Head', 'Focus1', `<ChannelFunction Name="Focus" Attribute="Focus1" DMXFrom="0/1" PhysicalFrom="0" PhysicalTo="1"/>
+    <ChannelFunction Name="Auto focus" Attribute="Focus1Distance" DMXFrom="128/1" PhysicalFrom="5" PhysicalTo="15"/>`)}
 </DMXChannels></DMXMode></DMXModes>
 </FixtureType></GDTF>`;
 
@@ -134,6 +137,8 @@ check('CTO filter released by its channel', write(8, 250), [['setCorrectionFilte
 check('CTB in kelvin is a white point', write(9, 255), [['colorTemperature', 8000]]);
 check('CTC as a share with no filter draws nothing', write(10, 9), []);
 check('CTC in kelvin is a white point', write(10, 255), [['colorTemperature', 6000]]);
+check('focus as a share of the lens travel', write(18, 127), [['focus', 100]]);
+check('focus distance in metres', write(18, 255), [['focusDistance', 15]]);
 
 // What the guides call drawn is asked of the same dispatch.
 const fnNamed = (name) => type.modes[0].channels

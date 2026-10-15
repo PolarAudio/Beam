@@ -15,7 +15,7 @@ import {
  * Like `led_bar.js`, the generated document is deliberately OFL-shaped, so
  * `Fixture` reads it through exactly the same path as a library profile and
  * nothing downstream has to know it was made up. Everything OFL cannot express
- * is kept under `asls.projector`.
+ * is kept under `beam.projector`.
  *
  * **One structural difference from every other fixture here: a projector may
  * carry no DMX at all.** Most have no DMX socket, and most of those that do
@@ -429,7 +429,7 @@ export const CONTROL_DEFS = [
   // question asked of the profile.
   // OFL has no lens shift. BeamPosition is the nearest true thing -- the beam
   // moving within the fixture's own output -- and the range it covers is in
-  // asls.projector, in per cent, where the renderer looks for it.
+  // beam.projector, in per cent, where the renderer looks for it.
   new ControlDef(PROJECTOR_CHANNELS.SHIFT_H, 'Lens Shift H', new PercentType({
     initial: 0, limit: (params) => shiftLimit(params, 'H'),
   }), { capability: { type: 'BeamPosition' } }),
@@ -466,7 +466,7 @@ export function projectorChannels(params) {
  * Whether a profile was made here.
  *
  * Asked of the geometry rather than of a category, for the same reason
- * `prepare3DModelInstance` asks it of `asls.bar`: a category string says
+ * `prepare3DModelInstance` asks it of `beam.bar`: a category string says
  * nothing about what the thing actually is.
  *
  * @public
@@ -474,7 +474,7 @@ export function projectorChannels(params) {
  * @returns {Boolean}
  */
 export function isProjectorProfile(profile) {
-  return !!(profile && profile.asls && profile.asls.projector);
+  return !!(profile && profile.beam && profile.beam.projector);
 }
 
 /**
@@ -496,11 +496,8 @@ export function buildProjectorProfile(overrides = {}) {
     categories: ['Other'],
     meta: { generated: true },
     physical: {
-      // OFL's order is width, height, depth, in millimetres. Nothing in the app
-      // reads it -- the geometry the renderer needs is in `asls.projector`,
-      // where the lens is too -- but a profile that states its size wrongly is
-      // a trap for whatever reads it next.
-      dimensions: [params.width * 1000, params.height * 1000, params.depth * 1000],
+      // No `dimensions`: the size is the parameters', read through
+      // `FixtureKind.sizeOf`. A second copy drifts when a file is edited by hand.
       bulb: { type: 'Laser' },
       // Narrowest first, which is the order `physical.lens` is read in and the
       // order a *larger* throw ratio comes out as. See `throwAngles`.
@@ -515,7 +512,7 @@ export function buildProjectorProfile(overrides = {}) {
     modes,
     // Everything OFL cannot express: the optics, the box, and which channels
     // this model actually has.
-    asls: { projector: params },
+    beam: { projector: params },
   };
 }
 

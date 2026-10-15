@@ -130,8 +130,10 @@ export default {
     };
   },
   watch: {
+    // The value set from outside is shown, not chosen: no emit back, and an
+    // open list stays open.
     modelValue(newValue) {
-      this.select(parseInt(newValue, 10));
+      this.selected = parseInt(newValue, 10);
     },
   },
   beforeUnmount() {

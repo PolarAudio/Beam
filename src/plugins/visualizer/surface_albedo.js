@@ -4,12 +4,13 @@ import * as THREE from 'three';
  * @file The colour of every surface the camera sees, as a screen-sized
  * texture.
  *
- * The projector pass adds its light after the scene is drawn, so it has no
- * material to read. This draws the scene once more with each lit material
- * replaced by its diffuse colour, unlit, and the pass multiplies the projected
- * light by it: a grey wall returns less of the picture than a white one.
+ * The projector and laser passes add their light after the scene is drawn, so
+ * they have no material to read. This draws the scene once more with each lit
+ * material replaced by its diffuse colour, unlit, and the passes multiply the
+ * light they add by it: a grey wall returns less of the picture than a white
+ * one.
  *
- * Drawn only while a projector is throwing.
+ * Drawn only while a projector is throwing or a laser is in the scene.
  */
 
 /** Unlit stand-ins for lit materials, by source material. */

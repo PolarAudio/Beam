@@ -108,12 +108,12 @@
             <uk-select-input
               :model-value="senderIndex"
               :options="senderOptions"
-              label="Sender"
+              label="Source"
               :disabled="!ndiAvailable"
               @input="pickSender"
             />
             <p class="subtitle">
-              Which sender fills this input is a setting of this machine. The
+              Which source fills this input is a setting of this machine. The
               project keeps only the input.
             </p>
           </template>
@@ -217,7 +217,7 @@ const RESCAN_MS = 5000;
 const STATUS_TEXT = {
   live: 'Live',
   waiting: 'Waiting for the first frame…',
-  unbound: 'Not bound to a sender on this machine',
+  unbound: 'No source chosen on this machine',
   missing: 'Not found',
   unused: 'No device shows this input, so it is not open',
 };
@@ -383,7 +383,7 @@ export default {
       void this.tick; // eslint-disable-line no-void
       if (input.kind === INPUT_KINDS.FILE) return `File · ${input.file || 'none'}`;
       const sender = VideoRouter.binding(input.uid);
-      return sender ? `NDI · ${sender}` : 'NDI · not bound on this machine';
+      return sender ? `NDI · ${sender}` : 'NDI · no source on this machine';
     },
     /** The names of the devices whose input this is. */
     usersOf(input) {

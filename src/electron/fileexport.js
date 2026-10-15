@@ -1,8 +1,10 @@
 /* eslint-disable no-console */
 /* eslint-disable import/no-extraneous-dependencies */
-import { app, dialog } from 'electron';
+import { app, BrowserWindow, dialog } from 'electron';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
+import saveFolders from './savefolders';
 
 /**
  * Saving generated documents to somewhere the user chooses (main process).
@@ -60,8 +62,15 @@ const lastPaths = new Map();
  *
  * @param {Object} payload
  * @param {String} payload.contents what to write
+ * @param {String} [payload.pdfFromHtml] an HTML page to print to PDF and
+ *   write in place of `contents`
+ * @param {String} [payload.pdfFooter] plain text at the foot of each PDF page
  * @param {String} payload.defaultName suggested file name, extension included
  * @param {String} [payload.startIn] key from `startFolders`
+ * @param {String} [payload.startDir] folder to open in when `folderKey` has
+ *   none remembered, such as the project's own
+ * @param {String} [payload.folderKey] key under which the chosen folder is
+ *   remembered across sessions, for the dialog to open in next time
  * @param {Array} [payload.filters] Electron dialog filters
  * @param {String} [payload.title] dialog title
  * @param {Object} [payload.companion] `{ contents, extension }`, written
@@ -105,12 +114,55 @@ function writeWaiting(target, contents) {
   }
 }
 
+/**
+ * Prints an HTML page to PDF in a hidden window. Page size and margins come
+ * from the page's own `@page` rule. The page is loaded from a temporary file:
+ * a data URL is capped at 2 MB, which the drawings of a few views can pass.
+ *
+ * @param {String} html a complete document
+ * @param {String} [footer] plain text printed at the foot of every page
+ * @returns {Promise<Buffer>}
+ */
+async function renderPdf(html, footer) {
+  const win = new BrowserWindow({
+    show: false,
+    // Scripts on, so a page can measure its own layout before printing; the
+    // window is sandboxed with no preload, and the page is one Beam built.
+    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+  });
+  const file = path.join(os.tmpdir(), `beam-print-${process.pid}-${Date.now()}.html`);
+  try {
+    fs.writeFileSync(file, html, 'utf8');
+    await win.loadFile(file);
+    return await win.webContents.printToPDF({
+      printBackground: true,
+      preferCSSPageSize: true,
+      displayHeaderFooter: true,
+      headerTemplate: '<span></span>',
+      footerTemplate: '<div style="font-size:7pt;width:100%;display:flex;justify-content:space-between;'
+        + 'padding:0 12mm;color:#666"><span>'
+        + `${String(footer || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</span>`
+        + '<span><span class="pageNumber"></span> / <span class="totalPages"></span></span></div>',
+    });
+  } finally {
+    win.destroy();
+    fs.rm(file, { force: true }, () => {});
+  }
+}
+
 async function save({
-  contents, defaultName, startIn, filters, title, companion, remember,
+  contents: given, pdfFromHtml, pdfFooter,
+  defaultName, startIn, startDir, folderKey, filters, title, companion, remember,
 }) {
-  if (typeof contents !== 'string') return null;
+  const contents = typeof pdfFromHtml === 'string'
+    ? await renderPdf(pdfFromHtml, pdfFooter) : given;
+  if (typeof contents !== 'string' && !Buffer.isBuffer(contents)) return null;
   const folders = startFolders();
-  const folder = folders[startIn] || folders.documents;
+  // The folder this kind of file last went to, else the caller's folder, else
+  // the named starting folder.
+  const folder = saveFolders.folderFor(folderKey)
+    || (startDir && fs.existsSync(startDir) ? startDir : null)
+    || folders[startIn] || folders.documents;
   const known = remember ? lastPaths.get(remember) : null;
 
   // Declared out here so the failure report below can name the file.
@@ -132,6 +184,7 @@ async function save({
       });
       if (result.canceled || !result.filePath) return null;
       target = result.filePath;
+      saveFolders.remember(folderKey, target);
     }
 
     fs.mkdirSync(path.dirname(target), { recursive: true });

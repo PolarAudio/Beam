@@ -10,6 +10,7 @@
  * Usage:
  *   npm test
  */
+import { kindOf } from '@/models/DMX/generic/fixture_kind';
 import {
   buildStrobeProfile, isStrobeProfile, DEFAULT_STROBE_PARAMS, STROBE_COLOURS, STROBE_SOURCES,
   controlDefsFor, lampColour, floodSolidAngle, lumens, candela, illuminanceAt, faceOrigin,
@@ -42,14 +43,14 @@ console.log('--- the profile');
 {
   const profile = buildStrobeProfile();
   check('is recognised as a strobe', isStrobeProfile(profile), true);
-  check('a projector-less object is not', isStrobeProfile({ asls: {} }), false);
+  check('a projector-less object is not', isStrobeProfile({ beam: {} }), false);
   check('category is OFL Strobe', profile.categories[0], 'Strobe');
   check('name carries the power', profile.name, 'Strobe 1500W');
-  check('dimensions are mm, width first', profile.physical.dimensions[0], 360);
+  check('size is mm, width first', kindOf(profile).sizeOf(profile)[0], 360);
   check('bulb is LED by default', profile.physical.bulb.type, 'LED');
   check('bulb carries the colour temperature', profile.physical.bulb.colorTemperature, 6500);
   check('all adjustable by default: no channels', profile.modes[0].channels.length, 0);
-  check('parameters travel under asls.strobe', profile.asls.strobe.power, 1500);
+  check('parameters travel under beam.strobe', profile.beam.strobe.power, 1500);
   const xenon = buildStrobeProfile({ source: STROBE_SOURCES.XENON });
   check('a xenon unit says so', xenon.physical.bulb.type, 'Xenon flash tube');
 }
@@ -123,7 +124,7 @@ console.log('--- a flash tube is white, or white through a gel');
   check('gel frames are colour presets', gel.capabilities[2].type, 'ColorPreset');
   check('gel frames carry the swatch', gel.capabilities[2].colors[0], DEFAULT_GELS[1].colour);
   check('a split carries both swatches', gel.capabilities[1].colors.length, 2);
-  check('the string is stored in the profile', scroller.asls.strobe.gels.length, DEFAULT_GELS.length);
+  check('the string is stored in the profile', scroller.beam.strobe.gels.length, DEFAULT_GELS.length);
 
   const params = { source: 'xenon', colour: 'scroller', colorTemperature: 6500 };
   const open = lampColour(params, { gel: 1 });
@@ -138,7 +139,7 @@ console.log('--- a flash tube is white, or white through a gel');
   const room = lampColour(params, { gel: 2.5 });
   near('the room gets the two added in proportion', room[1], (split.first[1] + split.second[1]) / 2);
 
-  const settings = new StrobeSettings(scroller.asls.strobe);
+  const settings = new StrobeSettings(scroller.beam.strobe);
   check('settings know it is a scroller', settings.usesScroller, true);
   check('settings do not mix', settings.mixesColour, false);
   check('gel parks on frame 1', settings.gelPosition, 1);
@@ -148,7 +149,7 @@ console.log('--- a flash tube is white, or white through a gel');
   check('the lamp follows the gel', settings.lamp[2] < 1, true);
   // A hand-set position, on a unit no console has written to: a live value,
   // once arrived, is held over the parked one.
-  const byHand = new StrobeSettings(scroller.asls.strobe);
+  const byHand = new StrobeSettings(scroller.beam.strobe);
   byHand.set('gel', 2.5);
   check('a half position names both gels', byHand.gelName, 'Red / Orange');
   byHand.set('gel', 40);
@@ -197,7 +198,7 @@ console.log('--- the flood');
 console.log('--- settings');
 {
   const profile = buildStrobeProfile();
-  const settings = new StrobeSettings(profile.asls.strobe);
+  const settings = new StrobeSettings(profile.beam.strobe);
   check('mode parks on strobe', settings.shutterMode, SHUTTER_MODES.STROBE);
   check('rate parks at the slowest', settings.rate, 1);
   check('duration parks at the shortest', settings.duration, 1);
@@ -222,7 +223,7 @@ console.log('--- settings driven over DMX');
   const controls = {};
   CHANNEL_ORDER.forEach((key, i) => { controls[key] = { mode: 'dmx', channel: i + 1, bits: 8 }; });
   const profile = buildStrobeProfile({ controls });
-  const settings = new StrobeSettings(profile.asls.strobe);
+  const settings = new StrobeSettings(profile.beam.strobe);
   check('footprint is nine', settings.footprint, 9);
   settings.writeChannel(1, 0);
   check('mode at 0 is off', settings.shutterMode, SHUTTER_MODES.OFF);

@@ -6,6 +6,7 @@ import { DOMParser } from '@xmldom/xmldom';
 import readGdtf from '@/models/DMX/gdtf/gdtf_reader';
 import { fixtureCategory } from '@/models/DMX/gdtf/fixture_parts';
 import library from './library';
+import paths from './paths';
 
 /**
  * GDTF fixture files in the user's library (main process).
@@ -32,18 +33,13 @@ import library from './library';
  * file name, not the fixture name, because two revisions of one fixture are
  * two files and a show must name exactly one.
  *
- * A file is never deleted, because a saved show names it by key and carries
- * no copy. Removing one, or replacing it on import, moves it to
- *
- *   Library/Removed/Profiles/<manufacturer>/<file>.gdtf
- *
- * where it is no longer listed but still resolves, so every show that uses
- * it still opens. Importing it again lists it again.
+ * Removing a file, or replacing it on import, deletes it. A project that
+ * names it by key and carries no copy of its own then has that fixture
+ * missing.
  */
 
 const PROFILES_DIR = 'Profiles';
 const EXTENSION = '.gdtf';
-const REMOVED_DIR = 'Removed';
 
 /** Listing results by path, kept while the file's size and time are unchanged. */
 const peekCache = new Map();
@@ -132,11 +128,6 @@ function peekFile(file) {
   }
   peekCache.set(file, { size: stat.size, mtimeMs: stat.mtimeMs, info });
   return info;
-}
-
-/** The Profiles folder of a library root. */
-function removedRoot() {
-  return path.join(library.libraryRoot(), REMOVED_DIR, PROFILES_DIR);
 }
 
 function profilesRoot(base) {
@@ -242,15 +233,39 @@ function list(base) {
   return listUnder(profilesRoot(base));
 }
 
+/** Where the GDTF fixtures that ship with Beam are, one folder per maker. */
+function shippedRoot() {
+  return paths.rendererAssets('profiles');
+}
+
 /**
- * The GDTF fixtures removed from the user's library, which shows still
- * resolve.
+ * Every GDTF fixture the user's library has, then every one Beam ships that
+ * the library does not: a file of the same key in the library is the one
+ * used, so a user can replace a shipped fixture with their own.
  *
- * @returns {Array<Object>} as `list` gives them, `file` relative to the
- *   removed Profiles folder
+ * @returns {Array<Object>} as `list` gives them; a shipped one has
+ *   `shipped: true` and `file` relative to the shipped folder
  */
-function listRemoved() {
-  return listUnder(removedRoot());
+function listAll() {
+  const own = list();
+  const keys = new Set(own.map((e) => e.key));
+  const shipped = listUnder(shippedRoot())
+    .filter((e) => !keys.has(e.key))
+    .map((e) => ({ ...e, shipped: true }));
+  return own.concat(shipped);
+}
+
+/**
+ * Absolute path of a GDTF fixture Beam ships, by key, or null.
+ *
+ * @param {String} key
+ * @returns {String|null}
+ */
+function shippedPathFor(key) {
+  const segments = String(key || '').split('/');
+  if (segments.length !== 2 || segments.some((s) => !s || s === '.' || s === '..')) return null;
+  const file = path.join(shippedRoot(), segments[0], `${segments[1]}${EXTENSION}`);
+  return fs.existsSync(file) ? file : null;
 }
 
 /**
@@ -269,30 +284,12 @@ function pathFor(key, base) {
 }
 
 /**
- * Absolute path of a removed GDTF fixture by key, or null when there is none.
- *
- * @param {String} key
- * @returns {String|null}
- */
-function removedPathFor(key) {
-  const segments = String(key || '').split('/');
-  if (segments.length !== 2 || segments.some((s) => !s || s === '.' || s === '..')) return null;
-  const file = path.join(removedRoot(), segments[0], `${segments[1]}${EXTENSION}`);
-  return fs.existsSync(file) ? file : null;
-}
-
-/**
- * Moves a library file to the removed folder, over any removed copy of the
- * same key.
+ * Deletes a library file.
  *
  * @param {String} relative `<manufacturer folder>/<file>.gdtf`
  */
-function moveToRemoved(relative) {
-  const parts = relative.split('/');
-  const target = path.join(removedRoot(), ...parts);
-  fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.rmSync(target, { force: true });
-  fs.renameSync(path.join(profilesRoot(), ...parts), target);
+function deleteFile(relative) {
+  fs.rmSync(path.join(profilesRoot(), ...relative.split('/')), { force: true });
 }
 
 /**
@@ -348,10 +345,8 @@ function importFile(source, { replace = false, keepBoth = false } = {}) {
 
   try {
     fs.mkdirSync(dir, { recursive: true });
-    conflicts.forEach((c) => moveToRemoved(c.file));
+    conflicts.forEach((c) => deleteFile(c.file));
     fs.copyFileSync(source, target);
-    // Listed again: the removed copy of this key is the same fixture, older.
-    fs.rmSync(path.join(removedRoot(), folder, `${stem}${EXTENSION}`), { force: true });
   } catch (err) {
     console.error('[gdtf] import failed:', err.message);
     return { ok: false, reason: err.message };
@@ -362,8 +357,8 @@ function importFile(source, { replace = false, keepBoth = false } = {}) {
 }
 
 /**
- * Removes a GDTF file from the user's library, and its marks. The file moves
- * to the removed folder, where shows that use it still find it.
+ * Removes a GDTF file from the user's library, and its marks: the file is
+ * deleted.
  *
  * @param {String} key `<manufacturer folder>/<file stem>`
  * @returns {Object} `{ ok }` or `{ ok: false, reason }`
@@ -372,7 +367,7 @@ function removeFile(key) {
   const file = pathFor(key);
   if (!file) return { ok: false, reason: `${key} is not in the library` };
   try {
-    moveToRemoved(path.relative(profilesRoot(), file).split(path.sep).join('/'));
+    deleteFile(path.relative(profilesRoot(), file).split(path.sep).join('/'));
   } catch (err) {
     console.error('[gdtf] remove failed:', err.message);
     return { ok: false, reason: err.message };
@@ -386,16 +381,14 @@ function removeFile(key) {
 export default {
   peek,
   list,
-  listRemoved,
+  listAll,
   pathFor,
-  removedPathFor,
+  shippedPathFor,
   importFile,
   removeFile,
   marks,
   setBad,
   setFavourite,
   profilesRoot,
-  removedRoot,
   EXTENSION,
-  REMOVED_DIR,
 };

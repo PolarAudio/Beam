@@ -110,7 +110,7 @@ async function fetchProfile(profileKey) {
     // is written out here, once, so that nothing downstream has to know the
     // difference between a profile that listed its channels and one that
     // described them.
-    return usable ? normaliseMatrixProfile(profile) : null;
+    return usable ? normaliseMatrixProfile(withBeamSection(profile)) : null;
   } catch (err) {
     return null;
   }
@@ -184,12 +184,6 @@ class Show extends EventEmitter {
      */
     this.gdtfFixtures = [];
     /**
-     * GDTF fixtures removed from the library, listed the same way. Not
-     * offered to add, but resolved after the library, so a show that uses one
-     * still opens.
-     */
-    this.removedGdtf = [];
-    /**
      * GDTF fixture types read so far, by key. Read-only once read, so every
      * fixture of a type shares one.
      */
@@ -233,6 +227,11 @@ class Show extends EventEmitter {
     // Installed once: the lookups read the live array each time, so inputs
     // added or removed later are found without re-installing.
     this.publishVideoInputs();
+    /**
+     * The project's details, set in Project Details and printed on the patch
+     * sheet: `{ author, version, notes }`, each free text.
+     */
+    this.details = Show.noDetails();
     /** Library models available to place, by key. Read once per load. */
     this.objectLibrary = {};
     /** Saved structure definitions, keyed by name, for placing again. */
@@ -260,10 +259,14 @@ class Show extends EventEmitter {
     this.loadChain = Promise.resolve();
     this.artnetServerUrl = import.meta.env.VITE_APP_DMX2WS_SERVER_URL;
     this.visualizerHandle = null;
+    /** An opening view waiting for the viewport's camera; see `applyOpeningView`. */
+    this.pendingOpeningView = null;
     ProxifySingleton.on('changed', () => {
       this.isSaved = false;
       this.emit('saveState', this.isSaved);
     });
+    // Measurements are kept by the measure tool, outside the proxied data.
+    MeasureTool.onChange(() => this.touch());
     this.preloadManufacturers();
     this.preloadFixtureList();
   }
@@ -298,6 +301,52 @@ class Show extends EventEmitter {
 
   set isSaved(isSaved) {
     this._isSaved = isSaved;
+  }
+
+  /**
+   * Sets the project's details, marking the show changed when any differ.
+   *
+   * @public
+   * @param {Object} details `{ author, version, notes }`; missing fields are
+   *   left as they are
+   */
+  setDetails(details) {
+    const next = { ...this.details };
+    Object.keys(next).forEach((key) => {
+      if (details[key] !== undefined) next[key] = String(details[key] || '');
+    });
+    if (Object.keys(next).every((key) => next[key] === this.details[key])) return;
+    this.details = next;
+    this.touch();
+  }
+
+  /**
+   * Details with every field empty.
+   *
+   * @static
+   * @returns {Object}
+   */
+  static noDetails() {
+    return { author: '', version: '', notes: '' };
+  }
+
+  /**
+   * Details as a show file holds them. Older files kept only notes, at the top
+   * level as `notes` or `patchSheetNotes`.
+   *
+   * @static
+   * @param {Object} showData
+   * @returns {Object}
+   */
+  static detailsFrom(showData) {
+    const stored = showData.details || {
+      notes: showData.notes !== undefined ? showData.notes : showData.patchSheetNotes,
+    };
+    const details = Show.noDetails();
+    Object.keys(details).forEach((key) => {
+      if (typeof stored[key] === 'string') details[key] = stored[key];
+    });
+    return details;
   }
 
   // eslint-disable-next-line class-methods-use-this
@@ -350,7 +399,43 @@ class Show extends EventEmitter {
       // being saved.
       cameras: Studio.showData,
       studio: Studio.showSettings,
+      details: Object.values(this.details).some(Boolean) ? { ...this.details } : undefined,
+      measurements: MeasureTool.toJSON(),
     };
+  }
+
+  /**
+   * Puts the viewport on a show's opening view: its stored editor view, or a
+   * framing of what it contains when it has none.
+   *
+   * A show opened at launch loads before the viewport has a camera; the view
+   * is then held until `visualizerReady` says there is one.
+   *
+   * @public
+   * @param {Boolean} stored whether the show carried an editor view
+   */
+  applyOpeningView(stored) {
+    const handle = this.visualizerHandle;
+    if (!handle || !handle.camera || !handle.controls) {
+      this.pendingOpeningView = { stored: !!stored };
+      return;
+    }
+    this.pendingOpeningView = null;
+    if (stored) {
+      handle.viewpoint = Studio.viewpointOf(Studio.SCENE_CAMERA_ID);
+    } else if (handle.frameDefault) {
+      handle.frameDefault();
+    }
+  }
+
+  /**
+   * Called once the viewport has its camera: applies an opening view that
+   * arrived before it did.
+   *
+   * @public
+   */
+  visualizerReady() {
+    if (this.pendingOpeningView) this.applyOpeningView(this.pendingOpeningView.stored);
   }
 
   /**
@@ -542,6 +627,7 @@ class Show extends EventEmitter {
     // resource, only numbers.
     this.videoInputs = withTestCard([]);
     this.definitions = new DefinitionStore();
+    MeasureTool.load([]);
     this.isSaved = true;
   }
 
@@ -554,6 +640,15 @@ class Show extends EventEmitter {
    *
    * @type {String}
    */
+  /**
+   * The folder the open project lives in, or null for one never saved.
+   *
+   * @type {String|null}
+   */
+  get documentFolder() {
+    return this.documentPath ? this.documentPath.replace(/[\\/][^\\/]*$/, '') : null;
+  }
+
   get documentTitle() {
     return this.projectName || 'untitled';
   }
@@ -648,7 +743,7 @@ class Show extends EventEmitter {
    */
   async saveDocumentAs() {
     if (typeof window === 'undefined' || !window.documentStore) return false;
-    const target = await window.documentStore.saveAs(this.documentPath || this.projectName);
+    const target = await window.documentStore.saveAs(this.documentPath || this.projectName, undefined, 'project');
     // Cancelling a save dialog is an ordinary answer, not a failure.
     if (!target) return false;
     return this.writeDocument(target);
@@ -670,7 +765,11 @@ class Show extends EventEmitter {
    */
   async exportDocument() {
     if (typeof window === 'undefined' || !window.documentStore) return false;
-    const target = await window.documentStore.saveAs(this.projectName, 'Export project');
+    const target = await window.documentStore.saveAs(
+      this.projectName,
+      'Export project',
+      `project-export|${this.documentPath || ''}`,
+    );
     // Cancelling is an ordinary answer, not a failure.
     if (!target) return false;
     const json = JSON.stringify(this.showData, null, 2);
@@ -688,7 +787,8 @@ class Show extends EventEmitter {
    * own parameters and has nothing to collect.
    *
    * @public
-   * @returns {Object} `{ profiles, objects, media }`, each an array of keys
+   * @returns {Object} `{ profiles, objects, media, lasers, laserCards, gobos }`,
+   *   each an array of keys
    */
   referencedResources() {
     const profiles = new Set(this.fixturePool.fixtures
@@ -701,7 +801,35 @@ class Show extends EventEmitter {
       // The built-in test card ships with Beam, so an export need not carry it.
       .filter((input) => input.kind === INPUT_KINDS.FILE && input.file && !input.builtIn)
       .map((input) => input.file);
-    return { profiles: [...profiles], objects: [...objects], media };
+    // ILDA files in laser clip lists, and the cards they are copies of. The
+    // shipped files travel with Beam.
+    const lasers = new Set();
+    const laserCards = new Set();
+    this.fixturePool.fixtures.forEach((fixture) => {
+      const card = fixture.device && fixture.device.value ? fixture.device.value('card') : null;
+      if (card) laserCards.add(card);
+      const clips = fixture.device && fixture.device.value ? fixture.device.value('clips') : null;
+      (Array.isArray(clips) ? clips : []).forEach((clip) => {
+        const carried = clip.kind === CLIP_KINDS.FILE && !SHIPPED_CLIP_FILES.has(clip.file);
+        if (carried) lasers.add(clip.file);
+      });
+    });
+    // Images from the user's library swapped into wheels. Beam's stock gobos
+    // and discs, and a fixture's own images, travel with Beam and the profile.
+    const gobos = new Set();
+    this.fixturePool.fixtures.forEach((fixture) => {
+      (fixture.overwrites || []).forEach((o) => {
+        if (o.image.startsWith('library:')) gobos.add(o.image.slice('library:'.length));
+      });
+    });
+    return {
+      profiles: [...profiles],
+      objects: [...objects],
+      media,
+      lasers: [...lasers],
+      laserCards: [...laserCards],
+      gobos: [...gobos],
+    };
   }
 
   /**
@@ -743,43 +871,6 @@ class Show extends EventEmitter {
     const res = await fetch(url);
     const data = await res.json();
     await this.loadFromData(data);
-  }
-
-  /**
-   * Loads showfile from provided frile
-   *
-   * @param {File} file handle to raw showfile instance
-   * @returns {Promise}
-   * @async
-   * @public
-   */
-  async loadFromFile(file) {
-    try {
-      const fileData = await Show.readFileAsync(file);
-      await this.loadShowFile(file.name, fileData);
-    } catch (err) {
-      console.log(err);
-    }
-  }
-
-  /**
-   * Parses and loads showfile from provided data
-   *
-   * @todo re-implement QLC loader better
-   *
-   * @param {String} filename Name of the file
-   * @param {Object} data RAW show data to be parsed
-   * @async
-   * @public
-   */
-  async loadShowFile(filename, data) {
-    const extension = Show._getShowFileType(filename);
-    const showData = await Show._parseShowData(data, extension);
-    await this.loadFromData(showData);
-    // Importing a loose showfile is not opening a project. Leaving the previous
-    // document in place would point Save at somebody else's project and write
-    // this show straight over it.
-    await this.setDocument(null);
   }
 
   /**
@@ -857,14 +948,6 @@ class Show extends EventEmitter {
     this.loading.percentage = 60;
     await this.prepareFixtures(showData);
 
-    this.capShadowCasters();
-
-    // Before the structures, because a structure may hold objects and holds
-    // them rather than their ids: the objects have to exist to be given over.
-    // A structure holding nothing but fixtures does not notice the order.
-    this.loading.message = 'Placing objects';
-    await this.prepareObjects(showData);
-
     this.loading.message = 'Restoring groups';
     this.prepareGroups(showData);
 
@@ -886,6 +969,8 @@ class Show extends EventEmitter {
     // and would fly straight over the top of it.
     const storedView = Studio.loadCameras(showData.cameras);
     Studio.loadSettings(showData.studio);
+    this.details = Show.detailsFrom(showData);
+    MeasureTool.load(showData.measurements);
 
     this.loading.message = 'Patching fixtures';
     this.loading.percentage = 80;
@@ -904,15 +989,11 @@ class Show extends EventEmitter {
     // has nowhere else to live. `frameDefault` is the fallback for a show that
     // carries none -- and it has to be an either/or, because it flies rather
     // than jumps, so running both would animate away from the restored view.
-    if (this.visualizerHandle) {
-      if (storedView) {
-        this.visualizerHandle.viewpoint = Studio.viewpointOf(Studio.SCENE_CAMERA_ID);
-      } else if (this.visualizerHandle.frameDefault) {
-        this.visualizerHandle.frameDefault();
-      }
-    }
+    this.applyOpeningView(storedView);
 
     VideoRouter.refresh();
+    // Lasers on a library card take the library's version of it.
+    loadCards(this).catch(() => {});
     // Said once, when the show opens: these devices showed part of a picture
     // and now show all of it.
     if (video.lostCrop.length) this.emit('videoCropsDropped', video.lostCrop);
@@ -935,6 +1016,9 @@ class Show extends EventEmitter {
     this.missingProfiles = [];
     for (let i = 0; i < showData.fixtures.length; i++) {
       const fixtureData = showData.fixtures[i];
+      // A profile replaced by another file is looked for under its new name,
+      // and the project saves that name from here on.
+      Object.assign(fixtureData, movedProfile(fixtureData.manufacturer, fixtureData.model));
       const profileKey = `${fixtureData.manufacturer}/${fixtureData.model}`;
       if (this.gdtfEntry(profileKey)) {
         // eslint-disable-next-line no-await-in-loop
@@ -1051,27 +1135,6 @@ class Show extends EventEmitter {
     }
     this.emit('refreshed', result);
     return result;
-  }
-
-  /**
-   * Holds the show to the shadow budget it can actually render.
-   *
-   * The checkbox refuses to spend more than there is, but a showfile is not
-   * the checkbox: one written by hand, or by a build where the limit was
-   * different, can ask for more shadow-casting fixtures than the GPU has
-   * texture units -- and the result is not a slow scene, it is a scene missing
-   * everything drawn with the standard material. The ones beyond the budget
-   * lose their shadow rather than the show losing its floor.
-   *
-   * @public
-   */
-  capShadowCasters() {
-    let spent = 0;
-    this.fixturePool.fixtures.forEach((fixture) => {
-      if (!fixture.castsShadow) return;
-      spent += 1;
-      if (spent > MAX_SHADOW_CASTERS) fixture.castsShadow = false;
-    });
   }
 
   /**
@@ -1312,7 +1375,10 @@ class Show extends EventEmitter {
     // are not warmed -- an object has no profile, and asking for
     // `undefined/<library key>` would fetch nothing and look like a miss.
     const wanted = new Set();
-    const distinct = fixtures.filter((member) => {
+    const isObject = (member) => member.kind === SCENE_ITEM_KINDS.OBJECT;
+    if (definition.members.some(isObject)) await this.preloadObjectLibrary();
+    const distinct = definition.members.filter((member) => {
+      if (isObject(member)) return false;
       const key = `${member.manufacturer}/${member.model}`;
       if (wanted.has(key)) return false;
       wanted.add(key);
@@ -1322,8 +1388,31 @@ class Show extends EventEmitter {
       distinct.map((member) => this.resolveFixture(member.manufacturer, member.model)),
     );
 
-    for (let i = 0; i < fixtures.length; i += 1) {
-      const member = fixtures[i];
+    for (let i = 0; i < definition.members.length; i += 1) {
+      const member = definition.members[i];
+      if (isObject(member)) {
+        world.multiplyMatrices(origin, new THREE.Matrix4().fromArray(member.transform));
+        world.decompose(position, quaternion, scale);
+        euler.setFromQuaternion(quaternion);
+        // A missing library model still arrives, unresolved, as it does when
+        // a show is opened without it.
+        const object = new SceneObject({
+          model: member.primitive ? undefined : member.model,
+          primitive: member.primitive || null,
+          name: member.name || member.model || 'object',
+          position: { x: position.x, y: position.y, z: position.z },
+          rotation: { x: euler.x, y: euler.y, z: euler.z },
+          scale: member.scale,
+        });
+        // eslint-disable-next-line no-await-in-loop
+        await object.attach(member.primitive
+          ? null
+          : (this.objectLibrary[foldModelKey(member.model)] || null));
+        Show.joinNumbered(this.objects, [object]);
+        members.push(object);
+        // eslint-disable-next-line no-continue
+        continue;
+      }
       // eslint-disable-next-line no-await-in-loop
       const resolved = await this.resolveFixture(member.manufacturer, member.model);
       if (resolved) {
@@ -1468,7 +1557,8 @@ class Show extends EventEmitter {
    *   with one of the two set, or null when neither is found
    */
   async resolveFixture(manufacturer, model) {
-    const key = `${manufacturer}/${model}`;
+    const moved = movedProfile(manufacturer, model);
+    const key = `${moved.manufacturer}/${moved.model}`;
     if (this.gdtfEntry(key)) {
       const fixtureType = await this.loadGdtfType(key);
       if (!fixtureType) return null;
@@ -1487,20 +1577,17 @@ class Show extends EventEmitter {
   }
 
   /**
-   * A GDTF fixture by key: the open document's copy, else the library's,
-   * else one removed from the library.
+   * A GDTF fixture by key: the open document's copy, else the library's.
    *
    * @public
    * @param {String} key `<manufacturer folder>/<file stem>`
-   * @returns {Object|null} `{ entry, carried, removed }`
+   * @returns {Object|null} `{ entry, carried }`
    */
   gdtfEntry(key) {
     const carried = (this.collected.gdtf || []).find((e) => e.key === key);
-    if (carried) return { entry: carried, carried: true, removed: false };
+    if (carried) return { entry: carried, carried: true };
     const own = this.gdtfFixtures.find((e) => e.key === key);
-    if (own) return { entry: own, carried: false, removed: false };
-    const removed = this.removedGdtf.find((e) => e.key === key);
-    return removed ? { entry: removed, carried: false, removed: true } : null;
+    return own ? { entry: own, carried: false } : null;
   }
 
   /**
@@ -1520,7 +1607,7 @@ class Show extends EventEmitter {
     if (!found || typeof fetch === 'undefined' || typeof DOMParser === 'undefined') return null;
     let host = 'profiles';
     if (found.carried) host = 'projectprofiles';
-    else if (found.removed) host = 'removedprofiles';
+    else if (found.entry.shipped) host = 'shippedprofiles';
     const path = found.entry.file.split('/').map(encodeURIComponent).join('/');
     try {
       const response = await fetch(`library://${host}/${path}`);
@@ -1538,7 +1625,16 @@ class Show extends EventEmitter {
       // The body its meshes make, shared by every fixture of the type. A file
       // whose meshes cannot be read keeps the shipped body.
       try {
-        fixtureType.body = await buildBody(fixtureType, files);
+        // A laser is drawn by the laser renderer, standing; a light by the head.
+        // A laser known only by its channels has no frame its model is drawn
+        // in for a laser, so it takes the box.
+        if (isLaserType(fixtureType)) {
+          fixtureType.body = null;
+          fixtureType.laserBody = laserGeometry(fixtureType)
+            ? await laserBody(fixtureType, files) : null;
+        } else {
+          fixtureType.body = await buildBody(fixtureType, files);
+        }
       } catch (err) {
         // eslint-disable-next-line no-console
         console.warn(`[gdtf] ${key}: body not built: ${err.message}`);
@@ -1937,6 +2033,7 @@ class Show extends EventEmitter {
 
     const structures = this.prepareStructures({ structures: fresh(data.structures) });
 
+    // A fixture inside a pasted structure or group is not a loose item, and
     this.capShadowCasters();
     // A member inside a pasted structure or group is not a loose item, and
     // handing it back would put the gizmo on the members as well as on the
@@ -1960,6 +2057,28 @@ class Show extends EventEmitter {
     object.dispose();
     this.objects.splice(index, 1);
     return true;
+  }
+
+  prepareStructures(showData) {
+    const made = (showData.structures || []).map((structureData) => {
+      const structure = new Structure(structureData);
+      restoreListOrder(structure, structureData);
+      (structureData.members || []).forEach((ref) => {
+        const read = readMemberRef(ref);
+        if (!read) return;
+        // An object member is resolved through the objects just loaded, and a
+        // fixture through the load index rather than the pool: addRaw hands out
+        // fresh ids, so a saved member id means nothing once a fixture has been
+        // deleted and the rest have shuffled down.
+        const member = read.kind === SCENE_ITEM_KINDS.OBJECT
+          ? (this.loadedObjectsById || new Map()).get(read.id)
+          : this.loadedFixturesById.get(read.id);
+        if (member) structure.add(member);
+      });
+      return structure;
+    });
+    Show.joinNumbered(this.structures, made);
+    return made;
   }
 
   /**
@@ -2130,7 +2249,8 @@ class Show extends EventEmitter {
   async preloadGdtfFixtures() {
     if (typeof window === 'undefined' || !window.library || !window.library.gdtfList) return;
     this.gdtfFixtures = await window.library.gdtfList();
-    if (window.library.gdtfRemoved) this.removedGdtf = await window.library.gdtfRemoved();
+    // The user's gobo and disc images, for placements that swap them in.
+    if (window.library.gobos) UserGobos.set(await window.library.gobos());
   }
 
   /**
@@ -2385,15 +2505,16 @@ class Show extends EventEmitter {
     all.forEach((entry) => {
       const maker = fold(entry.manufacturer);
       const match = named.find(({ name }) => name && (maker === name || maker.startsWith(`${name} `)));
-      // Typed and marked as an OFL profile is: GDTF draws moving heads and
-      // static lights so far, and the rest patch and draw nothing.
+      // Typed and marked as an OFL profile is: GDTF draws moving heads, static
+      // lights and lasers so far, and the rest patch and draw nothing.
       const row = {
         file: entry.key,
         name: entry.name,
         manufacturer: entry.key.split('/')[0],
         category: entry.category || 'unreadable file',
-        supported: entry.category === 'Moving Head' || entry.category === 'Static',
+        supported: ['Moving Head', 'Static', 'Laser'].includes(entry.category),
         gdtf: true,
+        shipped: !!entry.shipped,
         fixtureTypeId: entry.fixtureTypeId || null,
         revision: entry.revision || null,
       };
@@ -2510,55 +2631,6 @@ class Show extends EventEmitter {
       generated: true,
       fixtures: byManufacturer[name],
     }));
-  }
-
-  /**
-   * Gets showfile type from showfile extension
-   *
-   * @todo Implement QLC and other showfile formats better
-   *
-   * @param {String} showFileName show file name
-   * @static
-   */
-  static _getShowFileType(showFileName) {
-    const splitted = showFileName.split('.');
-    return splitted[splitted.length - 1];
-  }
-
-  /**
-   * Parses show data
-   *
-   * @param {File} showFile handle to raw showfile instance
-   * @param {String} extension extendion of the provided showfile
-   * @static
-   */
-  static _parseShowData(showFile, extension) {
-    switch (extension) {
-      case SHOWFILE_EXTENSIONS.JSON:
-        return JSON.parse(showFile);
-      default:
-        throw new Error('Could not load provided file');
-    }
-  }
-
-  /**
-   * Reads a file asynchronously
-   *
-   * @todo put this in utils
-   *
-   * @param {File} file handle to file instance
-   * @static
-   * @async
-   */
-  static async readFileAsync(file) {
-    return new Promise((resolve, reject) => {
-      const fr = new FileReader();
-      fr.onload = () => {
-        resolve(fr.result);
-      };
-      fr.onerror = reject;
-      fr.readAsText(file);
-    });
   }
 }
 

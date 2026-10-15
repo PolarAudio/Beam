@@ -23,7 +23,7 @@ import Preferences from './preferences';
 import {
   hazeWarp, hazeTurn, setHazeWarp, setHazeTurn,
 } from './haze_noise';
-import { EMITTER_UNIFORMS, GLOW_UNIFORMS } from './led_field';
+import { GLOW_UNIFORMS } from './led_field';
 import LEDPanel from './led_panel';
 import Laser from './laser';
 import { ambientCeiling, setAmbientCeiling } from './ambient';
@@ -35,7 +35,6 @@ const PREFIX = 'tune.';
 /** The uniform object a group name refers to. */
 function groupFor(group) {
   if (group === 'halo') return LEDPanel.tunables();
-  if (group === 'emitter') return EMITTER_UNIFORMS;
   return GLOW_UNIFORMS;
 }
 
@@ -63,14 +62,6 @@ function uniform(group, name) {
  * reader for it answers `undefined` until then.
  */
 const CONTROLS = {
-  // Emitter die
-  gain: uniform('emitter', 'gain'),
-  haloStrength: uniform('emitter', 'haloStrength'),
-  coreScale: uniform('emitter', 'coreScale'),
-  backScatter: uniform('emitter', 'backScatter'),
-  // Distance dimming
-  dimStartDistance: uniform('emitter', 'dimStartDistance'),
-  dimFloor: uniform('emitter', 'dimFloor'),
   // Scattered glow
   glowSize: uniform('glow', 'glowSize'),
   sizeAtFullHaze: uniform('glow', 'sizeAtFullHaze'),

@@ -245,14 +245,10 @@ export default {
         }));
       // By uid, which is unique across kinds: a structure holding object 3
       // must not hide fixture 3.
-      // Keyed by kind and id, not by id alone: fixture 3 and object 3 are
-      // different things, and a structure holding object 3 would otherwise
-      // speak for fixture 3 as well and hide it from the list.
       const spokenFor = new Set();
       const speak = (member) => spokenFor.add(rowId(kindOf(member), member.id));
       const groups = this.show.groups.map((group) => {
         group.members.forEach((member) => spokenFor.add(member.uid));
-        group.members.forEach(speak);
         // Its own icon rather than the selector's folder: a group is a thing
         // in the show, not a place to look in.
         return [group, {
@@ -562,12 +558,6 @@ export default {
       this.$show.createGroup(members);
     },
     /**
-     * Makes one structure out of the selected fixtures and objects.
-     *
-     * Structures take fixtures and objects, not other structures or groups,
-     * so a selection that holds one contributes only its loose items. Each
-     * entry is resolved by its kind: row ids are namespaced, and an object's
-     * would never be found among the fixtures.
      * The selected items a structure could be made out of.
      *
      * Resolved through the selection store and the kind-aware lookup rather
@@ -593,6 +583,27 @@ export default {
         .filter((item) => !item.structure);
     },
     /**
+     * Makes one structure out of the selection.
+     *
+     * Fixtures and objects alike, which is what this is for on a stage: a
+     * truss, the heads on it and the weights under it are one arrangement, and
+     * a structure is the one item that moves them all and keeps them together.
+     * Makes one structure out of the selected fixtures and objects.
+     *
+     * Structures take fixtures and objects, not other structures or groups,
+     * so a selection that holds one contributes only its loose items. Each
+     * entry is resolved by its kind: row ids are namespaced, and an object's
+     * would never be found among the fixtures.
+     *
+     * @public
+     */
+    createStructure() {
+      const members = this.structureableItems();
+      if (!members.length) return;
+      const structure = this.$show.createStructure(members);
+      this.selectStructure(structure.id);
+    },
+    /**
      * Opens the export popup on what is selected, taken now so that selecting
      * something else while it is open does not change what it writes.
      *
@@ -605,16 +616,6 @@ export default {
       if (!this.exportItems.length) return;
       this.exportPopupState = true;
     },
-    /**
-     * Makes one structure out of the selection.
-     *
-     * Fixtures and objects alike, which is what this is for on a stage: a
-     * truss, the heads on it and the weights under it are one arrangement, and
-     * a structure is the one item that moves them all and keeps them together.
-     *
-     * @public
-     */
-    createStructure() {
       const members = Selection.items
         .filter((entry) => entry.kind === SCENE_ITEM_KINDS.FIXTURE
           || entry.kind === SCENE_ITEM_KINDS.OBJECT)

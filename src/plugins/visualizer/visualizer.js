@@ -11,6 +11,8 @@ import AnimationManager from './animation_manager';
 import Controls, { ORTHO_STANDOFF, ORTHO_REFERENCE_FOV, setOrthoHalfHeight } from './controls';
 import ViewCube from './view_cube';
 import Light from './light';
+import { flushGoboCells } from './gobo_library';
+import Animation from './animation_wheel';
 import InfiniteGridHelper from './grid';
 import LEDField from './led_field';
 import LightField, { SCENE_PER_NIT } from './light_field';
@@ -1161,6 +1163,9 @@ class Visualizer {
 
     AnimationManager.add((t) => {
       Light.update(t);
+      // Gobo and disc cells drawn since the last frame, uploaded before drawing.
+      flushGoboCells(this.renderer);
+      Animation.flush(this.renderer);
       LEDField.update(t);
       // The strobes' flash trains, before the field packs them and before the
       // wash reads what they did to the camera.
@@ -1188,12 +1193,7 @@ class Visualizer {
       // Rebuild each laser's beam from the points its DAC has played since the
       // last frame. Stream-fed like the video devices, not DMX-driven, so it
       // updates here rather than through setChannel.
-      Laser.update(t);
-      // Where a model can still be joined, and which join a drag is making now.
-      // On the render loop rather than on selection changes, because the useful
-      // moment for seeing an anchor is *before* the drag, while deciding where
-      // to put the piece.
-      Controls.updateAnchorMarkers();
+      Laser.update(t, this.renderer);
       // Each laser's depth from its aperture, so the beam stops at the first
       // surface rather than running through it. Drawn before the frame, like the
       // projectors' depth pass above.
@@ -1202,25 +1202,28 @@ class Visualizer {
       // per-frame tile budget; see `Light.renderDepth`.
       Light.renderDepth(this.renderer, SceneManager);
       Laser.renderFigures(this.renderer);
+      const laserProjections = laserEffect ? Laser.projections() : [];
+      const projections = projectorEffect ? Projector.collect() : [];
+      // The surface colours, once, for whichever passes put light on surfaces.
+      const albedo = projections.length || laserProjections.length
+        ? SurfaceAlbedo.render(this.renderer, SceneManager, this.camera) : null;
       if (laserEffect) {
         laserEffect.setLasers(
-          Laser.projections(), Laser.figureTexture(), Laser.depthTexture(), Laser.depthFar(),
+          laserProjections, Laser.figureTexture(), Laser.depthTexture(), Laser.depthFar(),
         );
+        laserEffect.setAlbedo(albedo);
       }
       // Each projector's own view of the scene, drawn before the frame is, so
       // the pass can ask whether a surface is actually visible from the lens.
       // Nothing to do at all when no projector is throwing anything.
       if (projectorEffect) {
-        const projections = Projector.collect();
         if (projections.length) {
           // Redraws only the tiles that would come out different -- a still
           // machine in a still room costs nothing. The atlas works that out
           // itself, per tile; see `DepthAtlas.render`.
           ProjectorDepth.render(this.renderer, SceneManager, projections);
-          projectorEffect.setAlbedo(SurfaceAlbedo.render(this.renderer, SceneManager, this.camera));
-        } else {
-          projectorEffect.setAlbedo(null);
         }
+        projectorEffect.setAlbedo(projections.length ? albedo : null);
         // Each projector its own input's picture.
         projections.forEach((projection) => {
           const feed = VideoRouter.feedFor(projection.inputId);
@@ -2282,15 +2285,30 @@ class Visualizer {
       )
       : this.camera.position;
     const t = this.controls ? this.controls.target : { x: 0, y: 0, z: 0 };
+    // A middle-drag's lens shift, as fractions of the panel so it lands the
+    // same in a window of another size.
+    const { view } = this.camera;
+    const shift = view && view.enabled && view.fullWidth && view.fullHeight
+      ? { x: view.offsetX / view.fullWidth, y: view.offsetY / view.fullHeight }
+      : null;
     return {
       position: { x: p.x, y: p.y, z: p.z },
       target: { x: t.x, y: t.y, z: t.z },
+      shift,
+      orthographic: this.orthographic,
     };
   }
 
   set viewpoint(value) {
     if (!value || !this.camera) return;
-    // A recalled view is aimed afresh, so any lens shift goes with it.
+    // A view set outright ends any flight still under way, which would
+    // otherwise carry on and land somewhere else.
+    Controls.cancelFly();
+    // The projection first: switching it moves the camera onto the other one,
+    // and the position and target below then apply to that.
+    if (typeof value.orthographic === 'boolean') this.orthographic = value.orthographic;
+    // A recalled view is aimed afresh, so any lens shift goes with it unless
+    // the view carries its own.
     Controls.clearLensShift();
     const { position, target } = value;
     if (position) this.camera.position.set(position.x, position.y, position.z);
@@ -2304,6 +2322,13 @@ class Visualizer {
       setOrthoHalfHeight(this.camera, distance * Math.tan(THREE.MathUtils.degToRad(ORTHO_REFERENCE_FOV) / 2));
       this.keepOrthoStandoff();
       this.controls.update();
+    }
+    const { shift } = value;
+    if (shift && Number.isFinite(shift.x) && Number.isFinite(shift.y) && (shift.x || shift.y)) {
+      const width = this.domElement.clientWidth || 1;
+      const height = this.domElement.clientHeight || 1;
+      this.camera.setViewOffset(width, height, shift.x * width, shift.y * height, width, height);
+      this.camera.updateProjectionMatrix();
     }
   }
 

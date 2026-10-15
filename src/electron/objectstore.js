@@ -83,6 +83,18 @@ const MEDIA_VIDEO_EXTENSIONS = ['.mp4', '.m4v', '.mov', '.webm'];
 /** Every media file a video source may be. */
 const MEDIA_EXTENSIONS = [...MEDIA_IMAGE_EXTENSIONS, ...MEDIA_VIDEO_EXTENSIONS];
 
+/** Where the user's ILDA files for laser clip lists live, under the library root. */
+const LASERS_DIR = 'Lasers';
+
+/** The files a laser clip list plays. */
+const LASER_EXTENSIONS = ['.ild'];
+
+/** Where the user's gobo and animation disc images live, under the library root. */
+const GOBOS_DIR = 'Gobos';
+
+/** The images a placement may swap into a gobo or animation wheel slot. */
+const GOBO_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.svg'];
+
 /**
  * Folders the `library://` protocol will serve, by the host segment naming them.
  *
@@ -116,6 +128,27 @@ const SERVED_DIRS = {
     extensions: MEDIA_EXTENSIONS,
   },
   shippedmedia: { base: () => paths.rendererAssets('media'), extensions: MEDIA_EXTENSIONS },
+  // ILDA files for laser clip lists: the user's, the open document's, and
+  // the ones that ship with Beam.
+  lasers: { dir: LASERS_DIR, extensions: LASER_EXTENSIONS },
+  projectlasers: {
+    base: () => {
+      const mounted = documentstore.mountRoot();
+      return mounted ? path.join(mounted, LASERS_DIR) : null;
+    },
+    extensions: LASER_EXTENSIONS,
+  },
+  shippedlasers: { base: () => paths.rendererAssets('lasers'), extensions: LASER_EXTENSIONS },
+  // Gobo and disc images swapped into wheels: the user's, and the open
+  // document's carried copies.
+  gobos: { dir: GOBOS_DIR, extensions: GOBO_EXTENSIONS },
+  projectgobos: {
+    base: () => {
+      const mounted = documentstore.mountRoot();
+      return mounted ? path.join(mounted, GOBOS_DIR) : null;
+    },
+    extensions: GOBO_EXTENSIONS,
+  },
   project: {
     base: () => {
       const mounted = documentstore.mountRoot();
@@ -126,8 +159,8 @@ const SERVED_DIRS = {
   // GDTF fixtures, and nothing else from the Profiles folder: the JSON
   // profiles beside them reach the renderer through the library's own calls.
   profiles: { dir: 'Profiles', extensions: ['.gdtf'] },
-  // GDTF fixtures removed from the library, which shows still open with.
-  removedprofiles: { dir: 'Removed/Profiles', extensions: ['.gdtf'] },
+  // GDTF fixtures that ship with Beam.
+  shippedprofiles: { base: () => paths.rendererAssets('profiles'), extensions: ['.gdtf'] },
   projectprofiles: {
     base: () => {
       const mounted = documentstore.mountRoot();
@@ -1103,6 +1136,10 @@ export default {
   MEDIA_IMAGE_EXTENSIONS,
   MEDIA_VIDEO_EXTENSIONS,
   MEDIA_EXTENSIONS,
+  LASERS_DIR,
+  LASER_EXTENSIONS,
+  GOBOS_DIR,
+  GOBO_EXTENSIONS,
   PRIMITIVE_TYPES,
   PRIMITIVE_KIND,
   DEFAULT_METADATA,

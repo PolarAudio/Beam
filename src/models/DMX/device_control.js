@@ -110,7 +110,7 @@ export class ControlType {
   /**
    * The value a parameter starts at when nobody has chosen one.
    *
-   * @param {Object} params the profile's `asls.*` block
+   * @param {Object} params the profile's `beam.*` block
    * @returns {*}
    */
   // eslint-disable-next-line no-unused-vars, class-methods-use-this
@@ -166,18 +166,21 @@ export class PercentType extends ControlType {
    * @param {Object} [options]
    * @param {Number} [options.initial] where it parks
    * @param {Function} [options.limit] `(params) => Number`; symmetric when given
+   * @param {Number} [options.min] the lowest value a curve may set; a channel's
+   *   level still runs from 0
    */
   constructor({
-    initial = 0, limit = null, max = 100, ...rest
+    initial = 0, limit = null, max = 100, min = 0, ...rest
   } = {}) {
     super({ unit: '%', ...rest });
     this._initial = initial;
     this._limit = limit;
     this._max = max;
+    this._min = min;
   }
 
   range(params) {
-    if (!this._limit) return { min: 0, max: this._max };
+    if (!this._limit) return { min: this._min, max: this._max };
     const limit = Math.abs(Number(this._limit(params)) || 0);
     return { min: -limit, max: limit };
   }
@@ -192,6 +195,7 @@ export class PercentType extends ControlType {
   fromLevel(level, params) {
     const l = clamp(level, 0, 1, 0);
     if (!this._limit) return l * this._max;
+    // The symmetric case.
     const { max } = this.range(params);
     // Centred at half scale, so a console parked in the middle leaves the
     // image where the optics put it.
@@ -458,7 +462,7 @@ export class ControlDef {
   /**
    * The OFL capability for this parameter, given the machine it belongs to.
    *
-   * @param {Object} params the profile's `asls.*` block
+   * @param {Object} params the profile's `beam.*` block
    * @returns {Object}
    */
   capabilityFor(params) {
@@ -495,7 +499,7 @@ export class DeviceControl {
   /**
    * @param {ControlDef} def
    * @param {Object} [choice] `{ mode, value, channel, bits }` as stored
-   * @param {Object} [params] the profile's `asls.*` block, for coercion
+   * @param {Object} [params] the profile's `beam.*` block, for coercion
    */
   constructor(def, choice = {}, params = {}) {
     this.def = def;
@@ -588,7 +592,7 @@ export class ControlSet {
    * contiguously without anyone having to think about it.
    *
    * @param {Array} defs
-   * @param {Object} [params] the profile's `asls.*` block
+   * @param {Object} [params] the profile's `beam.*` block
    * @returns {ControlSet}
    */
   static fromProfile(defs, params = {}) {
@@ -652,7 +656,10 @@ export class ControlSet {
    * @type {Number}
    */
   get footprint() {
-    return this.controls.reduce((max, c) => Math.max(max, c.endOffset), 0);
+    // A profile read from a file keeps the file's footprint, channels Beam
+    // does not read included, so the next fixture patches where it should.
+    const declared = Math.max(Math.round(Number(this.params.footprint) || 0), 0);
+    return this.controls.reduce((max, c) => Math.max(max, c.endOffset), declared);
   }
 
   /**
@@ -749,9 +756,14 @@ export class ControlSet {
       }
     });
 
+    // A profile read from a file names the bytes no control claims.
+    const named = (offset) => {
+      const name = this.params.channelNames && this.params.channelNames[offset];
+      return name && !slots.some((s) => s && s.name === name) ? name : `Reserved ${offset + 1}`;
+    };
     const availableChannels = {};
     const channels = slots.map((slot, offset) => {
-      const resolved = slot ? slot.name : `Reserved ${offset + 1}`;
+      const resolved = slot ? slot.name : named(offset);
       const capability = slot ? slot.capability : { type: 'Maintenance' };
       // A parameter that means different things along its range -- a strobe's
       // mode -- declares a list, each entry with its own dmxRange, which is
@@ -762,7 +774,8 @@ export class ControlSet {
       return resolved;
     });
 
-    return { availableChannels, modes: [{ name: 'Default', channels }], footprint };
+    const name = this.params.modeName || 'Default';
+    return { availableChannels, modes: [{ name, channels }], footprint };
   }
 
   /**

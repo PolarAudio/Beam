@@ -7,7 +7,9 @@ import withTransform from './scene_item.transform';
 import {
   SCENE_ITEM_KINDS, rowId, memberRef,
 } from './scene_item';
+import { SCENE_ITEM_KINDS, rowId, kindOf } from './scene_item';
 import { itemLabel, splitSavedName } from './item_naming';
+import { SCENE_ITEM_KINDS, rowId, memberRef } from './scene_item';
 
 /**
  * @file One scene item built out of several, placed and moved as a unit.
@@ -200,6 +202,10 @@ class Structure extends withTransform(Proxify) {
   }
 
   /**
+   * Exportable show data chunk. Members are referenced by id, and serialise
+   * themselves in the fixture and object lists. A fixture is its bare id; an
+   * object is `{ kind: 'object', id }`, because the two kinds number
+   * separately.
    * Exportable show data chunk. Members are referenced, not serialised in place:
    * they keep absolute coordinates in the fixture and object lists, as ordinary
    * scene items, and this is what says which of those belong to this structure.
@@ -221,6 +227,9 @@ class Structure extends withTransform(Proxify) {
       position: { ...this._position },
       rotation: { ...this._rotation },
       members: this.members.map((member) => memberRef(member)),
+      members: this.members.map((member) => (kindOf(member) === SCENE_ITEM_KINDS.OBJECT
+        ? { kind: SCENE_ITEM_KINDS.OBJECT, id: member.id }
+        : member.id)),
       mappings: [...this.mappings],
       grouping: this.grouping,
     };

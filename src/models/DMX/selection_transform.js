@@ -47,6 +47,10 @@ import { PLACEABLE_KINDS, kindOf } from './scene_item';
  * Applying only the difference from what is already held makes the second
  * commit a no-op, whatever it was that caused it.
  *
+ * A turn made with the gizmo's rotation ring counts in the same total, read from
+ * the controls, which add each drag's turn as it ends and show the one under way
+ * while it lasts. The centre likewise reads where a dragged item is on screen.
+ *
  * The total resets when the selection changes, because the widget builds a new
  * instance of this from the new items -- which is the right moment for it: the
  * turn it counts is a turn applied to that set.
@@ -122,7 +126,9 @@ export default class SelectionTransform {
   }
 
   /**
-   * The average position of the selection.
+   * The average position of the selection, as shown: an item the gizmo is
+   * dragging counts where it is on screen, since its model is written only
+   * when the drag ends.
    *
    * @type {Object} `{ x, y, z }`
    */
@@ -130,7 +136,8 @@ export default class SelectionTransform {
     const total = { x: 0, y: 0, z: 0 };
     if (!this.items.length) return total;
     this.items.forEach((item) => {
-      const at = item.position || {};
+      const live = Controls.liveTransform ? Controls.liveTransform(item) : null;
+      const at = (live && live.position) || item.position || {};
       AXES.forEach((axis) => { total[axis] += finite(at[axis]) || 0; });
     });
     AXES.forEach((axis) => { total[axis] /= this.items.length; });
@@ -273,25 +280,38 @@ export default class SelectionTransform {
   turnTo(axis, value) {
     const wanted = finite(value);
     if (wanted === null) return;
-    const delta = wanted - this.turned[axis];
+    const ring = this.ringTurn()[axis];
+    const delta = wanted - (this.turned[axis] + ring);
     // Held even when nothing is turned, so a field that has been typed into
     // reads what was typed rather than reverting on the next commit.
-    this.turned[axis] = wanted;
+    this.turned[axis] = wanted - ring;
     this.rotateAbout(axis, delta);
   }
 
-  /** @type {Number} degrees turned about X since this selection was made */
-  get rotX() { return this.turned.x; }
+  /**
+   * Degrees the gizmo's rotation ring has turned this selection by, the drag
+   * under way included. Kept by the controls, which reset it when the
+   * selection changes, as this object is rebuilt.
+   *
+   * @returns {Object} `{ x, y, z }`
+   */
+  // eslint-disable-next-line class-methods-use-this
+  ringTurn() {
+    return Controls.selectionTurn ? Controls.selectionTurn() : { x: 0, y: 0, z: 0 };
+  }
+
+  /** @type {Number} degrees turned about X since this selection was made, typed and by the ring */
+  get rotX() { return this.turned.x + this.ringTurn().x; }
 
   set rotX(value) { this.turnTo('x', value); }
 
-  /** @type {Number} degrees turned about Y since this selection was made */
-  get rotY() { return this.turned.y; }
+  /** @type {Number} degrees turned about Y since this selection was made, typed and by the ring */
+  get rotY() { return this.turned.y + this.ringTurn().y; }
 
   set rotY(value) { this.turnTo('y', value); }
 
-  /** @type {Number} degrees turned about Z since this selection was made */
-  get rotZ() { return this.turned.z; }
+  /** @type {Number} degrees turned about Z since this selection was made, typed and by the ring */
+  get rotZ() { return this.turned.z + this.ringTurn().z; }
 
   set rotZ(value) { this.turnTo('z', value); }
 }

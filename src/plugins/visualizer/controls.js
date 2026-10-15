@@ -15,6 +15,7 @@ import Display from './display';
 import Laser from './laser';
 import Strobe from './strobe';
 import SceneObjects from './scene_objects';
+import MeasureTool from './measure_tool';
 import GroupHandle from './group_handle';
 import AnchorMarkers from './anchor_markers';
 import { nearestJoin, joinMatrix, availableAnchors } from './anchor_snap';
@@ -117,9 +118,8 @@ function shown(item) {
   return !!item && !item.isHidden;
 }
 
-function itemFor(fixture, drill = false) {
+function itemFor(fixture) {
   if (!fixture) return null;
-  if (drill) return fixture;
   return fixture.structure || fixture;
 }
 
@@ -167,6 +167,14 @@ const MIN_GIZMO_SCALE = 0.01;
  * @constant {Number} CLICK_SLOP_PX
  */
 const CLICK_SLOP_PX = 4;
+
+/**
+ * Below these an item handed back by the gizmo has not moved: half the
+ * centimetre positions are rounded to, and half the tenth of a degree
+ * rotations are rounded to.
+ */
+const MOVE_EPSILON_M = 0.005;
+const TURN_EPSILON_RAD = THREE.MathUtils.degToRad(0.05);
 /**
  * Picking ray and normalised pointer position
  *
@@ -596,7 +604,12 @@ class Controls {
    */
   init(camera, el, orbitcontrolsControlsHandle) {
     this.groupedInstances = new THREE.Group(); // Creating new group instance
-    this.anchorMarkers = new AnchorMarkers();
+    /**
+     * Degrees the rotation ring has turned the current selection by, per axis,
+     * over the drags since it was made. Reset when the selection changes. See
+     * `selectionTurn()`.
+     */
+    this.ringTurn = { x: 0, y: 0, z: 0 };
     this.handle = new TransformControls(camera, el); // Loding transformcontrol instance into handle
     this.handle.size = GIZMO_SIZE;
     this.stripCentreHandle();
@@ -609,6 +622,19 @@ class Controls {
     SceneManager.add(this.scaleProxy);
     this.controlHandle = orbitcontrolsControlsHandle;
     this.cameraHandle = camera;
+    // While measuring, clicks place points and the gizmo is out of the way.
+    MeasureTool.attach({
+      camera: () => this.cameraHandle,
+      element: el,
+      pickTargets: () => SCENE_RENDERERS
+        .flatMap((renderer) => renderer.pickObjects()).filter(Boolean),
+      ownerOfHit,
+      shown,
+      onActive: (on) => {
+        this.handle.enabled = !on;
+        el.style.cursor = on ? 'crosshair' : '';
+      },
+    });
 
     const helper = this.handle.getHelper();
 
@@ -692,6 +718,12 @@ class Controls {
         this.applyTransformation();
         if (target.scaleKeepingBottom) target.scaleKeepingBottom({ x, y, z });
         else target.scale = { x, y, z };
+      } else {
+        // The group is rebuilt unturned below, so the drag's turn is kept here.
+        const turn = this.groupTurn();
+        this.ringTurn.x += turn.x;
+        this.ringTurn.y += turn.y;
+        this.ringTurn.z += turn.z;
       }
       this.showHelpers(); // Update modifications
     });
@@ -727,6 +759,12 @@ class Controls {
       return;
     }
 
+    if (e.key.toLowerCase() === 'm') {
+      MeasureTool.toggle();
+      return;
+    }
+    if (MeasureTool.handleKey(e)) return;
+
     if (e.key === 'Escape') {
       // Deselects and nothing else, as a click on empty scene does: the view
       // stays where it is, so a crowded scene with no empty space to click
@@ -738,7 +776,7 @@ class Controls {
       this.gizmoMode = GIZMO_MODES.ROTATE;
     } else if (e.key.toLowerCase() === 's') {
       this.gizmoMode = GIZMO_MODES.SCALE;
-    } else if (e.key === 'Delete' || e.key === 'Backspace') {
+    } else if (e.key === 'Delete') {
       // Asked for rather than done here: what a fixture or a structure means
       // when it is deleted -- addresses released, members taken with it -- is
       // the show's business, and the show is not something the visualizer
@@ -821,6 +859,10 @@ class Controls {
    * @param {Object} e pointermove event
    */
   handlePointerMove(e) {
+    if (MeasureTool.state.active) {
+      MeasureTool.pointerMove(e);
+      return;
+    }
     const down = this.pointerDownAt;
     if (!down) return;
     const travelled = Math.hypot(e.clientX - down.x, e.clientY - down.y);
@@ -1004,7 +1046,13 @@ class Controls {
       e.currentTarget.releasePointerCapture(e.pointerId);
     }
     if (!down || e.button !== 0) return;
+    if (MeasureTool.state.active) {
+      if (Math.hypot(e.clientX - down.x, e.clientY - down.y) <= CLICK_SLOP_PX) MeasureTool.click(e);
+      return;
+    }
     if (this.handle && (this.handle.dragging || this.handle.axis)) return;
+    // A click in the scene moves the selection there, away from a measurement.
+    MeasureTool.select(null);
     // Ctrl/Shift/Cmd extend the selection, matching the fixture list.
     const additive = e.shiftKey || e.ctrlKey || e.metaKey;
 
@@ -1015,16 +1063,15 @@ class Controls {
     }
 
     const hit = this.pickFixtureAt(e);
-    // Reaching inside a structure selects a member to *look at and set*, and
-    // deliberately not to move: a member holds absolute coordinates but the
-    // structure writes them, so a gizmo on one offers a drag that the
-    // structure would overwrite -- or worse, that would leave the structure
-    // holding a layout nobody arranged. The widgets follow the member; the
-    // handle stays where the authority is.
-    const inside = !!(e.altKey && hit && hit.structure);
-    const item = itemFor(hit, e.altKey);
+    // Alt-click on a structure member selects the structure with that member
+    // highlighted in its member list, the same state as clicking the member's
+    // row. The structure keeps the gizmo, because it writes its members'
+    // coordinates; the widgets edit the member.
+    const inside = !!(e.altKey && hit && hit.structure && !additive);
+    const item = itemFor(hit);
     if (item) {
-      this.selectItem(item, additive, !inside);
+      this.selectItem(item, additive);
+      if (inside) EventBus.emit('structure_member_picked', { structure: item, member: hit });
     } else if (!additive) {
       // A modified click that misses keeps whatever is already selected.
       this.deselectAll();
@@ -1156,6 +1203,37 @@ class Controls {
   }
 
   /**
+   * The selection group's turn in degrees per axis: the rotation ring's
+   * during a drag, zero otherwise, since the group is rebuilt unturned.
+   *
+   * @private
+   * @returns {Object} `{ x, y, z }`
+   */
+  groupTurn() {
+    const group = this.groupedInstances ? toRaw(this.groupedInstances) : null;
+    if (!group) return { x: 0, y: 0, z: 0 };
+    euler.setFromQuaternion(group.quaternion);
+    return {
+      x: THREE.MathUtils.radToDeg(euler.x),
+      y: THREE.MathUtils.radToDeg(euler.y),
+      z: THREE.MathUtils.radToDeg(euler.z),
+    };
+  }
+
+  /**
+   * Degrees the rotation ring has turned the current selection by, per axis:
+   * the drags since the selection was made and the one under way.
+   *
+   * @public
+   * @returns {Object} `{ x, y, z }`
+   */
+  selectionTurn() {
+    const live = this.groupTurn();
+    const kept = this.ringTurn || { x: 0, y: 0, z: 0 };
+    return { x: kept.x + live.x, y: kept.y + live.y, z: kept.z + live.z };
+  }
+
+  /**
    * Position and rotation of an item the gizmo has hold of.
    *
    * @private
@@ -1207,6 +1285,8 @@ class Controls {
    * @param {Object} primary fixture the UI should route to, or null
    */
   emitSelection(primary) {
+    // A new selection has not been turned yet.
+    this.ringTurn = { x: 0, y: 0, z: 0 };
     // Two channels, deliberately. `selectedItems` is the whole selection with
     // its kinds intact; `selectedIds` is the fixtures in it and nothing else,
     // because everything downstream resolves those against the fixture pool
@@ -1955,25 +2035,45 @@ class Controls {
       child.getWorldQuaternion(quaternion);
       this.groupedInstances.remove(child);
       SceneManager.add(child);
+      // Back in the scene where it stood inside the group. Its local transform
+      // is still relative to the group, and nothing else puts it back when
+      // the model is not written.
+      child.position.copy(position);
+      child.quaternion.copy(quaternion);
       const instanceHandle = this.pooledInstances.find((h) => h._3DModel._dummy === child);
       if (instanceHandle) {
-        // Two decimal places, centimetres: three's Vector3.round() snaps to
-        // whole numbers, which would put every dropped fixture on the metre.
-        instanceHandle.position = position.multiplyScalar(100).round().divideScalar(100);
+        // Written back only when it moved. This runs on every detach, so
+        // selecting something else or nothing would otherwise rewrite every
+        // item, mark the project unsaved and queue undo steps.
+        const was = instanceHandle.position;
+        const moved = Math.abs(position.x - was.x) > MOVE_EPSILON_M
+          || Math.abs(position.y - was.y) > MOVE_EPSILON_M
+          || Math.abs(position.z - was.z) > MOVE_EPSILON_M;
+        if (moved) {
+          // Two decimal places, centimetres: three's Vector3.round() snaps to
+          // whole numbers, which would put every dropped fixture on the metre.
+          instanceHandle.position = position.multiplyScalar(100).round().divideScalar(100);
+        }
         euler.setFromQuaternion(quaternion);
         // The triple nearest what the item had: the other one for the same
         // orientation turns a 180 about Y into X 180, Z 180, which a mover
         // reads as hung and flips its body.
-        const angles = closestEuler(euler, instanceHandle.rotationRad);
-        // Tenths, the rotation fields' precision. This runs before every field
-        // write, not only after a drag, so whole degrees took the decimals off
-        // anything typed.
-        const tenths = (rad) => Math.round(THREE.MathUtils.radToDeg(rad) * 10) / 10;
-        instanceHandle.rotation = {
-          x: tenths(angles.x),
-          y: tenths(angles.y),
-          z: tenths(angles.z),
-        };
+        const before = instanceHandle.rotationRad;
+        const angles = closestEuler(euler, before);
+        const turned = Math.abs(angles.x - before.x) > TURN_EPSILON_RAD
+          || Math.abs(angles.y - before.y) > TURN_EPSILON_RAD
+          || Math.abs(angles.z - before.z) > TURN_EPSILON_RAD;
+        if (turned) {
+          // Tenths, the rotation fields' precision. This runs before every
+          // field write, not only after a drag, so whole degrees took the
+          // decimals off anything typed.
+          const tenths = (rad) => Math.round(THREE.MathUtils.radToDeg(rad) * 10) / 10;
+          instanceHandle.rotation = {
+            x: tenths(angles.x),
+            y: tenths(angles.y),
+            z: tenths(angles.z),
+          };
+        }
       }
     }
     this.hideHelpers();

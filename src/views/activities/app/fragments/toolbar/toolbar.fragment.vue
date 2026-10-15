@@ -25,10 +25,23 @@
     <license-popup v-model="licensePopupState" />
     <credits-popup v-model="creditsPopupState" />
     <newshow-popup v-model="newProjectPopupState" />
+    <project-popup v-model="projectPopupState" />
+    <patch-sheet-popup
+      v-model="patchSheetPopupState"
+      @export="exportPatchSheet"
+    />
     <video-popup
       v-model="videoPopupState"
       :focus-id="videoFocusId"
       :for-fixtures="videoForFixtures"
+    />
+    <laser-clips-popup
+      v-model="laserClipsPopupState"
+      :fixture-id="laserClipsFixtureId"
+    />
+    <wheels-popup
+      v-model="wheelsPopupState"
+      :fixture-ids="wheelsFixtureIds"
     />
   </uk-flex>
 </template>
@@ -40,11 +53,16 @@ import confirm from '@/plugins/confirm';
 import importGdtfFiles from '@/plugins/gdtf_import';
 import ViewMode from '@/plugins/view_mode';
 import Screenshot from '@/plugins/visualizer/screenshot';
+import { exportPatchSheet } from '@/models/DMX/patch_sheet';
 import PreferencesPopup from './_popups/popup.preferences.vue';
 import LicensePopup from './_popups/popup.license.vue';
 import CreditsPopup from './_popups/popup.credits.vue';
 import NewshowPopup from './_popups/popup.newshow.vue';
+import ProjectPopup from './_popups/popup.project.vue';
+import PatchSheetPopup from './_popups/popup.patchsheet.vue';
 import VideoPopup from './_popups/popup.video.vue';
+import LaserClipsPopup from './_popups/popup.laserclips.vue';
+import WheelsPopup from './_popups/popup.wheels.vue';
 
 export default {
   name: 'ToolbarFragment',
@@ -57,7 +75,11 @@ export default {
     LicensePopup,
     CreditsPopup,
     NewshowPopup,
+    ProjectPopup,
+    PatchSheetPopup,
     VideoPopup,
+    LaserClipsPopup,
+    WheelsPopup,
   },
   data() {
     return {
@@ -75,6 +97,11 @@ export default {
       videoFocusId: null,
       /** The devices the window was opened from, by fixture id. */
       videoForFixtures: [],
+      laserClipsPopupState: false,
+      wheelsPopupState: false,
+      wheelsFixtureIds: [],
+      /** The laser the Clip list window edits, by fixture id. */
+      laserClipsFixtureId: null,
       /** Whether Beam is in sender mode, and who else is on its universes. */
       sending: false,
       otherSenders: [],
@@ -82,6 +109,9 @@ export default {
        * New project popup state
        */
       newProjectPopupState: false,
+      /** Project Details: the project's notes. */
+      projectPopupState: false,
+      patchSheetPopupState: false,
       /** Full window, full screen and stay on top. */
       view: ViewMode.state,
       /** Whether the Preferences window is open, and the tab it opens on. */
@@ -138,13 +168,6 @@ export default {
               },
             },
             {
-              name: 'Import JSON Project',
-              icon: 'folder',
-              callback: () => {
-                this.loadFile();
-              },
-            },
-            {
               name: 'Import GDTF...',
               icon: 'folder',
               callback: () => {
@@ -157,6 +180,20 @@ export default {
               icon: 'export',
               callback: () => {
                 this.exportShow();
+              },
+            },
+            {
+              name: 'Project Details...',
+              icon: 'wrench',
+              callback: () => {
+                this.projectPopupState = true;
+              },
+            },
+            {
+              name: 'Export Patch Sheet (PDF)...',
+              icon: 'export',
+              callback: () => {
+                this.patchSheetPopupState = true;
               },
             },
             {
@@ -341,6 +378,9 @@ export default {
     // The Video inputs window opens from a device's Input list, and from its
     // own shortcut, which has no menu entry to carry it.
     EventBus.on('open_video_inputs', this.openVideoInputs);
+    // A laser's clip list opens from its Fixture settings.
+    EventBus.on('open_laser_clips', this.openLaserClips);
+    EventBus.on('open_wheels', this.openWheels);
     window.addEventListener('keydown', this.onVideoInputsKey);
     this.$show.on('videoCropsDropped', (names) => {
       EventBus.emit('app_error', new Error(
@@ -366,8 +406,24 @@ export default {
     window.removeEventListener('drop', this.onFileDrop);
     window.removeEventListener('keydown', this.onVideoInputsKey);
     EventBus.off('open_video_inputs', this.openVideoInputs);
+    EventBus.off('open_laser_clips', this.openLaserClips);
+    EventBus.off('open_wheels', this.openWheels);
   },
   methods: {
+    /**
+     * @param {Object} from `{ fixtureId }`, the laser to edit
+     */
+    openLaserClips(from = null) {
+      this.laserClipsFixtureId = from && typeof from.fixtureId === 'number' ? from.fixtureId : null;
+      this.laserClipsPopupState = true;
+    },
+
+    /** @param {Object} from `{ fixtureIds }`: the fixtures whose wheels to edit */
+    openWheels(from = null) {
+      this.wheelsFixtureIds = (from && Array.isArray(from.fixtureIds)) ? from.fixtureIds : [];
+      this.wheelsPopupState = true;
+    },
+
     /**
      * @param {Object} [from] `{ inputId, fixtureIds }` when a device's panel
      *   opens it: the input to show and the devices it can set
@@ -424,33 +480,6 @@ export default {
       }
       if (!gdtf.length || !window.library || !window.library.pathForFile) return;
       await importGdtfFiles(gdtf.map((file) => window.library.pathForFile(file)), this.$show);
-    },
-    /**
-     * Load showfile from native file loader
-     *
-     * @public
-     * @async
-     */
-    async loadFile() {
-      const el = document.createElement('input');
-      el.type = 'file';
-      el.accept = '.json,';
-      el.style.display = 'none';
-      el.addEventListener('change', async () => {
-        if (el.files) {
-          try {
-            this.$router.push('/');
-            await this.$show.loadFromFile(el.files[0]);
-            // Yeah it sucks... But cleaning up everything from the view was a nightmare so for now:
-            window.location.reload();
-          } catch (err) {
-            EventBus.emit('app_error', err);
-          }
-        }
-        document.body.removeChild(el);
-      });
-      document.body.appendChild(el);
-      el.click();
     },
     /**
      * Saves the show to the application's show file.
@@ -514,6 +543,20 @@ export default {
      */
     async exportShow() {
       await this.$show.exportDocument();
+    },
+    /**
+     * Writes the patch sheet as a PDF.
+     *
+     * @public
+     * @async
+     * @param {Object} options what to print, from the export dialog
+     */
+    async exportPatchSheet(options) {
+      try {
+        await exportPatchSheet(this.$show, options);
+      } catch (err) {
+        EventBus.emit('app_error', new Error(`Could not export the patch sheet: ${err.message}`));
+      }
     },
     /**
      * Replaces the profiles and objects an exported project carries with the

@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.1.0-alpha.22
+
+### Lasers
+
+- A laser's brightness comes from its watts, split over red, green and blue and turned into lumens at each colour's wavelength. A laser drawn from a GDTF file with a diode per colour uses each diode's watts and wavelength. Beams in air use the same haze scattering as mover beams: no haze, no beam.
+- Equal red, green and blue in the content draw white: the stronger colours are held back as a real laser's colour balance does.
+- A beam is drawn at its real width down to one pixel. A held dot is drawn as a continuous line, not beads.
+- **Clip list** input: a laser plays built-in patterns and ILDA files (formats 0, 1, 2, 4 and 5) from Library/Lasers with nothing streamed. Each clip has its own point rate. The clip list window reorders, plays, adds files, saves the list as a card in Library/Lasers/Cards and exports it to an SD card as numbered files. Export Project packs the cards a project uses.
+- Every laser has a **Test pattern** control that overrides its input, and **Mode** (As set, Standalone, Off) and **Clip** controls a console can drive.
+- A hidden laser builds no beam or figure and offers no network input.
+- The Wicked Lasers LaserCubes ship as GDTF files with their measured bodies: the Pro 2.5W is 100 × 145 × 100 mm, standing. The Ultra 7.5W and the Wide Angle models use measured optics, and a Wide Angle's beam starts at the lens glass.
+
+### GDTF lasers
+
+- A GDTF file is drawn as a laser when it has a laser channel (LaserCue, Scan_Rate, TestCue…), or names itself a laser and has a figure scale channel and no moving head. Most laser files on GDTF Share have no Laser geometry; these now draw as lasers with a box body.
+- Channels read from the file: clip (cue, media content, gobo or object slot), page or folder, mode, test pattern, dimmer and its zone limit, X/Y size and its zone limit, zoom, X/Y position of the zone and of the cue (Pan/Tilt on a laser without a yoke), zone rotation, rotation, spin, scan rate and cue speed. A page and a cue make one clip number: (page − 1) × cues per page + cue.
+- A channel's values come from the file: percentages or degrees named in its ranges, Min and Max, a range named Default, or the physical range. A channel whose ranges name choices, or that has several functions, is not read and stays adjustable by hand.
+- The figure is placed as on the controller: the cue is turned, sized and moved within the zone, then the zone is turned, sized and moved within the scan field. Spin runs up to 360°/s, clockwise positive; Stop holds the angle and Reset puts the figure back.
+- Scan rate and speed slow or quicken a playing clip from where it is.
+- The DMX channel table names every channel of the file, and the quick guide no longer marks a laser's channels as having no effect.
+
+### Patch sheet and measuring
+
+- **File → Export Patch Sheet (PDF)**: one row per fixture grouped by universe, with mode, channels, Art-Net and sACN universe, addresses, position and mount; a fixture type summary; and views from above, front, back and both sides as hidden-line drawings with numbered fixtures. A dialog chooses notes, instructions, patch list, fixture types, measurements, unpatched fixtures, grid, mover arrows and paper size.
+- **File → Project Details** holds author, version and notes, printed on the sheet.
+- **Measure** tool: distance, angle and throw, snapping to vertices, fixture points, edges, faces and the floor. Shift on an axis locks it; Ctrl places a point without snapping. Measurements are saved with the project.
+- Each save dialog opens in the folder that kind of file was last saved to.
+
+### Structures
+
+- Selecting a structure lists its members; highlighted members are edited together by the fixture widgets, with the patch bay's click, Ctrl, Shift and band selection. Alt-click on a member selects the structure with that member highlighted.
+- Changing the selection no longer marks the project unsaved.
+
+### Video inputs
+
+- A projector or display showing an NDI input with no source on this machine shows a frame reading "No source for this input" instead of lighting white. The window and the manual call it a source.
+
+### Haze and view
+
+- Beams are dimmer looking towards the source and brighter side-on, and lose a quarter of the scattering per metre on their way.
+- A lens face is lit only from inside its beam.
+- The view is saved with its lens shift and orthographic mode.
+
+### Fixes
+
+- A fixture's DMX channel table is saved and loaded as it was left, for lasers, projectors and displays as for any fixture. A project no longer loads a device's DMX-driven values at zero.
+- The DMX channel table no longer disappears in a full settings panel.
+- Backspace no longer deletes; Delete does.
+- Setting a DMX value by hand marks the project changed.
+- Enter in a multi-line box no longer submits a popup.
+- Import JSON Project is removed; it discarded what it loaded.
+
 ## 0.1.0-alpha.21
 
 ### LED fixtures

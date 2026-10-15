@@ -160,17 +160,17 @@ export const DEFAULT_CYCLE = 0.0;
  * The haze's phase function: how much light a droplet throws at an angle.
  *
  * A property of the air, not of any fixture, so it lives with the field and
- * reaches every renderer through the prelude. Haze droplets are large next to
- * the wavelength, so scattering is overwhelmingly forward: a beam coming at
- * the eye is far brighter than the same beam crossing the view, and a beam
- * going away is a little brighter than side-on from the weak back lobe. Two
- * Henyey-Greenstein lobes give all three.
+ * reaches every renderer through the prelude. A hazer's particles are around
+ * the wavelength in size, so scattering is forward-biased but not a spike: a
+ * beam coming at the eye is about ten times brighter than the same beam
+ * crossing the view, and a beam going away is a little brighter than side-on
+ * from the weak back lobe. Two Henyey-Greenstein lobes give all three. The
+ * forward g is set against real lasers seen side-on and towards the source.
  *
- * The forward-to-side ratio of real haze runs past a hundred and would only
- * clip to white, so `PHASE_CEILING` caps it and the amount argument of
+ * `PHASE_CEILING` caps the forward-to-side ratio and the amount argument of
  * `hazePhase` says how much of the cap to show.
  */
-const PHASE_FORWARD = 0.75;
+const PHASE_FORWARD = 0.5;
 const PHASE_BACKWARD = -0.35;
 const PHASE_BACK_WEIGHT = 0.12;
 const PHASE_CEILING = 24.0;
@@ -211,6 +211,32 @@ float hg(float c, float g) {
 // Both lobes, as a raw phase value.
 float hazeLobes(float cosTheta) {
   return mix(hg(cosTheta, PHASE_FORWARD), hg(cosTheta, PHASE_BACKWARD), PHASE_BACK_WEIGHT);
+}
+
+/**
+ * @function haloPhase
+ * @brief the phase the halo's source is drawn with
+ * @param float cosView the beam's travel dotted with the direction to the eye
+ * @returns float per steradian
+ *
+ * The halo is the beam's light scattered twice: out of the beam at an angle
+ * t1 to its axis, then towards the eye. For the air beside the beam where a
+ * view ray passes closest, the second angle is acos(cos t1 cosView), so the
+ * pair weighs Q = integral over t1 of p(t1) p(acos(cos t1 cosView)). The
+ * kernel in beam_halo.js was worked out for even scattering both times, where
+ * the same integral is pi / (4 pi)^2; drawing the source with 4 Q instead of
+ * the even 1 / (4 pi) carries the difference. Side-on that is 0.70 of the
+ * even value, looking down a beam towards its lens 33 times it. Thirty-two
+ * steps hold the forward lobe; it runs only in the small halo draw.
+ */
+float haloPhase(float cosView) {
+  const int STEPS = 32;
+  float sum = 0.0;
+  for (int i = 0; i < STEPS; i++) {
+    float c = cos(3.14159265358979 * (float(i) + 0.5) / float(STEPS));
+    sum += hazeLobes(c) * hazeLobes(c * cosView);
+  }
+  return 4.0 * sum * 3.14159265358979 / float(STEPS);
 }
 
 // The phase function anchored at its dimmest angle: exactly 1 side-on and

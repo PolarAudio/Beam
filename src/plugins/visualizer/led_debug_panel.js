@@ -133,8 +133,6 @@ export default function createLEDDebugPanel(visualizer, host) {
 
   const state = {
     ...tuned([
-      'gain', 'haloStrength', 'backScatter', 'coreScale',
-      'dimStartDistance', 'dimFloor',
       'glowSize', 'sizeAtFullHaze', 'haloFalloff', 'haloRadiance', 'haloBackScatter',
       'hazeWarp', 'hazeTurn', 'roomAir', 'airHaze', 'airGrain', 'airScale',
       'contactShadows', 'contactStrength', 'contactReach', 'contactEdge',
@@ -253,16 +251,6 @@ export default function createLEDDebugPanel(visualizer, host) {
 
   const led = folder(gui, 'LED');
 
-  const die = section(led, 'Die');
-  tune(die, 'gain', 0, 8, 0.05);
-  tune(die, 'coreScale', 0.25, 4, 0.05).name('die size x');
-  tune(die, 'haloStrength', 0, 2, 0.01).name('halo strength');
-  tune(die, 'backScatter', 0, 1, 0.01).name('back scatter');
-
-  const distance = section(led, 'Distance');
-  tune(distance, 'dimStartDistance', 0.2, 20, 0.1).name('full gain beyond');
-  tune(distance, 'dimFloor', 0, 1, 0.01).name('closest dim');
-
   const glow = section(led, 'Glow');
   // The volume's only brightness: a second control over the same quantity
   // would leave neither readable.
@@ -305,8 +293,9 @@ export default function createLEDDebugPanel(visualizer, host) {
   const laser = folder(gui, 'Laser');
 
   const laserBright = section(laser, 'Brightness');
-  tune(laserBright, 'laserAir', 0, 4, 0.05).name('beam in air');
-  tune(laserBright, 'laserSurface', 0, 12, 0.05).name('figure on surface');
+  // Multipliers over the photometric result; 1 is the physics.
+  tune(laserBright, 'laserAir', 0, 10, 0.1).name('beam in air x');
+  tune(laserBright, 'laserSurface', 0, 10, 0.1).name('figure on surface x');
   // Haze scatters light forwards, so a beam pointed at you is brighter than
   // one crossing your view. Head-on is the reference; turning this up only
   // ever darkens the other angles.

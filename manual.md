@@ -399,21 +399,17 @@ The list down the left side, holding every fixture, object and structure in the 
 
 **structure** turns whatever you have selected into a single item you can move as one. It takes fixtures *and* objects, so a truss, the heads on it and the weights under it become one arrangement — which is also what keeps the list readable on a big stage, because a structure is one row and its contents are not. Objects already inside a structure are left where they are. **arrange** lays a multi-selection out on a line, a circle or a grid.
 
+The list down the left side, holding every fixture in the scene. Two buttons at the top: **group** and **new**.
+ master
+
 **new** opens the patch dialog, which has three tabs:
 
 - **fixtures** — the fixture library. Real profiles plus any generics you've built. Filterable.
-<<<<<<< Updated upstream
-- **objects** — non-emitting scenery. Trusses, staging, decks. A truss has no channels, so nothing here gets addressed. **import object** copies a GLB, OBJ, FBX or STL file into your object library, with an OBJ's materials and textures. Only GLB states its units and which way is up, so the dialog asks for both and shows the model's size in metres as you choose: a truss that reads three kilometres long is in millimetres.
-=======
-<<<<<<< Updated upstream
-- **objects** — non-emitting scenery. Trusses, staging, decks. A truss has no channels, so nothing here gets addressed. Folders nest, so `Trusses/Circles` and `Trusses/Weights` can both live under `Trusses`, and the browser indents as deep as you go. Anything sitting loose is gathered under **Unsorted**, which is not a folder on disk. **import object** copies a GLB, OBJ, FBX or STL file into your object library, with an OBJ's materials and textures. Only GLB states its units and which way is up, so the dialog asks for both and shows the model's size in metres as you choose: a truss that reads three kilometres long is in millimetres.
-=======
-- **objects** — non-emitting scenery. Trusses, staging, decks. A truss has no channels, so nothing here gets addressed. **import object** copies a GLB, OBJ, FBX or STL file into your object library, with an OBJ's materials and textures. A Draco-compressed GLB loads. Only GLB states its units and which way is up, so the dialog asks for both and shows the model's size in metres as you choose: a truss that reads three kilometres long is in millimetres.
->>>>>>> 41a7495e641cd32de30afd6885df1f1f0c4cc3d4
-=======
 - **objects** — non-emitting scenery. Trusses, staging, decks. A truss has no channels, so nothing here gets addressed. Folders nest, so `Trusses/Circles` and `Trusses/Weights` can both live under `Trusses`, and the browser indents as deep as you go. Anything sitting loose is gathered under **Unsorted**, which is not a folder on disk. *The "import object" button is disabled — this feature isn't finished.*
->>>>>>> Stashed changes
->>>>>>> Stashed changes
+- **objects** — non-emitting scenery. Trusses, staging, decks. A truss has no channels, so nothing here gets addressed. **import object** copies a GLB, OBJ, FBX or STL file into your object library, with an OBJ's materials and textures. Only GLB states its units and which way is up, so the dialog asks for both and shows the model's size in metres as you choose: a truss that reads three kilometres long is in millimetres.
+- **objects** — non-emitting scenery. Trusses, staging, decks. A truss has no channels, so nothing here gets addressed. Folders nest, so `Trusses/Circles` and `Trusses/Weights` can both live under `Trusses`, and the browser indents as deep as you go. Anything sitting loose is gathered under **Unsorted**, which is not a folder on disk. **import object** copies a GLB, OBJ, FBX or STL file into your object library, with an OBJ's materials and textures. Only GLB states its units and which way is up, so the dialog asks for both and shows the model's size in metres as you choose: a truss that reads three kilometres long is in millimetres.
+- **objects** — non-emitting scenery. Trusses, staging, decks. A truss has no channels, so nothing here gets addressed. Folders nest, so `Trusses/Circles` and `Trusses/Weights` can both live under `Trusses`, and the browser indents as deep as you go. Anything sitting loose is gathered under **Unsorted**, which is not a folder on disk. *The "import object" button is disabled — this feature isn't finished.*
+- **objects** — non-emitting scenery. Trusses, staging, decks. A truss has no channels, so nothing here gets addressed. **import object** copies a GLB, OBJ, FBX or STL file into your object library, with an OBJ's materials and textures. A Draco-compressed GLB loads. Only GLB states its units and which way is up, so the dialog asks for both and shows the model's size in metres as you choose: a truss that reads three kilometres long is in millimetres.
 - **structures** — saved groups, ready to patch again as a unit. You put things here with **save as structure** in a group's widget.
 
 Two more buttons live under the fixtures list:
@@ -514,7 +510,23 @@ Fields are **colour-coded by axis**, consistently, so you can see which is which
 
 **Selection.** Left-click for one, left-drag for a rubber band, Shift or Ctrl to add. The band drag survives leaving the canvas, so you can start inside the viewport and finish outside it.
 
-**Alt+click reaches inside.** Clicking a fixture that belongs to a structure selects the whole structure, which is what you want for moving it. Hold **Alt** and the click lands on the individual fixture instead: its widgets open, so you can address it, set its channels or change its settings without breaking the structure up. No handle appears — the structure is still the thing you move.
+**Editing a structure's members.** Clicking a fixture that belongs to a structure selects the whole structure, which is what you want for moving it. The structure widget lists its members, all highlighted to start with, and the fixture widgets edit the highlighted ones: with every member the same fixture in the same mode, their channels are set together, the same way as several loose fixtures. Narrow the set in the member list with click, Ctrl+click, Shift+click or a band dragged from beside the rows; click the only highlighted member again, or beside the rows, to go back to all of them. **Alt+click** a fixture in the 3D view to highlight just that member. Only highlighted members are outlined, and the structure keeps the handle, because it is still the thing you move.
+
+## Measuring
+
+The ruler button in the viewport toolbar, or **M**, turns the measure tool on. While it is on, clicks in the 3D view place points instead of selecting, and the move handle is out of the way. **M** or **Escape** turns it off again. Measurements and the **Measure** widget are shown while the tool is on and hidden while it is off. They stay until you delete them, are saved with the project, and are drawn on the patch sheet's plan.
+
+The **Measure** widget chooses what a click measures:
+
+- **Distance**: two clicks. The label shows the distance; the widget adds horizontal, vertical and Δx Δy Δz. Two parallel faces give their gap, two faces at an angle their angle, two edges the angle between them, and an end on a face also gives the perpendicular distance from that face's plane.
+- **Angle**: three clicks, the corner second. **A** switches between distance and angle.
+- **Throw**: click a fixture. Measured from its lens along the beam as it points now, to the first object or the floor, with the lens height and the angle the beam meets the surface at.
+
+Under the pointer the tool snaps to, in this order: an end of a **measurement** already made, or a point already placed in the one under way (cyan dot in a white ring), a **vertex** (green square), a fixture's **lens, tilt axis, body base or centre** (yellow ring), an edge's **midpoint** (cyan triangle), the **perpendicular** foot on the face or edge under the pointer (pink ⊥), an **axis** through the first point (red x, green y, blue z), anywhere on an **edge** (red diamond), a **face**, and the **floor**. Only real edges count: a flat face split into triangles has no edge across it. A tooltip names what it snapped to. Hold **Ctrl** to place a point without snapping.
+
+After the first point, when the pointer snaps to an axis, hold **Shift** to lock it. The second point then stays on that axis through the first, level with whatever it snaps to, so the readout is one component. The locked line turns purple, and the snap the value comes from keeps its marker, joined to the axis by a dotted purple line: lock z on a lens, move to a deck or a vertex, and the reading is the height above it. Plain floor is not taken as a source, so over empty floor the point slides freely along the axis. Let go of Shift to release it. The arrow keys lock an axis without holding anything: **right** x, **left** y, **up** z; press the key again, or **Escape**, to release it. **Escape** with a point placed drops it.
+
+Each measurement is numbered in the widget. Click its label in the view or its row in the widget to select it; **Delete** removes the selected one. Each row also has a delete button, and a copy button that puts its values on the clipboard as a line of text.
 
 ## Arranging a selection
 
@@ -622,7 +634,7 @@ A project receives pictures through **inputs**. An input is one NDI stream or on
 
 **Create input…**, at the bottom of a display's or projector's **Input** list, opens the Video inputs window, as does **Ctrl+Shift+I**. The **…** beside **Input** opens it on that device's input, to edit it. Opened from a device, the window can set it: an input created there goes straight onto a device that had none, and **Apply** puts the selected input on it. It lists the project's inputs, with a dot for each: green live, yellow waiting, orange not bound or not found, grey when no device shows it. The number beside an input is how many devices use it.
 
-- **Add NDI input** adds one, and **Sender** picks the NDI sender that fills it. Which sender is a setting of this machine, because a sender's name means nothing on another one. A new input takes the sender's name until you rename it.
+- **Add NDI input** adds one, and **Source** picks the NDI source that fills it, such as a MadMapper or Resolume output. Which source is a setting of this machine, because a source's name means nothing on another one. A new input takes the source's name until you rename it. Until a source is chosen, every display and projector showing the input shows **No source for this input**.
 - **Add file…** copies a PNG, JPEG or WebP image, or an MP4, MOV or WebM video, into `Documents\Beatline\Beam\Library\Media` and adds it as an input. A video plays muted and loops; with a video input selected, the window has **Play**/**Pause**, a position slider and the time, and every device showing the file follows. A file belongs to the project: it is saved with it, and **Export Project to...** carries the file, so the project opens with its picture on another machine.
 - **Test card** is built in: every project has it, it is listed first, and it cannot be removed or changed. It has a grey wedge, colour bars, a fine grid, a circle and an F in the top-left corner, so a picture that is too bright, the wrong colour, soft, stretched, mirrored or turned shows it.
 
@@ -648,6 +660,10 @@ A project saved with connectors opens with one input in their place. A device on
 A laser fixture in Beam is a laser projector with no laser in it. Something else draws the picture — MadMapper, or any software that can talk to a laser DAC — and Beam receives the points and puts the beams in the room: where they land, what they cross, who they hit. You aim it before you rig it.
 
 **Beam pretends to be the hardware.** It advertises itself on the network as laser hardware the sending software already knows, so there is nothing to install at the other end. Point your laser software at it as though it were a DAC.
+
+**Lasers from GDTF.** A GDTF file with a Laser geometry is a laser in Beam. Its output in watts, beam diameter, divergence and scan angle come from the Laser geometry, the body from the file's model, drawn in the model's colour, and the beam starts where the Laser geometry sits. Each control is a channel: one with a DMX offset is driven over DMX; a virtual one, with no offset, is set by hand, Fixed when its range is a single value and Adjustable otherwise. Beam ships the Wicked Lasers LaserCube Pro 2.5W and Ultra 7.5W, each also as Wide Angle, as GDTF files, each with its body measured off the real unit. Projects that used the earlier LaserCube profiles open with these. A file of the same name in your own library is used instead of a shipped one.
+
+**How bright a laser is.** Beam works it out from the laser's power in watts, turned into lumens by the eye's response at each colour's wavelength. A GDTF file can give each diode as its own Laser geometry, with its wavelength and watts — the LaserCube Ultras do, 1.5 W at 638 nm, 2 W at 525 nm and 4 W at 455 nm, which comes to Wicked Lasers' 1,405 lumens. A laser that gives only its total power is shared evenly over red, green and blue at 638, 520 and 450 nm. Each point gets the part of that light the scanner spends on it: a line spreads it thin, a dot held in place concentrates it. On a surface the figure lands in lux, inverse-square from the aperture, and shows in the surface's own colour. In the air a beam is only visible through haze, and it scatters the way a moving head's beam does: brightest when it comes towards you, dimmed by the haze along its path. A held dot's beam is as wide as the beam diameter and divergence make it. With no haze there are no beams in the air, only the figure on surfaces. A laser line is more saturated than any colour a screen can show, and saturated colour looks brighter than its luminance, so each laser colour is drawn brighter by what the screen's own primary loses against the real line, from the Ware–Cowan brightness formula at the line's wavelength: about ×1.25 for 638 nm red, ×1.47 for 520 nm green and ×1.05 for 450 nm blue. The camera's exposure is the same as for every other fixture, so a 2.5 W laser drawing fifty dots looks faint next to a moving head, as it would in the room.
 
 ### Choosing how a laser is fed
 
@@ -689,6 +705,23 @@ The picture comes from the stream; the fixture only corrects it. Each of these i
 - **Expect some flicker** on a heavy figure. That is the scanner model doing its job — a real laser dims and flickers when asked to draw more than it can scan.
 - **A stream that stops goes dark.** A device that keeps sending a trickle after its content has stopped counts as stopped: under a quarter of its declared point rate, the beam goes out.
 - **Beams stop at the first surface they meet.** Each laser keeps a depth view of the scene from its own aperture, and only things that cast shadows count — the room, objects, LED bar bodies, moving head bodies. If you need to see a beam run through everything, the debug panel's **Laser** folder has a **stop at surfaces** switch. It isn't saved, so the next start is back to normal. **Log depth tiles** in the same folder writes each laser's depth view to the console, nearest surfaces first, which is the thing to look at when a beam ends somewhere it shouldn't.
+
+## The patch sheet
+
+**File → Export Patch Sheet (PDF)...** writes a PDF for whoever sets up the fixtures. It first asks what to print:
+
+- **Print**: project notes, the instructions for the crew, the patch list, the fixture types, and the measurements. Without a view, measurements are printed as a table only.
+- **Views, one page each**: the plan from above, the front from the audience, the back from upstage, and the sides from stage left and stage right. Mover arrows go on the plan; the grid on every view.
+- **Fixtures**: whether fixtures that are not patched are listed and drawn. Left out, they are still counted under the title.
+- **Paper**: A4 or Letter, landscape.
+
+The choices are remembered on this computer for the next export. **File → Project Details...** holds the project's author, version and notes, saved with the project. Author and version are printed under the title; the notes (venue, contact, power, anything the crew needs) go in a box at the top of the first page. A patch table that would start in the lower half of a page starts on the next one.
+
+- **The table** has one row per fixture, grouped by universe: number, name, type, mode, channel count, Art-Net universe, sACN universe, start and end channel, position, and whether it is hung, standing or sideways. Art-Net counts universes from 0 and sACN from 1, so both are given. Fixtures that are not patched are listed at the end.
+- **Fixture types** lists each type once, with its channel count and how many there are.
+- **The views** are line drawings of the objects with hidden lines removed: only what can be seen from that side is drawn, in black on white. The plan has the audience at the bottom (-y); each view names the stage sides at its edges, and an elevation draws the floor as a line. Each fixture is a circle numbered to match the table, drawn over the objects; fixtures that cover each other in a view share one marker, such as **1–8** for a row of movers seen end on. In an elevation, a fixture behind something is drawn grey and dashed. Fixture bodies are outlined on the plan only.
+- **Mover arrows.** A red arrow shows where the beam moves when tilt is raised above its centre with pan at its centre. The arrow does not show which way the display or controls on the base face, because a profile does not say. To place a mover on site, set pan to centre and tilt a little above centre, then turn the base until the beam follows the arrow.
+- **Measurements** are drawn on each view in blue as seen from that side, labelled M1, M2 and so on, and listed after the last view with all their values. A measurement pointing straight at the viewer is a dot; its label and the list give the length.
 
 ## The MadMapper export in detail
 
@@ -797,7 +830,7 @@ Files are MP4, H.264 video and AAC audio, constant frame rate. They play on phon
 
 ## Menus
 
-**File** — New Project, Open Project, Import JSON Project, Import GDTF..., Save Project, Export Project to..., Refresh from Library, Export MadMapper Layout
+**File** — New Project, Open Project, Save Project, Save Project As..., Import GDTF..., Export Project to..., Project Details..., Export Patch Sheet (PDF)..., Refresh from Library
 
 **Edit** — Undo, Redo, Copy, Paste, Preferences.
 

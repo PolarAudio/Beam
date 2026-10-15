@@ -21,12 +21,7 @@ import { stateAt } from './dmx_engine';
 import {
   nameOf, namesClosed, namesOpen, slotKind,
 } from './name_rules';
-
-/** Attributes the moving head acts on; anything else is shown but marked. */
-const DRAWN = [
-  /^Dimmer$/, /^Pan$/, /^Tilt$/, /^Zoom$/, /^Color(Add|Sub)_/, /^CT[CBO]$/, /^Focus\d+$/, /^Iris$/,
-  /^Frost\d+$/, /^(Color|Gobo|Prism)\d+/, /^Shutter\d+/, /^NoFeature$/,
-];
+import { drawsFunction } from './head_dispatch';
 
 /** What a shutter strobe attribute is called, and whether it is random. */
 const STROBE_WORDS = [
@@ -42,7 +37,7 @@ const STROBE_WORDS = [
 /** A physical value as a number and its unit, for its attribute. */
 function physical(attribute, value) {
   const round = (v) => (Math.abs(v) >= 10 ? Math.round(v) : Math.round(v * 10) / 10);
-  if (/^(Pan|Tilt|Zoom)$|Pos$/.test(attribute)) return [round(value), '°'];
+  if (/^(Pan|Tilt|Zoom)$|Pos$|Rot$/.test(attribute)) return [round(value), '°'];
   if (/Strobe|Rate|Frequency|Shake/.test(attribute)) return [round(value), 'Hz'];
   if (/Rotate$|Spin$/.test(attribute)) return [round(value), '°/s'];
   if (/^CT[CBO]$/.test(attribute) && Math.abs(value) > 100) return [round(value), 'K'];
@@ -189,14 +184,23 @@ function partsOf(type, fn, bytes) {
   if (a === 'Dimmer') return whole('Intensity', `dimmer ${span}`);
   if (/^Color(Add|Sub)_/.test(a)) return whole('ColorIntensity', `${attributeLabel(a).toLowerCase()} ${span}`);
   if (/^CT[CBO]$/.test(a)) {
-    return Math.max(fn.physicalFrom, fn.physicalTo) > 100
-      ? whole('ColorTemperature', `white ${span}`) : whole('Effect', `${a} ${span}`);
+    if (Math.max(fn.physicalFrom, fn.physicalTo) > 100) return whole('ColorTemperature', `white ${span}`);
+    // A linked filter is what the beam fades to: its colour on the card.
+    const filter = fn.filter ? type.physical.filters.find((f) => f.name === fn.filter) : null;
+    return whole('Effect', `${a} ${span}`, filter ? { colour: cieToHex(filter.color) } : {});
   }
   if (a === 'Pan' || a === 'Tilt') return whole(a, `${a.toLowerCase()} ${span}`);
   if (a === 'Zoom') return whole('Zoom', `zoom ${span}`);
   if (/^Focus\d+$/.test(a)) return whole('Focus', `focus ${span}`);
+  if (/^Focus\d+Distance$/.test(a)) return whole('Focus', `focus at ${span} m`);
   if (a === 'Iris') return whole('Iris', `iris ${span}`);
   if (/^Frost\d+$/.test(a)) return whole('Frost', `frost ${span}`);
+  const blade = /^Blade(\d+)(A|B|Rot)$/.exec(a);
+  if (blade) {
+    return whole('Effect', blade[2] === 'Rot'
+      ? `blade ${blade[1]} turn ${span}` : `blade ${blade[1]}${blade[2]} in ${span}`);
+  }
+  if (a === 'ShaperRot') return whole('Effect', `shaper turn ${span}`);
 
   if (/^Shutter\d+$/.test(a)) {
     const shut = (s) => (namesClosed(nameOf(fn, s)) ? 'closed' : 'open');
@@ -205,6 +209,22 @@ function partsOf(type, fn, bytes) {
   }
   const strobe = /^Shutter\d+/.test(a) && STROBE_WORDS.find(([pattern]) => pattern.test(a));
   if (strobe) return whole('ShutterStrobe', `${strobe[1]} ${span}${strobe[2] ? ' random' : ''}`);
+
+  const animation = /^Animation(Wheel|System)(\d*)(|Pos|PosRotate|Spin|WheelSpin)$/.exec(a);
+  if (animation) {
+    const [, , , suffix] = animation;
+    if (suffix === 'Pos') return whole('WheelSlotRotation', `animation at ${span}`);
+    if (suffix !== '') return rotationParts(fn, bytes, 'animation spin', 'WheelSlotRotation');
+    const wheel = fn.wheel ? type.wheels.find((w) => w.name === fn.wheel) : null;
+    const slotted = fn.sets.filter((s) => s.wheelSlotIndex > 0);
+    if (!slotted.length) return whole('Effect', 'animation in');
+    return slotted.map((s) => {
+      const slot = wheel ? wheel.slots[s.wheelSlotIndex - 1] : null;
+      if (slot && slotKind('Animation', slot) === 'Open') return part(s.dmxFrom, s.dmxTo, 'NoFunction', 'open');
+      const named = words(s.name || (slot && slot.name));
+      return part(s.dmxFrom, s.dmxTo, 'Effect', `animation in (${named})`);
+    });
+  }
 
   const wheelMatch = /^(Color|Gobo|Prism|Animation)(\d+)(.*)$/.exec(a);
   if (wheelMatch) {
@@ -329,8 +349,9 @@ export default function gdtfGuide(type, engine) {
       .flatMap((fn) => partsOf(type, fn, c.bytes))
       .sort((p, q) => p.lo - q.lo));
     const ranges = fold(parts);
-    const drawn = c.functions.some((f) => f.attribute !== 'NoFeature'
-      && DRAWN.some((pattern) => pattern.test(f.attribute)));
+    // Drawn when the head acts on one of its functions, asked of the dispatch
+    // that drives the head rather than kept as a list here.
+    const drawn = c.functions.some((f) => drawsFunction(f, type));
     let text = ranges.map((r) => (r.range ? `${r.range} ${r.text}` : r.text)).join(' · ');
     if (elsewhere.length) {
       const masters = [...new Set(elsewhere.map((f) => (f.modeMaster || []).join('.')))].join(', ');

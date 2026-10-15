@@ -337,7 +337,7 @@ function islandIsGrid(island) {
  * One `<LEDFixture>` element, as the lines it occupies.
  *
  * @param {Object} profile OFL-shaped profile; a generated bar carries
- *   `asls.bar` and `asls.components`
+ *   `beam.bar` and `beam.components`
  * @param {Object} [options]
  * @param {String} [options.group] manufacturer, as MadMapper groups fixtures
  * @param {String} [options.product] model name shown in its browser
@@ -350,8 +350,8 @@ function islandIsGrid(island) {
  */
 function fixtureElement(profile, options = {}) {
   if (!profile) return null;
-  const asls = profile.asls || {};
-  const params = asls.bar;
+  const section = profile.beam || {};
+  const params = section.bar;
 
   let type;
   let width;
@@ -367,7 +367,7 @@ function fixtureElement(profile, options = {}) {
     // A generated bar: the geometry is the fixture. Component letters are
     // already filtered to ones a pixel can carry and their order is the wire
     // order, which is exactly what MadMapper's `type` means.
-    const letters = asls.components || [];
+    const letters = section.components || [];
     // A tile too big for one fixture is exported as several, and this is one
     // of them: its own grid, its own channels from 1. Without a band it is the
     // whole thing, which is what everything that fits gets.
@@ -457,13 +457,13 @@ function library(elements) {
  * @returns {Array} from `ledBarBands`
  */
 export function profileBands(profile) {
-  const asls = (profile || {}).asls || {};
-  if (!asls.bar) {
+  const section = (profile || {}).beam || {};
+  if (!section.bar) {
     return [{
       index: 0, count: 1, startLine: 0, lines: 1, startPixel: 0, pixelCount: 1,
     }];
   }
-  return ledBarBands(asls.bar, (asls.components || []).length || 1);
+  return ledBarBands(section.bar, (section.components || []).length || 1);
 }
 
 /**
@@ -527,9 +527,9 @@ function islandLabels(islands) {
  * @returns {Array} parts, each carrying a `band` or an `island`
  */
 export function profileParts(profile, mode) {
-  const asls = (profile || {}).asls || {};
-  if (asls.bar) {
-    const bands = ledBarBands(asls.bar, (asls.components || []).length || 1);
+  const section = (profile || {}).beam || {};
+  if (section.bar) {
+    const bands = ledBarBands(section.bar, (section.components || []).length || 1);
     return bands.map((band) => ({
       index: band.index, count: bands.length, band, suffix: bandSuffix(band),
     }));
@@ -578,7 +578,7 @@ function sharesOneDefinition(parts) {
  *
  * @public
  * @param {Object} profile OFL-shaped profile; a generated bar carries
- *   `asls.bar` and `asls.components`
+ *   `beam.bar` and `beam.components`
  * @param {Object} [options] see `fixtureElement`
  * @returns {String|null} the contents of a `.mmfl` file, or null when the
  *   profile cannot be expressed
@@ -622,7 +622,7 @@ export function buildMadMapperFixture(profile, options = {}) {
  */
 function productName(entry, parts) {
   let named;
-  if (((entry.profile || {}).asls || {}).bar) {
+  if (((entry.profile || {}).beam || {}).bar) {
     named = parts.length > 1 ? `${entry.base} band` : entry.base;
   } else {
     named = entry.modeName ? `${entry.base} (${entry.modeName})` : entry.base;

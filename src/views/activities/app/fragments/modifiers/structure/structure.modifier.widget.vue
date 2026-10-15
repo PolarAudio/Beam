@@ -71,7 +71,7 @@
         <uk-button
           icon="save"
           :label="saveLabel"
-          :disabled="!structure.members.length || !named"
+          :disabled="!canSave"
           @click="saveToLibrary"
         />
         <uk-button
@@ -175,6 +175,18 @@ export default {
     },
     byIsland() {
       return !!this.structure && this.structure.grouping === ISLAND_GROUPING.ISLAND;
+    },
+    /**
+     * Whether the library can hold what this structure holds.
+     *
+     * Both kinds now: a fixture is recorded as the profile it uses, and an
+     * object as either the library key it references or the parameters it is
+     * itself. Placing the stamp again rebuilds both.
+     *
+     * @returns {Boolean}
+     */
+    canSave() {
+      return !!this.structure && !!this.structure.members.length && this.named;
     },
   },
   methods: {

@@ -399,15 +399,17 @@ The list down the left side, holding every fixture, object and structure in the 
 
 **structure** turns whatever you have selected into a single item you can move as one. It takes fixtures *and* objects, so a truss, the heads on it and the weights under it become one arrangement — which is also what keeps the list readable on a big stage, because a structure is one row and its contents are not. Objects already inside a structure are left where they are. **arrange** lays a multi-selection out on a line, a circle or a grid.
 
+The list down the left side, holding every fixture in the scene. Two buttons at the top: **group** and **new**.
+ master
+
 **new** opens the patch dialog, which has three tabs:
 
 - **fixtures** — the fixture library. Real profiles plus any generics you've built. Filterable.
-- **objects** — non-emitting scenery. Trusses, staging, decks. A truss has no channels, so nothing here gets addressed. Folders nest, so `Trusses/Circles` and `Trusses/Weights` can both live under `Trusses`, and the browser indents as deep as you go. Anything sitting loose is gathered under **Unsorted**, which is not a folder on disk. **import object** copies a GLB, OBJ, FBX or STL file into your object library, with an OBJ's materials and textures. A Draco-compressed GLB loads. Only GLB states its units and which way is up, so the dialog asks for both and shows the model's size in metres as you choose: a truss that reads three kilometres long is in millimetres.
-=======
 - **objects** — non-emitting scenery. Trusses, staging, decks. A truss has no channels, so nothing here gets addressed. Folders nest, so `Trusses/Circles` and `Trusses/Weights` can both live under `Trusses`, and the browser indents as deep as you go. Anything sitting loose is gathered under **Unsorted**, which is not a folder on disk. *The "import object" button is disabled — this feature isn't finished.*
->>>>>>> Stashed changes
->>>>>>> Stashed changes
->>>>>>> UI-Truss-Snapping
+- **objects** — non-emitting scenery. Trusses, staging, decks. A truss has no channels, so nothing here gets addressed. **import object** copies a GLB, OBJ, FBX or STL file into your object library, with an OBJ's materials and textures. Only GLB states its units and which way is up, so the dialog asks for both and shows the model's size in metres as you choose: a truss that reads three kilometres long is in millimetres.
+- **objects** — non-emitting scenery. Trusses, staging, decks. A truss has no channels, so nothing here gets addressed. Folders nest, so `Trusses/Circles` and `Trusses/Weights` can both live under `Trusses`, and the browser indents as deep as you go. Anything sitting loose is gathered under **Unsorted**, which is not a folder on disk. **import object** copies a GLB, OBJ, FBX or STL file into your object library, with an OBJ's materials and textures. Only GLB states its units and which way is up, so the dialog asks for both and shows the model's size in metres as you choose: a truss that reads three kilometres long is in millimetres.
+- **objects** — non-emitting scenery. Trusses, staging, decks. A truss has no channels, so nothing here gets addressed. Folders nest, so `Trusses/Circles` and `Trusses/Weights` can both live under `Trusses`, and the browser indents as deep as you go. Anything sitting loose is gathered under **Unsorted**, which is not a folder on disk. *The "import object" button is disabled — this feature isn't finished.*
+- **objects** — non-emitting scenery. Trusses, staging, decks. A truss has no channels, so nothing here gets addressed. **import object** copies a GLB, OBJ, FBX or STL file into your object library, with an OBJ's materials and textures. A Draco-compressed GLB loads. Only GLB states its units and which way is up, so the dialog asks for both and shows the model's size in metres as you choose: a truss that reads three kilometres long is in millimetres.
 - **structures** — saved groups, ready to patch again as a unit. You put things here with **save as structure** in a group's widget.
 
 Two more buttons live under the fixtures list:

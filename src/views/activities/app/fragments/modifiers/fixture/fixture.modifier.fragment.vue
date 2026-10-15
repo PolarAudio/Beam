@@ -208,10 +208,20 @@ export default {
     /**
      * The one highlighted structure member, or null for none or several.
      *
+     * Found among the structure's own members rather than through the fixture
+     * pool, because a member may be an object: a structure holds fixtures *and*
+     * objects, and an object's row id is `object:3`, which the pool's
+     * `Number(id)` cannot match. Asking the structure also removes any chance
+     * of landing on a fixture of the same number that is not its member.
+     *
      * @returns {Object|null}
      */
     selectedMember() {
       return this.highlightedMembers.length === 1 ? this.highlightedMembers[0] : null;
+      // By row id among the structure's own members: row ids are namespaced
+      // by kind, so this finds an object member as readily as a fixture.
+      return this.selectedStructure.members
+        .find((member) => member.listable.id === this.memberId) || null;
     },
     /**
      * Everything in the selection, of whatever kind.

@@ -30,20 +30,14 @@ import Preferences from '../../plugins/visualizer/preferences';
 import SceneObjects from '../../plugins/visualizer/scene_objects';
 import Studio from './studio';
 import { normaliseMatrixProfile } from './ofl_matrix';
-import withBeamSection from './generic/beam_section';
-import movedProfile from './moved_profiles';
-import readGdtf, { wheelImages } from './gdtf/gdtf_reader';
-import buildBody, { laserBody } from '../../plugins/visualizer/gdtf_body';
-import { laserGeometry } from './gdtf/laser_parts';
-import { headInputs, isLaserType } from './gdtf/fixture_parts';
-import MeasureTool from '../../plugins/visualizer/measure_tool';
-import { CLIP_KINDS, BUILT_IN_CLIPS } from './laser_clips';
-import { loadCards } from '../../plugins/visualizer/laser_cards';
-import UserGobos from '../../plugins/visualizer/user_gobos';
+import { MAX_SHADOW_CASTERS } from '../../plugins/visualizer/moving_head';
+import {
+  SCENE_ITEM_KINDS, kindOf, readMemberRef, isObjectRecord,
+} from './scene_item';
 
-/** The ILDA files that ship with Beam, which an export need not carry. */
-const SHIPPED_CLIP_FILES = new Set(BUILT_IN_CLIPS
-  .filter((clip) => clip.kind === CLIP_KINDS.FILE).map((clip) => clip.file));
+const SHOWFILE_EXTENSIONS = {
+  JSON: 'json',
+};
 
 const fixtureDataCache = {};
 
@@ -615,9 +609,12 @@ class Show extends EventEmitter {
     PatchSingleton.clearAll();
     this.fixturePool.clearAll(true);
     // Their handles are Object3Ds in the scene, so dropping the array is not
-    // enough -- the old show's structures would keep a node each.
+    // enough -- the old show's structures would keep a node each. Groups hold a
+    // handle too, for the same reason.
     this.structures.forEach((structure) => structure.dispose());
     this.structures = [];
+    this.groups.forEach((group) => group.dispose());
+    this.groups = [];
     this.objects.forEach((object) => object.dispose());
     this.objects = [];
     // And the geometry they were drawn from. Disposing an object removes its
@@ -1238,18 +1235,33 @@ class Show extends EventEmitter {
   }
 
   /**
-   * Saves a group's arrangement as a structure.
+   * Saves a structure's arrangement to the library.
    *
-   * What is kept is the shape, not these fixtures: each member's profile and
-   * where it sits relative to the group's origin. Placing it again builds new
-   * fixtures, which is why no address is recorded -- they are patched as they
-   * are created, exactly as adding one by hand would be.
+   * What is kept is the shape, not the items themselves: for a fixture its
+   * profile and where it sits relative to the structure's origin, for an object
+   * what it *is* -- a library key or its own parameters -- and its scale.
+   * Placing it again builds new items, which is why no address is recorded:
+   * fixtures are patched as they are created, exactly as adding one by hand
+   * would be.
+   *
+   * **Members are told apart by `kind`.** A fixture and an object are different
+   * things that happen to share a field called `model` -- one is a profile name
+   * inside a manufacturer folder, the other is a library key -- so a reader
+   * cannot tell them apart without being told. A record with no `kind` is a
+   * fixture, which is all a definition written before objects could be members
+   * can be. See `isObjectRecord`, which is what reads it.
+   *
+   * **An object's scale is its own field**, not part of its transform: the
+   * local matrix is composed at unit scale, because that is what a relative
+   * position and rotation are, and a truss that came back the size it was saved
+   * at would have to say so somewhere.
    *
    * @public
    * @async
-   * @param {Object} group group to save
-   * @returns {String|null} the structure's name, or null when it has none of
-   *   its own and nothing was written
+   * @param {Object} structure structure to save; a group may also be passed,
+   *   and holds fixtures only
+   * @returns {String|null} the structure's name, or null when nothing was
+   *   written
    */
   async saveStructure(group) {
     // Refused rather than filed under `untitled 1`. The name is the key: it is
@@ -1260,6 +1272,16 @@ class Show extends EventEmitter {
     if (!isNamedByUser(group.name)) return null;
     const matrix = group.matrix.clone();
     const inverse = matrix.clone().invert();
+    /**
+     * Where a member sits relative to the structure, or `inverse` itself when
+     * it has not recorded one. Both are the same thing spelled two ways: a
+     * member that has never moved has no relative transform, and the inverse
+     * puts it back where it already is.
+     */
+    const localOf = (member) => (member.localTransform
+      ? member.localTransform.clone()
+      : inverse.clone());
+
     const structure = {
       name: group.name,
       members: group.members.map((member) => {
@@ -1288,9 +1310,8 @@ class Show extends EventEmitter {
           model: member.model,
           mode: member.mode ? member.mode.name : undefined,
           universeAligned: !!member.universeAligned,
-          transform: local.elements.slice(),
-        };
-      }),
+          transform: localOf(member).elements.slice(),
+        })),
     };
     this.structureLibrary[group.name] = structure;
     if (typeof window !== 'undefined' && window.library) {
@@ -1302,18 +1323,25 @@ class Show extends EventEmitter {
   }
 
   /**
-   * Places a saved structure as a new group of new fixtures.
+ * Places a saved structure as a new group of new items.
    *
    * Each member is created and patched exactly as adding it by hand would be,
    * which is why the structure carries no addresses: they are found free at
    * the moment of placing, so the same structure can be put down repeatedly.
    *
+   * Fixtures and objects alike. An object is a reference to a library model or
+   * an inline set of parameters -- the two states `SceneObject` distinguishes,
+   * and the record says which by carrying one or the other. A reference whose
+   * model is not on this machine still arrives, marked unresolved and naming
+   * the file, exactly as it would in a loaded show; an inline one needs nothing
+   * from the library and always arrives whole.
+   *
    * @public
    * @async
    * @param {String} name structure to place
    * @param {Object} placement world position and rotation, in metres and radians
-   * @returns {Object|null} the group created, or null when the structure is
-   *   unknown or none of its members could be resolved
+   * @returns {Promise<Object|null>} the structure created, or null when the
+   *   definition is unknown or nothing in it could be resolved
    */
   async placeStructure(name, placement = {}) {
     const definition = this.structureLibrary[name];
@@ -1340,10 +1368,18 @@ class Show extends EventEmitter {
     const euler = new THREE.Euler();
     const members = [];
 
+    // A record without a kind is a fixture: definitions written before objects
+    // could be members say nothing else, and reading one as anything but a
+    // fixture would look for a profile that is not there. See `isObjectRecord`.
+    const records = definition.members || [];
+    const fixtures = records.filter((member) => !isObjectRecord(member));
+
     // Every distinct profile the definition needs, warmed before the loop and
     // all at once. With the cache above this is what makes the loop's awaits
     // microtasks without exception: one yield here rather than one per member,
-    // and the distinct profiles fetched together rather than in series.
+    // and the distinct profiles fetched together rather than in series. Objects
+    // are not warmed -- an object has no profile, and asking for
+    // `undefined/<library key>` would fetch nothing and look like a miss.
     const wanted = new Set();
     const isObject = (member) => member.kind === SCENE_ITEM_KINDS.OBJECT;
     if (definition.members.some(isObject)) await this.preloadObjectLibrary();
@@ -1418,6 +1454,54 @@ class Show extends EventEmitter {
           PatchSingleton.patchFixture(fixture);
         }
         members.push(fixture);
+      }
+    }
+
+    // The library listing an object needs. Re-read only when the definition names
+    // something this listing has not heard of, which is the definition written
+    // since it was last read -- and *not* on every copy: placing four of the
+    // same structure in a row would otherwise re-list the whole library four
+    // times over IPC. A model this machine genuinely does not have keeps the
+    // re-read, which is the price of noticing it has since been added.
+    const objects = records.filter(isObjectRecord);
+    if (objects.length) {
+      const library = this.objectLibrary || {};
+      const unheard = objects.some((member) => !member.primitive
+        && !library[foldModelKey(member.model)]);
+      if (unheard) await this.preloadObjectLibrary();
+      for (let i = 0; i < objects.length; i += 1) {
+        const member = objects[i];
+        world.multiplyMatrices(origin, new THREE.Matrix4().fromArray(member.transform));
+        world.decompose(position, quaternion, scale);
+        euler.setFromQuaternion(quaternion);
+        // Degrees, as `placeObject` writes them: the matrix gave us radians and
+        // the fixture branch above is explicit about the same conversion.
+        //
+        // The entry is spread under a `key` of its own so a model this machine
+        // does not have still arrives pointing at what it was saved from -- it
+        // is marked unresolved and names the file, which is the same thing a
+        // loaded show does with a missing model, and better than arriving as
+        // `undefined`.
+        // eslint-disable-next-line no-await-in-loop
+        const entry = (this.objectLibrary || {})[foldModelKey(member.model)];
+        const placed = await this.placeObject(
+          member.primitive
+            ? { name: member.name, primitive: member.primitive }
+            : { ...(entry || {}), name: member.name || (entry || {}).name, key: member.model },
+          {
+            position: { x: position.x, y: position.y, z: position.z },
+            rotation: {
+              x: THREE.MathUtils.radToDeg(euler.x),
+              y: THREE.MathUtils.radToDeg(euler.y),
+              z: THREE.MathUtils.radToDeg(euler.z),
+            },
+            // The local matrix was composed at unit scale, so this is the only
+            // place the object's own size is recorded.
+            scale: member.scale === undefined ? 1 : member.scale,
+          },
+          { inline: !!member.primitive },
+        );
+        if (placed) members.push(placed);
       }
     }
 
@@ -1610,21 +1694,6 @@ class Show extends EventEmitter {
   }
 
   /**
-   * Rebuilds placed structures and their membership from a showfile.
-   *
-   * Runs after the fixtures exist, since a structure holds its members rather
-   * than their ids. A showfile without structures is simply one where nothing
-   * was structured, so this is safe on older files.
-   *
-   * Membership is re-taken with `add`, which recaptures each member's relative
-   * transform from where it now stands. That is deliberate: the members were
-   * saved at absolute coordinates, so the file already agrees with itself and
-   * the relative transforms fall straight back out of it.
-   *
-   * @public
-   * @param {Object} showData raw showfile contents
-   */
-  /**
    * Rebuilds the models placed in a show.
    *
    * Each object names a library key, and the key is resolved here rather than
@@ -1637,11 +1706,20 @@ class Show extends EventEmitter {
    * Geometry loads in the background. Nothing waits on it: a hundred objects
    * are a hundred rows in an instanced buffer and appear as they arrive.
    *
+   * The saved id is kept as an index rather than as the object's own id when
+   * `freshIds` is asked for, which is what a paste does: the structure that
+   * held the original refers to it by the id it had in the chunk, and a copy
+   * cannot keep that without colliding with the original. The same arrangement
+   * `prepareFixtures` makes -- see `loadedFixturesById`.
+   *
    * @public
    * @async
    * @param {Object} showData raw showfile contents
+   * @param {Object} [options]
+   * @param {Boolean} [options.freshIds] mint new ids and index the saved ones
+   * @returns {Array} the objects created
    */
-  async prepareObjects(showData) {
+  async prepareObjects(showData, { freshIds = false } = {}) {
     const records = showData.objects || [];
     const made = records.map((data) => new SceneObject(data));
     made.forEach((object, i) => restoreListOrder(object, records[i]));
@@ -1671,6 +1749,60 @@ class Show extends EventEmitter {
       // eslint-disable-next-line no-console
       console.warn(`[show] ${missing.length} object(s) reference models this machine does not have: ${[...new Set(missing.map((o) => o.model))].join(', ')}`);
     }
+    return made;
+  }
+
+  /**
+   * The item a saved member reference resolves to, or null.
+   *
+   * A structure holds fixtures *and* objects, and ids are numbered per kind, so
+   * the reference has to say which it meant -- see `readMemberRef`. A reference
+   * that resolves to nothing is skipped rather than guessed at: a member id
+   * that no longer matches anything is a member a file already knows less about
+   * than we do.
+   *
+   * @public
+   * @param {Number|Object} ref as saved: `{ kind, id }`, or a bare fixture id
+   * @returns {Object|null} the fixture or object
+   */
+  memberOfRef(ref) {
+    const read = readMemberRef(ref);
+    if (!read) return null;
+    if (read.kind === SCENE_ITEM_KINDS.OBJECT) {
+      return this.loadedObjectsById.get(read.id) || null;
+    }
+    return this.loadedFixturesById.get(read.id) || null;
+  }
+
+  /**
+   * Rebuilds placed structures and their membership from a showfile.
+   *
+   * Runs after the fixtures and the objects exist, since a structure holds its
+   * members rather than their ids. A showfile without structures is simply one
+   * where nothing was structured, so this is safe on older files.
+   *
+   * Membership is re-taken with `add`, which recaptures each member's relative
+   * transform from where it now stands. That is deliberate: the members were
+   * saved at absolute coordinates, so the file already agrees with itself and
+   * the relative transforms fall straight back out of it.
+   *
+   * @public
+   * @param {Object} showData raw showfile contents
+   * @returns {Array} the structures created
+   */
+  prepareStructures(showData) {
+    const made = (showData.structures || []).map((structureData) => {
+      const structure = new Structure(structureData);
+      (structureData.members || []).forEach((ref) => {
+        // Resolved through the load indexes rather than the pool: addRaw hands
+        // out fresh ids, so a saved member id means nothing once a fixture has
+        // been deleted and the rest have shuffled down.
+        const member = this.memberOfRef(ref);
+        if (member) structure.add(member);
+      });
+      return structure;
+    });
+    this.structures.push(...made);
     return made;
   }
 
@@ -1909,10 +2041,14 @@ class Show extends EventEmitter {
     const structures = this.prepareStructures({ structures: fresh(data.structures) });
 
     // A fixture inside a pasted structure or group is not a loose item, and
+    this.capShadowCasters();
+    // A member inside a pasted structure or group is not a loose item, and
     // handing it back would put the gizmo on the members as well as on the
-    // thing that holds them.
+    // thing that holds them. Objects can be members now, so they are filtered
+    // on the same rule the fixtures already were.
     const loose = fixtures.filter((fixture) => !fixture.structure && !fixture.group);
-    return [...loose, ...objects, ...structures, ...groups];
+    const looseObjects = objects.filter((object) => !object.structure);
+    return [...loose, ...looseObjects, ...structures, ...groups];
   }
 
   /**
@@ -2004,6 +2140,10 @@ class Show extends EventEmitter {
    *
    * Keeping the contents is a different intention, and has its own word:
    * `explodeStructure`.
+   *
+   * Members are deleted by kind rather than assumed to be fixtures: a structure
+   * may hold objects, and releasing one without taking it out of the show would
+   * leave it standing there still reporting an owner that no longer exists.
    *
    * @public
    * @param {Object} structure structure to remove

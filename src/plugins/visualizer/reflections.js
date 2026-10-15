@@ -469,7 +469,17 @@ void mainImage( const in vec4 inputColor, const in vec2 uv, const in float depth
   vec2 fab = dfgApprox( dotNV, roughness );
   vec3 returned = reflectance.rgb * fab.x + fab.y;
   vec3 environment = environmentReflection( viewDir, normal, roughness );
-  float roughFade = 1.0 - smoothstep( ${(ROUGHNESS_LIMIT * 0.7).toFixed(3)}, ${ROUGHNESS_LIMIT.toFixed(3)}, roughness );
+  // How much of a mirror this surface still is.
+  //
+  // Roughness widens the specular lobe, and a wide lobe returns the same energy
+  // over more solid angle, so its peak falls: that is why a metal at 0.4 reads
+  // as brushed aluminium under an environment and as chrome in a traced frame.
+  // One blurred sample of a lit room does not fall with the lobe -- the average
+  // of a bright room is still bright -- so the strength is taken down here
+  // instead of relying on the blur to carry it. At the limit this reaches the
+  // nothing the roughness cutoff above already gives, so a surface that is not
+  // glossy enough keeps the environment's reflection and no more.
+  float gloss = 1.0 - smoothstep( 0.0, ${ROUGHNESS_LIMIT.toFixed(3)}, roughness );
 
   // On the floor plane: the mirror image at this point.
   vec3 worldPosition = ( camWorld * vec4( origin, 1.0 ) ).xyz;
@@ -504,7 +514,7 @@ void mainImage( const in vec4 inputColor, const in vec2 uv, const in float depth
       float spread = roughness * roughness * max( travelled, 0.0 );
       float level = clamp( log2( max( spread / pixelSize, 1.0 ) ), 0.0, min( mirrorLevels, ${MAX_LEVEL.toFixed(1)} ) );
       vec3 mirrored = textureLod( mirrorMips, mirrorUv, level ).rgb;
-      outputColor.rgb = max( inputColor.rgb + roughFade * returned * ( mirrored - environment ), 0.0 );
+      outputColor.rgb = max( inputColor.rgb + gloss * returned * ( mirrored - environment ), 0.0 );
       return;
     }
   }
@@ -597,7 +607,7 @@ void mainImage( const in vec4 inputColor, const in vec2 uv, const in float depth
   // is finer than the frame can trace, and comes and goes from pixel to pixel.
   weight *= smoothstep( 0.02, 0.06, travelled );
   weight *= 1.0 - smoothstep( 0.25, 0.75, ray.z );
-  weight *= roughFade;
+  weight *= gloss;
   // The frame holds each surface as the camera sees it. A surface met edge-on
   // or from behind shows the ray something else -- a lens face, bright
   // head-on and dark from the side, is the worst of it -- so such a hit

@@ -1,0 +1,150 @@
+{
+  "format": 1,
+  "kind": "structures",
+  "key": "PA-Tower",
+  "data": {
+    "name": "PA-Tower",
+    "members": [
+      {
+        "kind": "object",
+        "name": "PA5030-02 Head",
+        "model": "Trusses/PA5030-02 Head",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          2.220446049250313e-16,
+          -1,
+          0,
+          0,
+          1,
+          2.220446049250313e-16,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          -0.256,
+          3.074,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "BallastBase 2",
+        "model": "Trusses/Bases/BallastBase",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          -0.256,
+          -2.126,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "TowerBase 2",
+        "model": "Trusses/Bases/TowerBase",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          -0.256,
+          -2.126,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "IBC Tank 2",
+        "model": "Trusses/Bases/IBC Tank",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          1.024,
+          -1.896,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "4P_500",
+        "model": "Trusses/Straight/4P_500",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          2.220446049250313e-16,
+          0,
+          -1,
+          0,
+          0,
+          1,
+          0,
+          0,
+          1,
+          0,
+          2.220446049250313e-16,
+          0,
+          0,
+          -0.256,
+          3.074,
+          1
+        ]
+      }
+    ]
+  }
+}

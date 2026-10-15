@@ -1,0 +1,1242 @@
+{
+  "format": 1,
+  "kind": "structures",
+  "key": "Scaffolding 6m2x2",
+  "data": {
+    "name": "Scaffolding 6m2x2",
+    "members": [
+      {
+        "kind": "object",
+        "name": "ScaffoldRinglock2m",
+        "model": "Trusses/scaffolding/ScaffoldRinglock2m",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          -1.1827272727272717,
+          -0.816136363636364,
+          -2.2320454545454558,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldRinglock2m 2",
+        "model": "Trusses/scaffolding/ScaffoldRinglock2m",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          -1.1827272727272717,
+          -0.816136363636364,
+          -0.23204545454545578,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldRinglock2m 2 2",
+        "model": "Trusses/scaffolding/ScaffoldRinglock2m",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          -1.1827272727272717,
+          -0.816136363636364,
+          1.7679545454545447,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldRinglock2m 3",
+        "model": "Trusses/scaffolding/ScaffoldRinglock2m",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0.8172727272727283,
+          -0.816136363636364,
+          -2.2320454545454558,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldRinglock2m 2 3",
+        "model": "Trusses/scaffolding/ScaffoldRinglock2m",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0.8172727272727283,
+          -0.816136363636364,
+          -0.23204545454545578,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldRinglock2m 2 2 2",
+        "model": "Trusses/scaffolding/ScaffoldRinglock2m",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0.8172727272727283,
+          -0.816136363636364,
+          1.7679545454545447,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldRinglock2m 4",
+        "model": "Trusses/scaffolding/ScaffoldRinglock2m",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          -1.1827272727272717,
+          1.1838636363636361,
+          -2.2320454545454558,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldRinglock2m 2 4",
+        "model": "Trusses/scaffolding/ScaffoldRinglock2m",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          -1.1827272727272717,
+          1.1838636363636361,
+          -0.23204545454545578,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldRinglock2m 2 2 3",
+        "model": "Trusses/scaffolding/ScaffoldRinglock2m",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          -1.1827272727272717,
+          1.1838636363636361,
+          1.7679545454545447,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldRinglock2m 3 2",
+        "model": "Trusses/scaffolding/ScaffoldRinglock2m",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0.8172727272727283,
+          1.1838636363636361,
+          -2.2320454545454558,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldRinglock2m 2 3 2",
+        "model": "Trusses/scaffolding/ScaffoldRinglock2m",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0.8172727272727283,
+          1.1838636363636361,
+          -0.23204545454545578,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldRinglock2m 2 2 2 2",
+        "model": "Trusses/scaffolding/ScaffoldRinglock2m",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0.8172727272727283,
+          1.1838636363636361,
+          1.757954545454544,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldLedger2m",
+        "model": "Trusses/scaffolding/ScaffoldLedger2m",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          2.220446049250313e-16,
+          1,
+          0,
+          0,
+          -1,
+          2.220446049250313e-16,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0.8172727272727283,
+          -0.816136363636364,
+          -2.332045454545456,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldLedger2m 2",
+        "model": "Trusses/scaffolding/ScaffoldLedger2m",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          2.220446049250313e-16,
+          1,
+          0,
+          0,
+          -1,
+          2.220446049250313e-16,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0.8172727272727283,
+          -0.816136363636364,
+          -0.33204545454545586,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldLedger2m 2 2",
+        "model": "Trusses/scaffolding/ScaffoldLedger2m",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          2.220446049250313e-16,
+          1,
+          0,
+          0,
+          -1,
+          2.220446049250313e-16,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0.8172727272727283,
+          -0.816136363636364,
+          1.6679545454545441,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldLedger2m 2 2 2",
+        "model": "Trusses/scaffolding/ScaffoldLedger2m",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          2.220446049250313e-16,
+          1,
+          0,
+          0,
+          -1,
+          2.220446049250313e-16,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0.8172727272727283,
+          -0.816136363636364,
+          3.667954545454544,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldLedger2m 3",
+        "model": "Trusses/scaffolding/ScaffoldLedger2m",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          2.220446049250313e-16,
+          1,
+          0,
+          0,
+          -1,
+          2.220446049250313e-16,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0.827272727272728,
+          1.1838636363636361,
+          -2.352045454545456,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldLedger2m 2 3",
+        "model": "Trusses/scaffolding/ScaffoldLedger2m",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          2.220446049250313e-16,
+          1,
+          0,
+          0,
+          -1,
+          2.220446049250313e-16,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0.8172727272727283,
+          1.1838636363636361,
+          -0.33204545454545586,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldLedger2m 2 2 3",
+        "model": "Trusses/scaffolding/ScaffoldLedger2m",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          2.220446049250313e-16,
+          1,
+          0,
+          0,
+          -1,
+          2.220446049250313e-16,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0.8172727272727283,
+          1.1838636363636361,
+          1.6679545454545441,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldLedger2m 2 2 2 2",
+        "model": "Trusses/scaffolding/ScaffoldLedger2m",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          2.220446049250313e-16,
+          1,
+          0,
+          0,
+          -1,
+          2.220446049250313e-16,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0.8172727272727283,
+          1.1838636363636361,
+          3.667954545454544,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldLedger2m 4",
+        "model": "Trusses/scaffolding/ScaffoldLedger2m",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          -1.1827272727272717,
+          -0.816136363636364,
+          -2.332045454545456,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldLedger2m 4 2",
+        "model": "Trusses/scaffolding/ScaffoldLedger2m",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0.8172727272727283,
+          -0.816136363636364,
+          -2.332045454545456,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldLedger2m 4 2 2",
+        "model": "Trusses/scaffolding/ScaffoldLedger2m",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0.8172727272727283,
+          -0.816136363636364,
+          -0.33204545454545586,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldLedger2m 4 3",
+        "model": "Trusses/scaffolding/ScaffoldLedger2m",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          -1.1827272727272717,
+          -0.816136363636364,
+          -0.33204545454545586,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldLedger2m 4 2 2 2",
+        "model": "Trusses/scaffolding/ScaffoldLedger2m",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0.8172727272727283,
+          -0.816136363636364,
+          1.6679545454545441,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldLedger2m 4 3 2",
+        "model": "Trusses/scaffolding/ScaffoldLedger2m",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          -1.1827272727272717,
+          -0.816136363636364,
+          1.6679545454545441,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldLedger2m 4 2 2 2 2",
+        "model": "Trusses/scaffolding/ScaffoldLedger2m",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0.8172727272727283,
+          -0.816136363636364,
+          3.167954545454544,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldLedger2m 4 3 2 2",
+        "model": "Trusses/scaffolding/ScaffoldLedger2m",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          -1.1827272727272717,
+          -0.816136363636364,
+          3.167954545454544,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldBaseJack",
+        "model": "Trusses/scaffolding/ScaffoldBaseJack",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          -1.1827272727272717,
+          -0.816136363636364,
+          -2.2320454545454558,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldBaseJack 2",
+        "model": "Trusses/scaffolding/ScaffoldBaseJack",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0.8172727272727283,
+          -0.816136363636364,
+          -2.2320454545454558,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldBaseJack 3",
+        "model": "Trusses/scaffolding/ScaffoldBaseJack",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          -1.1827272727272717,
+          1.1838636363636361,
+          -2.2320454545454558,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldBaseJack 2 2",
+        "model": "Trusses/scaffolding/ScaffoldBaseJack",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0.8172727272727283,
+          1.1838636363636361,
+          -2.2320454545454558,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldDiagonal2x2",
+        "model": "Trusses/scaffolding/ScaffoldDiagonal2x2",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          2.220446049250313e-16,
+          1,
+          0,
+          0,
+          -1,
+          2.220446049250313e-16,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0.8072727272727285,
+          -0.866136363636364,
+          -1.8220454545454559,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldDiagonal2x2 2",
+        "model": "Trusses/scaffolding/ScaffoldDiagonal2x2",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          2.220446049250313e-16,
+          1,
+          0,
+          0,
+          -1,
+          2.220446049250313e-16,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0.8072727272727285,
+          -0.866136363636364,
+          0.16795454545454414,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldDiagonal2x2 2 2",
+        "model": "Trusses/scaffolding/ScaffoldDiagonal2x2",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          2.220446049250313e-16,
+          1,
+          0,
+          0,
+          -1,
+          2.220446049250313e-16,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0.8072727272727285,
+          -0.866136363636364,
+          2.167954545454544,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldDiagonal2x2 2 2 2",
+        "model": "Trusses/scaffolding/ScaffoldDiagonal2x2",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          -0.9998476951563913,
+          -0.017452406437283435,
+          0,
+          0,
+          0.017452406437283435,
+          -0.9998476951563913,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0.8472727272727276,
+          1.1738636363636359,
+          2.167954545454544,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldDiagonal2x2 2 3",
+        "model": "Trusses/scaffolding/ScaffoldDiagonal2x2",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          -0.9998476951563913,
+          -0.017452406437283435,
+          0,
+          0,
+          0.017452406437283435,
+          -0.9998476951563913,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0.8472727272727276,
+          1.1738636363636359,
+          0.16795454545454414,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldDiagonal2x2 3",
+        "model": "Trusses/scaffolding/ScaffoldDiagonal2x2",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          -0.9998476951563913,
+          -0.017452406437283435,
+          0,
+          0,
+          0.017452406437283435,
+          -0.9998476951563913,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0.8472727272727276,
+          1.1738636363636359,
+          -1.8220454545454559,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldDiagonal2x2 2 2 2 2",
+        "model": "Trusses/scaffolding/ScaffoldDiagonal2x2",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          0.017452406437283186,
+          -0.9998476951563913,
+          0,
+          0,
+          0.9998476951563913,
+          0.017452406437283186,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          -1.172727272727272,
+          1.213863636363636,
+          2.167954545454544,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldDiagonal2x2 2 3 2",
+        "model": "Trusses/scaffolding/ScaffoldDiagonal2x2",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          0.017452406437283186,
+          -0.9998476951563913,
+          0,
+          0,
+          0.9998476951563913,
+          0.017452406437283186,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          -1.172727272727272,
+          1.213863636363636,
+          0.16795454545454414,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldDiagonal2x2 3 2",
+        "model": "Trusses/scaffolding/ScaffoldDiagonal2x2",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          0.017452406437283186,
+          -0.9998476951563913,
+          0,
+          0,
+          0.9998476951563913,
+          0.017452406437283186,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          -1.172727272727272,
+          1.213863636363636,
+          -1.8220454545454559,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldDiagonal2x2 2 2 2 2 2",
+        "model": "Trusses/scaffolding/ScaffoldDiagonal2x2",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          0.9998476951563913,
+          0.017452406437283068,
+          0,
+          0,
+          -0.017452406437283068,
+          0.9998476951563913,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          -1.2027272727272713,
+          -0.816136363636364,
+          2.167954545454544,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldDiagonal2x2 2 3 2 2",
+        "model": "Trusses/scaffolding/ScaffoldDiagonal2x2",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          0.9998476951563913,
+          0.017452406437283068,
+          0,
+          0,
+          -0.017452406437283068,
+          0.9998476951563913,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          -1.2027272727272713,
+          -0.816136363636364,
+          0.16795454545454414,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "ScaffoldDiagonal2x2 3 2 2",
+        "model": "Trusses/scaffolding/ScaffoldDiagonal2x2",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          0.9998476951563913,
+          0.017452406437283068,
+          0,
+          0,
+          -0.017452406437283068,
+          0.9998476951563913,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          -1.2027272727272713,
+          -0.816136363636364,
+          -1.8220454545454559,
+          1
+        ]
+      }
+    ]
+  }
+}

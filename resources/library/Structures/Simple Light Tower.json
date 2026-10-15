@@ -1,0 +1,94 @@
+{
+  "format": 1,
+  "kind": "structures",
+  "key": "Simple Light Tower",
+  "data": {
+    "name": "Simple Light Tower",
+    "members": [
+      {
+        "kind": "object",
+        "name": "ConcreteWeight500",
+        "model": "Trusses/Bases/ConcreteWeight500",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          1.7763568394002505e-15,
+          0,
+          -3.6977777777777776,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "Top-Ring",
+        "model": "Trusses/Top-Ring",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          8.881784197001252e-16,
+          0,
+          1.8288888888888892,
+          1
+        ]
+      },
+      {
+        "kind": "object",
+        "name": "4P_500",
+        "model": "Trusses/Straight/4P_500",
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "transform": [
+          2.220446049250313e-16,
+          0,
+          -1,
+          0,
+          0,
+          1,
+          0,
+          0,
+          1,
+          0,
+          2.220446049250313e-16,
+          0,
+          8.881784197001252e-16,
+          0,
+          1.8688888888888893,
+          1
+        ]
+      }
+    ]
+  }
+}

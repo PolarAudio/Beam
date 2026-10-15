@@ -2091,6 +2091,25 @@ class Controls {
     this.groupedInstances.quaternion.copy(quaternion);
     this.groupedInstances.scale.copy(snapScale);
     this.groupedInstances.updateMatrixWorld(true);
+
+    // TransformControls remembers where the drag began in `_positionStart`, and
+    // computes every later position from that. Rewriting the group's transform
+    // above (by a snap correction) without syncing that memo made the drag
+    // revert towards its pre-snap values, until enough further mouse movement
+    // again produced another snap -- so the first one landed slightly off and
+    // re-dragging from the result landed exactly. Sync both here.
+    if (this.handle && this.handle.dragging) {
+      this.handle._positionStart.copy(this.groupedInstances.position);
+      this.handle._quaternionStart.copy(this.groupedInstances.quaternion);
+      this.handle._scaleStart.copy(this.groupedInstances.scale);
+      this.groupedInstances.matrixWorld.decompose(
+        this.handle.worldPositionStart,
+        this.handle.worldQuaternionStart,
+        this.handle._worldScaleStart,
+      );
+      if (this.handle.pointEnd) this.handle.pointStart.copy(this.handle.pointEnd);
+    }
+
     return join;
   }
 

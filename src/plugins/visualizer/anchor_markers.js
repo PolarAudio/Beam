@@ -80,6 +80,9 @@ const JOINED_COLOUR = 0xffffff;
  */
 const CHOSEN_COLOUR = 0xffe066;
 
+/** Diameter in pixels of the halo drawn behind a chosen anchor. */
+const CHOSEN_HALO_PIXELS = 20;
+
 /** The colour of a connector system, defaulting to the neutral one. */
 function colourForGroup(group) {
   if (!group) return NEUTRAL_COLOUR;
@@ -112,6 +115,25 @@ class AnchorMarkers {
     this.points.visible = false;
     this.scratch = new Color();
     this.shown = 0;
+
+    // Raised behind the marker cloud (lower render order), so a chosen anchor
+    // still reads as such when the join's own white dot is printed on top of it.
+    this.chosenPosition = new Float32Array(3);
+    this.chosenGeometry = new BufferGeometry();
+    this.chosenGeometry.setAttribute('position', new BufferAttribute(this.chosenPosition, 3));
+    this.chosenMaterial = new PointsMaterial({
+      size: CHOSEN_HALO_PIXELS,
+      sizeAttenuation: false,
+      color: CHOSEN_COLOUR,
+      transparent: true,
+      opacity: 0.72,
+      depthTest: false,
+      blending: AdditiveBlending,
+    });
+    this.chosenPoints = new Points(this.chosenGeometry, this.chosenMaterial);
+    this.chosenPoints.frustumCulled = false;
+    this.chosenPoints.renderOrder = 999;
+    this.chosenPoints.visible = false;
   }
 
   /**
@@ -152,6 +174,16 @@ class AnchorMarkers {
     });
 
     this.shown = n;
+    if (chosen) {
+      this.chosenPosition[0] = chosen.position.x;
+      this.chosenPosition[1] = chosen.position.y;
+      this.chosenPosition[2] = chosen.position.z;
+      if (!this.chosenPoints.parent) SceneManager.add(this.chosenPoints);
+      this.chosenPoints.visible = true;
+      this.chosenGeometry.attributes.position.needsUpdate = true;
+    } else {
+      this.chosenPoints.visible = false;
+    }
     if (!n) {
       this.points.visible = false;
       return;
@@ -168,14 +200,18 @@ class AnchorMarkers {
     this.shown = 0;
     this.geometry.setDrawRange(0, 0);
     this.points.visible = false;
+    this.chosenPoints.visible = false;
   }
 
   /** @public Releases the geometry and material. */
   dispose() {
     this.hide();
     if (this.points.parent) SceneManager.remove(this.points);
+    if (this.chosenPoints && this.chosenPoints.parent) SceneManager.remove(this.chosenPoints);
     this.geometry.dispose();
     this.material.dispose();
+    if (this.chosenGeometry) this.chosenGeometry.dispose();
+    if (this.chosenMaterial) this.chosenMaterial.dispose();
   }
 }
 

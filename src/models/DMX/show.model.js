@@ -15,7 +15,9 @@ import FixturePool from './fixture.pool.model';
 import Group from './group.model';
 import Structure from './structure.model';
 import SceneObject from './object.model';
-import { SCENE_ITEM_KINDS, kindOf } from './scene_item';
+import {
+  SCENE_ITEM_KINDS, kindOf, readMemberRef,
+} from './scene_item';
 import { claimInstance, setSiblingResolver } from './item_naming';
 import Live from './live.model';
 import {
@@ -1278,6 +1280,10 @@ class Show extends EventEmitter {
           };
         }
         return {
+          // Written rather than left to be inferred: a reader that meets a
+          // record with no kind at all has to assume a fixture, and a record
+          // that reads the same written and loaded is worth the one field.
+          kind: SCENE_ITEM_KINDS.FIXTURE,
           manufacturer: member.manufacturer,
           model: member.model,
           mode: member.mode ? member.mode.name : undefined,
@@ -1929,19 +1935,16 @@ class Show extends EventEmitter {
       const structure = new Structure(structureData);
       restoreListOrder(structure, structureData);
       (structureData.members || []).forEach((ref) => {
-        // An object member is `{ kind, id }`, resolved through the objects
-        // just loaded.
-        if (ref && typeof ref === 'object') {
-          if (ref.kind !== SCENE_ITEM_KINDS.OBJECT) return;
-          const object = (this.loadedObjectsById || new Map()).get(ref.id);
-          if (object) structure.add(object);
-          return;
-        }
-        // Resolved through the load index rather than the pool: addRaw hands
-        // out fresh ids, so a saved member id means nothing once a fixture has
-        // been deleted and the rest have shuffled down.
-        const fixture = this.loadedFixturesById.get(ref);
-        if (fixture) structure.add(fixture);
+        const read = readMemberRef(ref);
+        if (!read) return;
+        // An object member is resolved through the objects just loaded, and a
+        // fixture through the load index rather than the pool: addRaw hands out
+        // fresh ids, so a saved member id means nothing once a fixture has been
+        // deleted and the rest have shuffled down.
+        const member = read.kind === SCENE_ITEM_KINDS.OBJECT
+          ? (this.loadedObjectsById || new Map()).get(read.id)
+          : this.loadedFixturesById.get(read.id);
+        if (member) structure.add(member);
       });
       return structure;
     });

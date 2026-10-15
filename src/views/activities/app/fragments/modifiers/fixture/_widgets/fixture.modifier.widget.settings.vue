@@ -6,9 +6,11 @@
   >
     <uk-flex
       v-if="fixture"
+      ref="body"
       :gap="8"
       col
       class="fixture_settings_body"
+      @scroll="rememberScroll"
     >
       <uk-flex
         v-if="!many"
@@ -757,6 +759,13 @@ const WIRE_POLL_MS = 100;
 /** How long the copy button confirms for, in ms. */
 const COPY_FEEDBACK_MS = 1500;
 
+/**
+ * Where the panel was scrolled to for each model, by profile key, so any
+ * fixture of that model opens where the panel was left: fixtures of one
+ * model have the same rows. For the session only.
+ */
+const scrollByModel = new Map();
+
 /** The action at the bottom of a device's Input list. */
 const CREATE_INPUT = 'Create input…';
 
@@ -1461,6 +1470,11 @@ export default {
         && target.chStart + target.channels.length > DMX_UNIVERSE_LENGTH);
     },
   },
+  watch: {
+    fixture() {
+      this.restoreScroll();
+    },
+  },
   mounted() {
     // The Ponk stream list lives outside Vue; a timer is what makes a new
     // MadMapper output show up in the Source dropdown while it is open.
@@ -1482,6 +1496,7 @@ export default {
     // The Video inputs window can set a device's input; the rows re-read.
     EventBus.on('video_input_assigned', this.onInputAssigned);
     EventBus.on('laser_clips_changed', this.onClipsChanged);
+    this.restoreScroll();
   },
   beforeUnmount() {
     EventBus.off('video_input_assigned', this.onInputAssigned);
@@ -1492,6 +1507,37 @@ export default {
     this.wireTimer = null;
   },
   methods: {
+    /** The panel's scrolling body, or null while no fixture is shown. */
+    scrollBody() {
+      const { body } = this.$refs;
+      return body ? body.$el || body : null;
+    },
+    /** Keeps the shown model's scroll position as the user scrolls. */
+    rememberScroll() {
+      const body = this.scrollBody();
+      if (this.restoringScroll || !body || !this.fixture) return;
+      scrollByModel.set(this.fixture.profileKey, body.scrollTop);
+    },
+    /**
+     * Scrolls to where the panel was left for the shown fixture's model, once
+     * its rows are drawn; again a frame later, as some rows fill in after the
+     * first draw.
+     */
+    restoreScroll() {
+      this.restoringScroll = true;
+      this.$nextTick(() => {
+        const apply = () => {
+          const body = this.scrollBody();
+          if (!body || !this.fixture) return;
+          body.scrollTop = scrollByModel.get(this.fixture.profileKey) || 0;
+        };
+        apply();
+        requestAnimationFrame(() => {
+          apply();
+          this.restoringScroll = false;
+        });
+      });
+    },
     /**
      * One device attribute out of the snapshot.
      *

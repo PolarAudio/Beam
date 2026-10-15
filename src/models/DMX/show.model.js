@@ -30,14 +30,20 @@ import Preferences from '../../plugins/visualizer/preferences';
 import SceneObjects from '../../plugins/visualizer/scene_objects';
 import Studio from './studio';
 import { normaliseMatrixProfile } from './ofl_matrix';
+import withBeamSection from './generic/beam_section';
+import movedProfile from './moved_profiles';
 import readGdtf, { wheelImages } from './gdtf/gdtf_reader';
-import buildBody from '../../plugins/visualizer/gdtf_body';
-import { headInputs } from './gdtf/fixture_parts';
-import { MAX_SHADOW_CASTERS } from '../../plugins/visualizer/light';
+import buildBody, { laserBody } from '../../plugins/visualizer/gdtf_body';
+import { laserGeometry } from './gdtf/laser_parts';
+import { headInputs, isLaserType } from './gdtf/fixture_parts';
+import MeasureTool from '../../plugins/visualizer/measure_tool';
+import { CLIP_KINDS, BUILT_IN_CLIPS } from './laser_clips';
+import { loadCards } from '../../plugins/visualizer/laser_cards';
+import UserGobos from '../../plugins/visualizer/user_gobos';
 
-const SHOWFILE_EXTENSIONS = {
-  JSON: 'json',
-};
+/** The ILDA files that ship with Beam, which an export need not carry. */
+const SHIPPED_CLIP_FILES = new Set(BUILT_IN_CLIPS
+  .filter((clip) => clip.kind === CLIP_KINDS.FILE).map((clip) => clip.file));
 
 const fixtureDataCache = {};
 
@@ -951,6 +957,12 @@ class Show extends EventEmitter {
     this.loading.message = 'Restoring groups';
     this.prepareGroups(showData);
 
+    // Objects before structures, which may hold them. A structure holds its
+    // members rather than their ids, so an object member has to exist before
+    // the structure can be given it.
+    this.loading.message = 'Placing objects';
+    await this.prepareObjects(showData);
+
     this.loading.message = 'Restoring structures';
     this.prepareStructures(showData);
 
@@ -1375,10 +1387,7 @@ class Show extends EventEmitter {
     // are not warmed -- an object has no profile, and asking for
     // `undefined/<library key>` would fetch nothing and look like a miss.
     const wanted = new Set();
-    const isObject = (member) => member.kind === SCENE_ITEM_KINDS.OBJECT;
-    if (definition.members.some(isObject)) await this.preloadObjectLibrary();
-    const distinct = definition.members.filter((member) => {
-      if (isObject(member)) return false;
+    const distinct = fixtures.filter((member) => {
       const key = `${member.manufacturer}/${member.model}`;
       if (wanted.has(key)) return false;
       wanted.add(key);
@@ -1388,31 +1397,8 @@ class Show extends EventEmitter {
       distinct.map((member) => this.resolveFixture(member.manufacturer, member.model)),
     );
 
-    for (let i = 0; i < definition.members.length; i += 1) {
-      const member = definition.members[i];
-      if (isObject(member)) {
-        world.multiplyMatrices(origin, new THREE.Matrix4().fromArray(member.transform));
-        world.decompose(position, quaternion, scale);
-        euler.setFromQuaternion(quaternion);
-        // A missing library model still arrives, unresolved, as it does when
-        // a show is opened without it.
-        const object = new SceneObject({
-          model: member.primitive ? undefined : member.model,
-          primitive: member.primitive || null,
-          name: member.name || member.model || 'object',
-          position: { x: position.x, y: position.y, z: position.z },
-          rotation: { x: euler.x, y: euler.y, z: euler.z },
-          scale: member.scale,
-        });
-        // eslint-disable-next-line no-await-in-loop
-        await object.attach(member.primitive
-          ? null
-          : (this.objectLibrary[foldModelKey(member.model)] || null));
-        Show.joinNumbered(this.objects, [object]);
-        members.push(object);
-        // eslint-disable-next-line no-continue
-        continue;
-      }
+    for (let i = 0; i < fixtures.length; i += 1) {
+      const member = fixtures[i];
       // eslint-disable-next-line no-await-in-loop
       const resolved = await this.resolveFixture(member.manufacturer, member.model);
       if (resolved) {
@@ -2033,8 +2019,6 @@ class Show extends EventEmitter {
 
     const structures = this.prepareStructures({ structures: fresh(data.structures) });
 
-    // A fixture inside a pasted structure or group is not a loose item, and
-    this.capShadowCasters();
     // A member inside a pasted structure or group is not a loose item, and
     // handing it back would put the gizmo on the members as well as on the
     // thing that holds them. Objects can be members now, so they are filtered
@@ -2057,28 +2041,6 @@ class Show extends EventEmitter {
     object.dispose();
     this.objects.splice(index, 1);
     return true;
-  }
-
-  prepareStructures(showData) {
-    const made = (showData.structures || []).map((structureData) => {
-      const structure = new Structure(structureData);
-      restoreListOrder(structure, structureData);
-      (structureData.members || []).forEach((ref) => {
-        const read = readMemberRef(ref);
-        if (!read) return;
-        // An object member is resolved through the objects just loaded, and a
-        // fixture through the load index rather than the pool: addRaw hands out
-        // fresh ids, so a saved member id means nothing once a fixture has been
-        // deleted and the rest have shuffled down.
-        const member = read.kind === SCENE_ITEM_KINDS.OBJECT
-          ? (this.loadedObjectsById || new Map()).get(read.id)
-          : this.loadedFixturesById.get(read.id);
-        if (member) structure.add(member);
-      });
-      return structure;
-    });
-    Show.joinNumbered(this.structures, made);
-    return made;
   }
 
   /**

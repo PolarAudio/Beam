@@ -7,9 +7,7 @@ import withTransform from './scene_item.transform';
 import {
   SCENE_ITEM_KINDS, rowId, memberRef,
 } from './scene_item';
-import { SCENE_ITEM_KINDS, rowId, kindOf } from './scene_item';
 import { itemLabel, splitSavedName } from './item_naming';
-import { SCENE_ITEM_KINDS, rowId, memberRef } from './scene_item';
 
 /**
  * @file One scene item built out of several, placed and moved as a unit.
@@ -227,9 +225,6 @@ class Structure extends withTransform(Proxify) {
       position: { ...this._position },
       rotation: { ...this._rotation },
       members: this.members.map((member) => memberRef(member)),
-      members: this.members.map((member) => (kindOf(member) === SCENE_ITEM_KINDS.OBJECT
-        ? { kind: SCENE_ITEM_KINDS.OBJECT, id: member.id }
-        : member.id)),
       mappings: [...this.mappings],
       grouping: this.grouping,
     };

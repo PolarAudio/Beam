@@ -225,6 +225,23 @@ export function nearestJoin(moving, candidates, options = {}) {
 }
 
 /**
+ * Whether two anchors are the same point on the same model.
+ *
+ * The anchors handed out by `anchorsOf` are rebuilt on every call, so the object
+ * that came back last frame is not the object this frame -- holding one means
+ * holding nothing. What survives a rebuild is the placement it belongs to and
+ * the model's own name for it, and that is what this compares.
+ *
+ * @param {Object} a an anchor from `anchorsOf`
+ * @param {Object} b an anchor from `anchorsOf`
+ * @returns {Boolean}
+ */
+export function sameAnchor(a, b) {
+  return !!a && !!b && a.placement === b.placement
+    && a.name === b.name && a.side === b.side && a.group === b.group;
+}
+
+/**
  * The transform that makes a join true, as a correction to premultiply.
  *
  * Turn first, about the point being joined to, so the object pivots around the

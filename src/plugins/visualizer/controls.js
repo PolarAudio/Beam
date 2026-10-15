@@ -18,7 +18,9 @@ import SceneObjects from './scene_objects';
 import MeasureTool from './measure_tool';
 import GroupHandle from './group_handle';
 import AnchorMarkers from './anchor_markers';
-import { nearestJoin, joinMatrix, availableAnchors } from './anchor_snap';
+import {
+  nearestJoin, joinMatrix, availableAnchors, sameAnchor, SNAP_POSITION_TOLERANCE,
+} from './anchor_snap';
 import { isPivot } from './model_anchors';
 
 /**
@@ -436,6 +438,14 @@ const CENTRE_HANDLES = ['XYZ'];
 const DEFAULT_TRANSLATION_SNAP = 0.5;
 const DEFAULT_ROTATION_SNAP = 15;
 
+/**
+ * How near a dot, in pixels, a click has to land to choose that anchor.
+ *
+ * A shade over the dot's own width, so a click inside a dot hits it and a click
+ * just outside it does not.
+ */
+const ANCHOR_PICK_PX = 12;
+
 /** Scratch box and direction for framing the whole scene. */
 const sceneBox = new THREE.Box3();
 const viewDirection = new THREE.Vector3();
@@ -443,6 +453,9 @@ const viewDirection = new THREE.Vector3();
 /** Scratch sphere and offset, reused while working out where to sit. */
 const framingSphere = new THREE.Sphere();
 const framingOffset = new THREE.Vector3();
+
+/** Scratch point, reused while projecting anchors to the screen. */
+const projected = new THREE.Vector3();
 
 /**
  * Where the camera looks when nothing is selected.
@@ -476,6 +489,10 @@ class Controls {
       this.selectionBandEl = null;
       // Initilising instance pool
       this.pooledInstances = [];
+      // The anchor the user picked to join from, or null for the nearest one.
+      // Held as the placement and the model's own name for it, because the
+      // anchors themselves are rebuilt every frame.
+      this.chosenAnchor = null;
       // Preparing bounding box object
       // A real Box3 rather than a bare {min,max}: renderers grow it through
       // expandByPoint/union, and its min/max are the same Vector3s as before.
@@ -604,6 +621,7 @@ class Controls {
    */
   init(camera, el, orbitcontrolsControlsHandle) {
     this.groupedInstances = new THREE.Group(); // Creating new group instance
+    this.anchorMarkers = new AnchorMarkers();
     /**
      * Degrees the rotation ring has turned the current selection by, per axis,
      * over the drags since it was made. Reset when the selection changes. See
@@ -1051,8 +1069,6 @@ class Controls {
       return;
     }
     if (this.handle && (this.handle.dragging || this.handle.axis)) return;
-    // A click in the scene moves the selection there, away from a measurement.
-    MeasureTool.select(null);
     // Ctrl/Shift/Cmd extend the selection, matching the fixture list.
     const additive = e.shiftKey || e.ctrlKey || e.metaKey;
 
@@ -1061,6 +1077,15 @@ class Controls {
       this.selectFixturesInBand(e, down, additive);
       return;
     }
+
+    // A click on one of the selection's own dots chooses the anchor to join from,
+    // and nothing else happens: the click is about which end of the piece, not
+    // about what is selected, and letting it fall through would move the
+    // selection out from under the piece being aimed.
+    if (this.snapEnabled && this.chooseAnchorAt(e)) return;
+
+    // A click in the scene moves the selection there, away from a measurement.
+    MeasureTool.select(null);
 
     const hit = this.pickFixtureAt(e);
     // Alt-click on a structure member selects the structure with that member
@@ -1732,6 +1757,31 @@ class Controls {
   }
 
   /**
+   * How near, in metres, two anchors must be before they count as meeting.
+   *
+   * Nothing to do with `snapSpacing`, which is the grid the gizmo steps by: that
+   * one is about placing a piece to the nearest line, this one is about whether
+   * a piece has been brought to a connection. They share a default because half
+   * a metre is a sensible reach for both, and nothing more.
+   *
+   * Wider is more forgiving and less certain. On a dense rig every anchor of
+   * every neighbour is within reach at once, so the wider this is the more the
+   * nearest pair can be one the user did not mean -- which is what picking an
+   * anchor is for.
+   *
+   * @type {Number}
+   */
+  set anchorReach(metres) {
+    const reach = Number(metres);
+    this._anchorReach = Number.isFinite(reach) && reach > 0
+      ? reach : SNAP_POSITION_TOLERANCE;
+  }
+
+  get anchorReach() {
+    return this._anchorReach || SNAP_POSITION_TOLERANCE;
+  }
+
+  /**
    * Pushes the snap settings onto the transform handle. Null is how
    * TransformControls is told not to snap at all.
    *
@@ -1919,12 +1969,83 @@ class Controls {
     const every = SceneObjects.anchorsFor(SceneObjects.everyPlacement());
     const free = availableAnchors(every);
     const selected = new Set(this.pooledInstances);
+    const mine = free.filter((anchor) => selected.has(anchor.placement.owner));
     return {
       every,
       free,
-      mine: free.filter((anchor) => selected.has(anchor.placement.owner)),
+      mine: this.restrictToChosen(mine),
       theirs: free.filter((anchor) => !selected.has(anchor.placement.owner)),
     };
+  }
+
+  /**
+   * The chosen anchor among a set, or null when the choice no longer applies.
+   *
+   * A choice is held as the placement and the model's own name for the anchor,
+   * because the anchors themselves are rebuilt every frame. It stops applying
+   * when that anchor is no longer in the set -- spent by a join, or belonging to
+   * something no longer selected -- and the snap falls back to the nearest pair
+   * rather than doing nothing, so deselecting an object cannot strand it.
+   *
+   * @param {Array} anchors the selected object's free anchors
+   * @returns {Array} just the chosen one, or all of them
+   */
+  restrictToChosen(anchors) {
+    if (!this.chosenAnchor) return anchors;
+    const chosen = anchors.find((anchor) => sameAnchor(anchor, this.chosenAnchor));
+    return chosen ? [chosen] : anchors;
+  }
+
+  /**
+   * Picks the anchor under the pointer, so the next drag joins from that one.
+   *
+   * **Nearest in screen space, not in the room.** The dots are drawn a fixed
+   * seven pixels wide wherever they are, so a dot an inch across the viewport is
+   * as grabbable as one across the room, and the one the pointer is nearest on
+   * screen is the one the user can see they are on. Distance in metres would
+   * make a far dot easier to hit than a near one, which is backwards.
+   *
+   * Only the selection's own anchors are pickable. A dot on something else is a
+   * place that piece can *go*, and choosing it would name a join the selection is
+   * not part of.
+   *
+   * @public
+   * @param {Object} e pointerup event, read for its position and its target
+   * @returns {Object|null} the anchor chosen, or null when none was near enough
+   */
+  chooseAnchorAt(e) {
+    const { cameraHandle } = this;
+    if (!cameraHandle) return null;
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    const { free } = this.anchorSets();
+    const selected = new Set(this.pooledInstances);
+    const mine = free.filter((anchor) => selected.has(anchor.placement.owner));
+
+    let best = null;
+    let bestDistance = ANCHOR_PICK_PX;
+    mine.forEach((anchor) => {
+      projected.copy(anchor.position).project(cameraHandle);
+      // Behind the camera, or past the far plane: nothing is drawn there, so
+      // there is no dot for the pointer to have landed on.
+      if (projected.z < -1 || projected.z > 1) return;
+      const x = rect.left + (projected.x * 0.5 + 0.5) * rect.width;
+      const y = rect.top + (-projected.y * 0.5 + 0.5) * rect.height;
+      const distance = Math.hypot(x - e.clientX, y - e.clientY);
+      if (distance > bestDistance) return;
+      bestDistance = distance;
+      best = anchor;
+    });
+
+    if (!best) return null;
+    // Clicking the chosen anchor again gives the choice back, so there is a way
+    // out that does not need the selection to change.
+    this.chosenAnchor = sameAnchor(best, this.chosenAnchor)
+      ? null
+      : {
+        placement: best.placement, name: best.name, side: best.side, group: best.group,
+      };
+    return this.chosenAnchor;
   }
 
   /**
@@ -1955,7 +2076,7 @@ class Controls {
     const { mine, theirs } = this.anchorSets();
     if (!mine.length || !theirs.length) return null;
 
-    const join = nearestJoin(mine, theirs);
+    const join = nearestJoin(mine, theirs, { positionTolerance: this.anchorReach });
     if (!join) return null;
     // Where two pairs are in range, the nearer one is the one the piece was
     // dragged towards, which is the call the user was already making.
@@ -1995,9 +2116,12 @@ class Controls {
     // stale dot at the position the piece was at before the snap moved it.
     const { free, mine, theirs } = this.anchorSets();
     const joining = this.handle && this.handle.dragging
-      ? nearestJoin(mine, theirs)
+      ? nearestJoin(mine, theirs, { positionTolerance: this.anchorReach })
       : null;
-    this.anchorMarkers.show(free, joining);
+    const chosen = this.chosenAnchor
+      ? free.find((anchor) => sameAnchor(anchor, this.chosenAnchor)) || null
+      : null;
+    this.anchorMarkers.show(free, joining, chosen);
   }
 
   /**

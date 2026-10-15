@@ -494,6 +494,7 @@ class Visualizer {
     SceneEnv.adopt(source);
     this.snapEnabled = source.snapEnabled !== false;
     this.snapSpacing = source.snapSpacing;
+    this.anchorReach = source.anchorReach;
     this.showGrid = source.showGrid;
     this.reflections = source.reflections;
     this.gridOpacity = source.gridOpacity;
@@ -1020,6 +1021,25 @@ class Visualizer {
   }
 
   /**
+   * How near, in metres, two anchors must be before they count as joined.
+   *
+   * Not the grid: the grid is where a piece is stepped to, and this is how close
+   * a piece has to come to another to be taken to have reached a connection.
+   *
+   * @type {Number}
+   */
+  // eslint-disable-next-line class-methods-use-this
+  set anchorReach(value) {
+    Controls.anchorReach = value;
+    Preferences.set('anchorReach', Controls.anchorReach);
+  }
+
+  // eslint-disable-next-line class-methods-use-this
+  get anchorReach() {
+    return Controls.anchorReach;
+  }
+
+  /**
    * Rotation snap, in degrees.
    *
    * @type {Number}
@@ -1194,6 +1214,11 @@ class Visualizer {
       // last frame. Stream-fed like the video devices, not DMX-driven, so it
       // updates here rather than through setChannel.
       Laser.update(t, this.renderer);
+      // Where a model can still be joined, and which join a drag is making now.
+      // On the render loop rather than on selection changes, because the useful
+      // moment for seeing an anchor is *before* the drag, while deciding where
+      // to put the piece.
+      Controls.updateAnchorMarkers();
       // Each laser's depth from its aperture, so the beam stops at the first
       // surface rather than running through it. Drawn before the frame, like the
       // projectors' depth pass above.

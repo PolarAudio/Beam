@@ -102,6 +102,16 @@ const DEFAULTS = {
   snapSpacing: 0.5,
   /** Whether the gizmo snaps at all. */
   snapEnabled: true,
+  /**
+   * How near, in metres, two anchors must be before they count as joined.
+   *
+   * Separate from `snapSpacing` on purpose: that one is the grid a piece is
+   * stepped to, this one is the reach within which a piece is taken to have been
+   * brought to a connection. A rig of short trusses wants a tighter reach than
+   * the half metre both default to, because at half a metre several connections
+   * are in range at once and the nearest one wins.
+   */
+  anchorReach: 0.5,
   showGrid: true,
   /**
    * How strongly the reference grid draws, 0 to 1.

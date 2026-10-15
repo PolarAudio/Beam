@@ -25,7 +25,7 @@ import {
   Object3D, Vector3, Quaternion, MathUtils,
 } from 'three';
 import {
-  nearestJoin, joinMatrix, anchorsOf, headingOf, shortestTurn, availableAnchors,
+  nearestJoin, joinMatrix, anchorsOf, headingOf, shortestTurn, availableAnchors, sameAnchor,
   SNAP_POSITION_TOLERANCE, SNAP_YAW_TOLERANCE,
 } from '@/plugins/visualizer/anchor_snap';
 import { parseAnchorName } from '@/plugins/visualizer/model_anchors';
@@ -191,6 +191,47 @@ console.log('\n-- out of reach is not a join --');
     false,
   );
   check('nothing at all is no join', !!nearestJoin([], []), false);
+}
+
+console.log('\n-- the reach is a setting, and it governs the gate --');
+{
+  // Half a metre is the default, which is what the test above measures against.
+  // What matters here is that the caller can narrow it, because on a rig of
+  // short pieces half a metre puts several connections in range at once.
+  const stand = [world('coupler', 'end', [0, 0, 0], 0)];
+  const near = [world('coupler', 'start', [0.3, 0, 0], 0)];
+  check(
+    '0.3 m is out of reach at a tight setting',
+    !!nearestJoin(near, stand, { positionTolerance: 0.2 }),
+    false,
+  );
+  check('and in reach at the default', !!nearestJoin(near, stand), true);
+  check(
+    'a wider setting reaches further',
+    !!nearestJoin([world('coupler', 'start', [1.2, 0, 0], 0)], stand, { positionTolerance: 2 }),
+    true,
+  );
+}
+
+console.log('\n-- an anchor is recognised across a rebuild --');
+{
+  // The anchors are rebuilt every frame, so a choice has to survive on the
+  // placement and the model's own name rather than on the object handed back.
+  const placement = of('span');
+  const before = { ...world('coupler', 'end', [0, 0, 0], 0), placement };
+  const after = { ...world('coupler', 'end', [0, 0, 0], 0), placement };
+  check('the same anchor, rebuilt, is the same', sameAnchor(before, after), true);
+  check(
+    'a different placement is not',
+    sameAnchor(before, { ...after, placement: of('other') }),
+    false,
+  );
+  check(
+    'nor a different side of the same piece',
+    sameAnchor(before, { ...after, side: 'start', name: 'anchor_coupler_start' }),
+    false,
+  );
+  check('and nothing at all is not either', sameAnchor(before, null), false);
 }
 
 console.log('\n-- any side of a system meets any other --');

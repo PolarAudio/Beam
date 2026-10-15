@@ -246,7 +246,6 @@ export default {
       // By uid, which is unique across kinds: a structure holding object 3
       // must not hide fixture 3.
       const spokenFor = new Set();
-      const speak = (member) => spokenFor.add(rowId(kindOf(member), member.id));
       const groups = this.show.groups.map((group) => {
         group.members.forEach((member) => spokenFor.add(member.uid));
         // Its own icon rather than the selector's folder: a group is a thing
@@ -615,16 +614,6 @@ export default {
         .filter(Boolean);
       if (!this.exportItems.length) return;
       this.exportPopupState = true;
-    },
-      const members = Selection.items
-        .filter((entry) => entry.kind === SCENE_ITEM_KINDS.FIXTURE
-          || entry.kind === SCENE_ITEM_KINDS.OBJECT)
-        .map((entry) => this.itemOfKind(entry.kind, entry))
-        .filter(Boolean)
-        .filter((item) => !item.structure);
-      if (!members.length) return;
-      const structure = this.$show.createStructure(members);
-      this.selectStructure(structure.id);
     },
     /**
      * Moves a dragged row to where it was dropped. Dragging a selected row

@@ -7,10 +7,17 @@
  * object browser that says a model can be joined at all. So the free anchors are
  * drawn as small dots, and a live join lights up.
  *
- * **Dots, not handles.** These are not controls -- nothing can be grabbed, and
+ * **Dots, not handles.** These are not controls -- nothing is dragged, and
  * they say where a connection *is*, not where the object should go. Drawing them
  * as gizmos would invite exactly the interaction the snapping already provides
  * more reliably: drag the piece near the dot.
+ *
+ * **Pickable, but only for choosing which anchor joins.** The nearest anchor wins
+ * by default, and on a dense rig several are in reach at once, so the nearest can
+ * be one the user never meant. A click on a dot therefore says *this* anchor is
+ * the one to join from, and the drag then aims at it. That is a choice of which
+ * anchor, not a handle to pull the object about, which is why the two are kept
+ * apart.
  *
  * **One draw call.** A show can hold hundreds of anchors once a rig is
  * assembled, and a mesh per dot would be hundreds of draw calls to draw a
@@ -33,6 +40,7 @@ import {
   BufferGeometry, BufferAttribute, Points, PointsMaterial, Color, AdditiveBlending,
 } from 'three';
 import SceneManager from './scene_manager';
+import { sameAnchor } from './anchor_snap';
 
 /** How many dots may be on screen at once, allocated up front. */
 const CAPACITY = 512;
@@ -62,6 +70,15 @@ const NEUTRAL_COLOUR = 0xa8b0bd;
 
 /** The colour a join takes while it is being made. */
 const JOINED_COLOUR = 0xffffff;
+
+/**
+ * The colour an anchor takes when the user has picked it as the one to join.
+ *
+ * Brighter than the join's white and drawn before it, so a chosen anchor stays
+ * visible while a live join is on top of it -- which is the state that matters,
+ * since the join covers the anchor that was chosen to make it.
+ */
+const CHOSEN_COLOUR = 0xffe066;
 
 /** The colour of a connector system, defaulting to the neutral one. */
 function colourForGroup(group) {
@@ -103,8 +120,10 @@ class AnchorMarkers {
    * @param {Array} anchors free anchors, each `{ position, group }`
    * @param {Object|null} [joined] the live join, `{ moving, target }` from
    *   `nearestJoin`, whose two anchors are drawn white
+   * @param {Object|null} [chosen] the anchor the user picked to join from, drawn
+   *   in the chosen colour
    */
-  show(anchors, joined = null) {
+  show(anchors, joined = null, chosen = null) {
     const free = Array.isArray(anchors) ? anchors : [];
     const joinedAt = joined ? new Set([joined.moving, joined.target]) : null;
     let n = 0;
@@ -122,10 +141,12 @@ class AnchorMarkers {
       n += 1;
     };
 
-    // The join first, so it is the pair a user sees rather than two of the
-    // room's other free ends that happen to overlap it.
+    // The choice first, then the join: the join covers the anchor it was made
+    // from, so the chosen colour has to be underneath it to stay readable.
+    if (chosen) put(chosen, CHOSEN_COLOUR);
     if (joinedAt) joinedAt.forEach((anchor) => put(anchor, JOINED_COLOUR));
     free.forEach((anchor) => {
+      if (chosen && sameAnchor(anchor, chosen)) return;
       if (joinedAt && joinedAt.has(anchor)) return;
       put(anchor, colourForGroup(anchor.group));
     });
@@ -160,5 +181,5 @@ class AnchorMarkers {
 
 export default AnchorMarkers;
 export {
-  CAPACITY, DOT_PIXELS, GROUP_COLOURS, NEUTRAL_COLOUR, JOINED_COLOUR,
+  CAPACITY, DOT_PIXELS, GROUP_COLOURS, NEUTRAL_COLOUR, JOINED_COLOUR, CHOSEN_COLOUR,
 };

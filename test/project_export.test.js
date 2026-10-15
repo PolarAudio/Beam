@@ -55,7 +55,7 @@ console.log('\nan empty show names nothing');
 check('empty', Show.prototype.referencedResources.call({
   fixturePool: { fixtures: [] }, definitions: { has: () => false }, objects: [],
 }), {
-  profiles: [], objects: [], media: [], lasers: [], laserCards: [],
+  profiles: [], objects: [], media: [], lasers: [], laserCards: [], gobos: [],
 });
 
 console.log('\na show with a file input names its file');
@@ -82,6 +82,23 @@ check('lasers', Show.prototype.referencedResources.call({
   definitions: { has: () => false },
   objects: [],
 }).lasers, ['Logo.ild', 'Tunnel.ild']);
+
+console.log('\nswapped gobos name the user\'s images once, not stock or the fixture\'s own');
+const swapped = (overwrites) => ({ profileKey: 'Generic/Spot', overwrites });
+check('gobos', Show.prototype.referencedResources.call({
+  fixturePool: {
+    fixtures: [
+      swapped([
+        { wheel: 'G', slot: 2, image: 'library:flames.png' },
+        { wheel: 'G', slot: 3, image: 'gobo:biohazard' },
+        { wheel: 'A', slot: 2, image: 'fixture:GOBO 8' },
+      ]),
+      swapped([{ wheel: 'G', slot: 2, image: 'library:flames.png' }]),
+    ],
+  },
+  definitions: { has: () => false },
+  objects: [],
+}).gobos, ['flames.png']);
 
 // The read side: what an opened export carries resolves after the show's own
 // definitions and ahead of the library, and is offered for placing only when

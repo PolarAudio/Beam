@@ -72,13 +72,6 @@
         :options="modeOptions"
         @input="pickMode"
       />
-      <uk-checkbox
-        v-if="canCastShadow"
-        v-model="castsShadow"
-        :mixed="shadowMixed"
-        :disabled="shadowBudgetSpent"
-        :label="shadowLabel"
-      />
       <uk-num-input
         v-if="hasManualFocus"
         :mixed="focusMixed"
@@ -90,9 +83,14 @@
         :max="100"
         @update:model-value="writeFocus"
       />
+      <uk-button
+        v-if="hasSwappableWheels"
+        label="Gobos and discs…"
+        @click="editWheels"
+      />
 
-      <!-- A video device's own settings live here for the same reason the
-           shadow tick above does: they belong to *this* placement, and a
+      <!-- A video device's own settings live here because they belong to
+           *this* placement, and a
            fixture's placement settings are what this widget is. The Model
            widget beside it is profile-scoped -- it speaks for every device of
            the model -- so a projector's throw *range* belongs there and its
@@ -718,7 +716,6 @@
 import { DMX_UNIVERSE_LENGTH } from '@/models/DMX/patch.model';
 import { ROTATIONS } from '@/models/DMX/video_input';
 import { SCALE_MODES, PICTURE_KEYS } from '@/models/DMX/picture_controls';
-import { MAX_SHADOW_CASTERS } from '@/plugins/visualizer/light';
 import { imageSizeAt } from '@/models/DMX/generic/projector';
 import { GENERIC_KINDS } from '@/models/DMX/generic/kinds';
 import EventBus from '@/plugins/eventbus';
@@ -850,6 +847,11 @@ export default {
     targetIds() {
       return this.targets.map((target) => target.id);
     },
+    /** Whether the fixture has a gobo or animation wheel to swap images into. */
+    hasSwappableWheels() {
+      const f = this.fixture;
+      return !!(f && f.swappableWheels && f.swappableWheels.length);
+    },
     /** Whether the panel stands for several fixtures. */
     many() {
       return this.targets.length > 1;
@@ -878,11 +880,6 @@ export default {
       const first = !!this.fixture.universeAligned;
       return this.targets.some((target) => !!target.universeAligned !== first);
     },
-    shadowMixed() {
-      if (!this.many) return false;
-      const first = !!this.fixture.castsShadow;
-      return this.targets.some((target) => !!target.castsShadow !== first);
-    },
     /**
      * Whether the lens is focused by hand, so the placement holds the focus.
      *
@@ -895,15 +892,6 @@ export default {
       if (!this.many) return false;
       const first = this.fixture.focusDistance;
       return this.targets.some((target) => target.focusDistance !== first);
-    },
-    /**
-     * Whether this fixture can cast a shadow at all. An emitter bar has no
-     * beam behind which to cast one, so it is not offered the choice.
-     *
-     * @type {Boolean}
-     */
-    canCastShadow() {
-      return !!(this.fixture && this.fixture.canCastShadow);
     },
     /**
      * This projector's placement settings, or null for anything else.
@@ -1401,63 +1389,6 @@ export default {
       return `${this.device.range.min} – ${this.device.range.max} · ${size}`;
     },
     /**
-     * Whether this fixture's beam casts a shadow.
-     *
-     * Per fixture and off by default. Shadow maps come out of a small fixed
-     * pool the whole scene shares -- around sixteen on a typical GPU, counting
-     * everything else that samples a texture -- so this is a few fixtures'
-     * worth of budget to spend where it reads, not a switch to leave on.
-     *
-     * @type {Boolean}
-     */
-    castsShadow: {
-      get() {
-        return !!(this.fixture && this.fixture.castsShadow);
-      },
-      set(state) {
-        if (!state) {
-          this.targets.forEach((target) => { target.castsShadow = false; });
-          return;
-        }
-        // Turned on for as many as the budget has room for, in selection order.
-        let casting = this.shadowCasters;
-        this.targets.forEach((target) => {
-          if (target.castsShadow) return;
-          if (casting >= MAX_SHADOW_CASTERS) return;
-          target.castsShadow = true;
-          casting += 1;
-        });
-      },
-    },
-    /**
-     * How many fixtures in the show are casting shadows.
-     *
-     * @type {Number}
-     */
-    shadowCasters() {
-      return this.$show.fixturePool.fixtures.filter((f) => f.castsShadow).length;
-    },
-    /**
-     * Whether the budget is gone.
-     *
-     * A fixture that is already casting is never blocked -- that would be a
-     * tick you could not untick -- so this only ever stops the next one.
-     *
-     * @type {Boolean}
-     */
-    shadowBudgetSpent() {
-      return !this.castsShadow && this.shadowCasters >= MAX_SHADOW_CASTERS;
-    },
-    /**
-     * The label carries the count, so the limit is visible before it is hit
-     * rather than appearing as a checkbox that mysteriously will not tick.
-     *
-     * @type {String}
-     */
-    shadowLabel() {
-      return `Casts shadows (${this.shadowCasters}/${MAX_SHADOW_CASTERS})`;
-    },
-    /**
      * Universe the fixture starts in. Setting it slides the fixture by whole
      * universes, keeping its channel.
      */
@@ -1870,6 +1801,10 @@ export default {
     pickClip(index) {
       const clip = this.clips[index];
       if (clip) this.writeDevice('clip', clip.id);
+    },
+    /** Opens the Gobos and discs window on the fixtures this panel stands for. */
+    editWheels() {
+      EventBus.emit('open_wheels', { fixtureIds: this.targetIds });
     },
     /** Opens the Clip list window on this laser. */
     editClips() {

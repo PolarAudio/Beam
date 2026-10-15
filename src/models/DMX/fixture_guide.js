@@ -10,15 +10,7 @@
  */
 
 import { goboThumbnail } from '@/plugins/visualizer/gobo_pick';
-
-/** Capability types Beam acts on. Anything else is shown but marked. */
-const DRAWN = new Set([
-  'Intensity', 'ColorIntensity', 'ColorPreset', 'ColorTemperature',
-  'ShutterStrobe', 'StrobeSpeed', 'StrobeDuration',
-  'Pan', 'PanFine', 'Tilt', 'TiltFine', 'PanContinuous', 'TiltContinuous', 'PanTiltSpeed',
-  'WheelSlot', 'WheelShake', 'WheelSlotRotation', 'WheelRotation',
-  'Prism', 'PrismRotation', 'Frost', 'FrostEffect', 'Focus', 'Zoom', 'BeamAngle', 'Iris', 'NoFunction',
-]);
+import { headActsOn } from './gdtf/head_dispatch';
 
 /** "slow CW" to "fast CW" as "slow→fast CW", and so on. */
 function span(start, end) {
@@ -294,7 +286,9 @@ export default function fixtureGuide(ofl, mode) {
         : null,
       text: describe(cap, wheels, name),
     }));
-    const drawn = caps.some((cap) => DRAWN.has(cap.type) && cap.type !== 'NoFunction');
+    // The capability types the head's dispatch acts on, which is where a
+    // translated profile's channels end up.
+    const drawn = caps.some((cap) => headActsOn(cap.type));
     const ranges = fold(parts);
     channels.push({
       n,

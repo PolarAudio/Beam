@@ -39,6 +39,10 @@
       v-model="laserClipsPopupState"
       :fixture-id="laserClipsFixtureId"
     />
+    <wheels-popup
+      v-model="wheelsPopupState"
+      :fixture-ids="wheelsFixtureIds"
+    />
   </uk-flex>
 </template>
 
@@ -58,6 +62,7 @@ import ProjectPopup from './_popups/popup.project.vue';
 import PatchSheetPopup from './_popups/popup.patchsheet.vue';
 import VideoPopup from './_popups/popup.video.vue';
 import LaserClipsPopup from './_popups/popup.laserclips.vue';
+import WheelsPopup from './_popups/popup.wheels.vue';
 
 export default {
   name: 'ToolbarFragment',
@@ -74,6 +79,7 @@ export default {
     PatchSheetPopup,
     VideoPopup,
     LaserClipsPopup,
+    WheelsPopup,
   },
   data() {
     return {
@@ -92,6 +98,8 @@ export default {
       /** The devices the window was opened from, by fixture id. */
       videoForFixtures: [],
       laserClipsPopupState: false,
+      wheelsPopupState: false,
+      wheelsFixtureIds: [],
       /** The laser the Clip list window edits, by fixture id. */
       laserClipsFixtureId: null,
       /** Whether Beam is in sender mode, and who else is on its universes. */
@@ -372,6 +380,7 @@ export default {
     EventBus.on('open_video_inputs', this.openVideoInputs);
     // A laser's clip list opens from its Fixture settings.
     EventBus.on('open_laser_clips', this.openLaserClips);
+    EventBus.on('open_wheels', this.openWheels);
     window.addEventListener('keydown', this.onVideoInputsKey);
     this.$show.on('videoCropsDropped', (names) => {
       EventBus.emit('app_error', new Error(
@@ -398,6 +407,7 @@ export default {
     window.removeEventListener('keydown', this.onVideoInputsKey);
     EventBus.off('open_video_inputs', this.openVideoInputs);
     EventBus.off('open_laser_clips', this.openLaserClips);
+    EventBus.off('open_wheels', this.openWheels);
   },
   methods: {
     /**
@@ -406,6 +416,12 @@ export default {
     openLaserClips(from = null) {
       this.laserClipsFixtureId = from && typeof from.fixtureId === 'number' ? from.fixtureId : null;
       this.laserClipsPopupState = true;
+    },
+
+    /** @param {Object} from `{ fixtureIds }`: the fixtures whose wheels to edit */
+    openWheels(from = null) {
+      this.wheelsFixtureIds = (from && Array.isArray(from.fixtureIds)) ? from.fixtureIds : [];
+      this.wheelsPopupState = true;
     },
 
     /**

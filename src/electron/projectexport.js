@@ -6,6 +6,7 @@ import gdtfstore from './gdtfstore';
 import library from './library';
 import mediastore from './mediastore';
 import laserclipstore from './laserclipstore';
+import gobostore from './gobostore';
 import objectstore from './objectstore';
 import paths from './paths';
 
@@ -135,11 +136,11 @@ function libraryFile(kind, key, fromMount = true) {
  */
 function collectProfile(key, entries, fromMount = true) {
   // A GDTF fixture travels as the file it is, untouched, from the open
-  // document, else the user's library, else what was removed from it, else
-  // the ones Beam ships, so the export opens with an older Beam too.
+  // document, else the user's library, else the ones Beam ships, so the
+  // export opens with an older Beam too.
   const mounted = fromMount ? documentstore.mountRoot() : null;
   const gdtf = (mounted && gdtfstore.pathFor(key, mounted)) || gdtfstore.pathFor(key)
-    || gdtfstore.removedPathFor(key) || gdtfstore.shippedPathFor(key);
+    || gdtfstore.shippedPathFor(key);
   const gdtfBytes = gdtf ? bytesOf(gdtf) : null;
   if (gdtfBytes) {
     entries[`${PREFIX}Profiles/${key}${gdtfstore.EXTENSION}`] = gdtfBytes;
@@ -259,6 +260,22 @@ function collectLaserCard(key, entries) {
 }
 
 /**
+ * Collects one gobo or disc image a placement swaps into a wheel.
+ *
+ * @param {String} key file name
+ * @param {Object} entries collected so far, added to
+ * @returns {Boolean} whether the file was found
+ */
+function collectGobo(key, entries) {
+  const file = gobostore.fileFor(key);
+  if (!file) return false;
+  const bytes = bytesOf(file);
+  if (!bytes) return false;
+  entries[entryFor(path.join(objectstore.GOBOS_DIR, key))] = bytes;
+  return true;
+}
+
+/**
  * Everything a show references, as container entries.
  *
  * @public
@@ -274,6 +291,11 @@ function collect(wanted) {
   const media = Array.isArray(wanted && wanted.media) ? wanted.media : [];
   const lasers = Array.isArray(wanted && wanted.lasers) ? wanted.lasers : [];
   const laserCards = Array.isArray(wanted && wanted.laserCards) ? wanted.laserCards : [];
+  const gobos = Array.isArray(wanted && wanted.gobos) ? wanted.gobos : [];
+
+  [...new Set(gobos)].forEach((key) => {
+    if (typeof key !== 'string' || !collectGobo(key, entries)) missing.push(`gobo ${key}`);
+  });
 
   [...new Set(media)].forEach((key) => {
     if (typeof key !== 'string' || !collectMedia(key, entries)) missing.push(`media ${key}`);

@@ -36,6 +36,7 @@ import videorecorder from './videorecorder';
 import environmentstore from './environmentstore';
 import mediastore from './mediastore';
 import laserclipstore from './laserclipstore';
+import gobostore from './gobostore';
 import gdtfstore from './gdtfstore';
 import gdtfshare from './gdtfshare';
 import fileexport from './fileexport';
@@ -608,6 +609,8 @@ function setupLibrary() {
   ipcMain.handle('library:environments', () => environmentstore.list());
   ipcMain.handle('library:media', () => mediastore.list());
   ipcMain.handle('library:addMedia', () => mediastore.add(mainWindow));
+  ipcMain.handle('library:gobos', () => gobostore.list());
+  ipcMain.handle('library:addGobos', () => gobostore.add(mainWindow));
   ipcMain.handle('library:laserClips', () => laserclipstore.list());
   ipcMain.handle('library:addLaserClips', () => laserclipstore.add(mainWindow));
   ipcMain.handle('library:laserCards', () => laserclipstore.listCards());
@@ -620,7 +623,6 @@ function setupLibrary() {
   // GDTF fixtures, kept as downloaded. The list is metadata only; the bytes
   // are served as `library://profiles/<file>`.
   ipcMain.handle('library:gdtfList', () => gdtfstore.listAll());
-  ipcMain.handle('library:gdtfRemoved', () => gdtfstore.listRemoved());
   ipcMain.handle('library:pickGdtf', async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
       title: 'Import GDTF fixtures',

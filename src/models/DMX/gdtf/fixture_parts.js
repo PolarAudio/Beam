@@ -83,10 +83,12 @@ export function attributeLabel(attribute, pretty = '') {
   if (isOwnPretty(attribute, pretty)) return pretty.trim();
   const colour = /^Color(Add|Sub)_(\w+)$/.exec(attribute);
   if (colour && COLOUR_LETTERS[colour[2]]) return COLOUR_LETTERS[colour[2]];
-  const families = 'Color|Gobo|Prism|AnimationWheel|Animation|Effects|Frost|Focus|Shutter|Control|ColorMacro';
+  const families = 'Color|Gobo|Prism|AnimationWheel|AnimationSystem|Animation|Effects|Frost|Focus|Shutter|Control|ColorMacro';
   const wheel = new RegExp(`^(${families})(\\d+)(\\w*)$`).exec(attribute);
   if (wheel && WHEEL_SUFFIXES[wheel[3]] !== undefined) {
-    const renamed = { AnimationWheel: 'Animation', ColorMacro: 'Colour macro', Color: 'Colour' };
+    const renamed = {
+      AnimationWheel: 'Animation', AnimationSystem: 'Animation system', ColorMacro: 'Colour macro', Color: 'Colour',
+    };
     const family = renamed[wheel[1]] || wheel[1];
     const single = ['Frost', 'Focus', 'Shutter', 'Control'].includes(wheel[1]) && wheel[2] === '1';
     return `${family}${single ? '' : ` ${wheel[2]}`}${WHEEL_SUFFIXES[wheel[3]]}`;
@@ -239,6 +241,8 @@ export function wheelsForHead(type) {
           ...(kind === 'Prism' ? { facets: slot.facets.length } : {}),
           ...(slot.mediaFileName ? { resource: slot.mediaFileName } : {}),
           ...(image ? { image } : {}),
+          // Where an animation disc's window travels as it goes in.
+          ...(slot.animationSystem ? { animationSystem: slot.animationSystem } : {}),
         };
       }),
     };

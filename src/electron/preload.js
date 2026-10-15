@@ -289,6 +289,19 @@ contextBridge.exposeInMainWorld('library', {
    */
   laserClips: () => ipcRenderer.invoke('library:laserClips'),
   /**
+   * Gobo and animation disc images a placement may swap into its wheels: the
+   * open document's and those in `Library/Gobos`.
+   *
+   * @returns {Promise<Array>} `{ key, name, origin, url }`
+   */
+  gobos: () => ipcRenderer.invoke('library:gobos'),
+  /**
+   * Asks for images and copies them into `Library/Gobos`.
+   *
+   * @returns {Promise<Object>} `{ ok, entries, refused }` or `{ ok: false, reason }`
+   */
+  addGobos: () => ipcRenderer.invoke('library:addGobos'),
+  /**
    * Asks for ILDA files and copies them into `Library/Lasers`.
    *
    * @returns {Promise<Object>} `{ ok, entries, refused }` or `{ ok: false, reason }`
@@ -323,7 +336,6 @@ contextBridge.exposeInMainWorld('library', {
    * @returns {Promise<Array>} `{ key, file, name, manufacturer, fixtureTypeId, dataVersion }`
    */
   gdtfList: () => ipcRenderer.invoke('library:gdtfList'),
-  gdtfRemoved: () => ipcRenderer.invoke('library:gdtfRemoved'),
   /** Asks for .gdtf files. @returns {Promise<Array<String>>} absolute paths */
   pickGdtf: () => ipcRenderer.invoke('library:pickGdtf'),
   /**

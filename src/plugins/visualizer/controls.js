@@ -596,6 +596,12 @@ class Controls {
    */
   init(camera, el, orbitcontrolsControlsHandle) {
     this.groupedInstances = new THREE.Group(); // Creating new group instance
+    /**
+     * Degrees the rotation ring has turned the current selection by, per axis,
+     * over the drags since it was made. Reset when the selection changes. See
+     * `selectionTurn()`.
+     */
+    this.ringTurn = { x: 0, y: 0, z: 0 };
     this.handle = new TransformControls(camera, el); // Loding transformcontrol instance into handle
     this.handle.size = GIZMO_SIZE;
     this.stripCentreHandle();
@@ -701,6 +707,12 @@ class Controls {
         this.applyTransformation();
         if (target.scaleKeepingBottom) target.scaleKeepingBottom({ x, y, z });
         else target.scale = { x, y, z };
+      } else {
+        // The group is rebuilt unturned below, so the drag's turn is kept here.
+        const turn = this.groupTurn();
+        this.ringTurn.x += turn.x;
+        this.ringTurn.y += turn.y;
+        this.ringTurn.z += turn.z;
       }
       this.showHelpers(); // Update modifications
     });
@@ -1180,6 +1192,37 @@ class Controls {
   }
 
   /**
+   * The selection group's turn in degrees per axis: the rotation ring's
+   * during a drag, zero otherwise, since the group is rebuilt unturned.
+   *
+   * @private
+   * @returns {Object} `{ x, y, z }`
+   */
+  groupTurn() {
+    const group = this.groupedInstances ? toRaw(this.groupedInstances) : null;
+    if (!group) return { x: 0, y: 0, z: 0 };
+    euler.setFromQuaternion(group.quaternion);
+    return {
+      x: THREE.MathUtils.radToDeg(euler.x),
+      y: THREE.MathUtils.radToDeg(euler.y),
+      z: THREE.MathUtils.radToDeg(euler.z),
+    };
+  }
+
+  /**
+   * Degrees the rotation ring has turned the current selection by, per axis:
+   * the drags since the selection was made and the one under way.
+   *
+   * @public
+   * @returns {Object} `{ x, y, z }`
+   */
+  selectionTurn() {
+    const live = this.groupTurn();
+    const kept = this.ringTurn || { x: 0, y: 0, z: 0 };
+    return { x: kept.x + live.x, y: kept.y + live.y, z: kept.z + live.z };
+  }
+
+  /**
    * Position and rotation of an item the gizmo has hold of.
    *
    * @private
@@ -1231,6 +1274,8 @@ class Controls {
    * @param {Object} primary fixture the UI should route to, or null
    */
   emitSelection(primary) {
+    // A new selection has not been turned yet.
+    this.ringTurn = { x: 0, y: 0, z: 0 };
     // Two channels, deliberately. `selectedItems` is the whole selection with
     // its kinds intact; `selectedIds` is the fixtures in it and nothing else,
     // because everything downstream resolves those against the fixture pool

@@ -34,7 +34,7 @@ uniform float depthBias;         // Metres past the surface a sample may still b
 uniform sampler2D goboAtlas;     // Every gobo pattern, in a grid; pattern 0 open
 
 /** The atlas is a grid of this many patterns across, as gobo_library.js. */
-#define GOBO_GRID 16.0
+#define GOBO_GRID 8.0
 
 /**
  * How blurred a gobo reads in the air, as mip levels of its 256 px pattern:
@@ -45,9 +45,9 @@ uniform sampler2D goboAtlas;     // Every gobo pattern, in a grid; pattern 0 ope
  * so structure in a beam washes out with distance while the same pattern
  * lands crisp on the wall. The surface reads the pattern sharp.
  */
-#define GOBO_LOD_BASE 1.5
+#define GOBO_LOD_BASE 2.5
 #define GOBO_BLUR_PER_METRE 0.03
-#define GOBO_LOD_MAX 4.0
+#define GOBO_LOD_MAX 5.0
 
 /**
  * A gobo wheel is a disc turning on its own centre, so a gobo arrives at the
@@ -524,13 +524,13 @@ float beamEdge(float r) {
  * @param float blur in field radii
  * @returns float 0 sharp to 2 the softest baked level
  *
- * The atlas bakes a cell of 128 px, two field radii across, at Gaussian
- * sigmas of 0, 2.5 and 7 px (gobo_library.js); a blur disc of radius b
- * field radii is a sigma of about half its 64 b px.
+ * The atlas bakes a cell of 256 px, two field radii across, at Gaussian
+ * sigmas of 0, 5 and 14 px (gobo_library.js); a blur disc of radius b
+ * field radii is a sigma of about half its 128 b px.
  */
 float beamBlurLevels(float blur) {
-  float sigma = 32.0 * blur;
-  return sigma < 2.5 ? sigma / 2.5 : 1.0 + min((sigma - 2.5) / 4.5, 1.0);
+  float sigma = 64.0 * blur;
+  return sigma < 5.0 ? sigma / 5.0 : 1.0 + min((sigma - 5.0) / 9.0, 1.0);
 }
 
 vec2 beamStencil(vec2 p, vec2 along, float lod) {
@@ -539,11 +539,15 @@ vec2 beamStencil(vec2 p, vec2 along, float lod) {
   // Framing blades sit in the gate with the gobos, as sharp as the focus
   // makes them.
   float bladeSoft = 0.01 + 0.06 * sampleDefocus;
+  // An animation disc sits in the gate with the gobos, never sharper than
+  // they are in the air. Its table row is the light's, as the shapers' is.
+  float discDefocus = max(sampleDefocus, 1.0);
   if (facets < 2) {
     float v = beamEdge(length(p))
       * beamGobos(p, along, lod)
       * beamIris(p)
-      * shaperMask(shaperTable, vShaperRow, p, bladeSoft);
+      * shaperMask(shaperTable, vShaperRow, p, bladeSoft)
+      * animationMask(animationTable, animationAtlas, vShaperRow, p, discDefocus);
     float far = beamSplit(p);
     return vec2(v * (1.0 - far), v * far);
   }
@@ -554,7 +558,8 @@ vec2 beamStencil(vec2 p, vec2 along, float lod) {
     float v = beamEdge(length(q))
       * beamGobos(q, along, lod)
       * beamIris(q)
-      * shaperMask(shaperTable, vShaperRow, q, bladeSoft);
+      * shaperMask(shaperTable, vShaperRow, q, bladeSoft)
+      * animationMask(animationTable, animationAtlas, vShaperRow, q, discDefocus);
     float far = beamSplit(q);
     sum += vec2(v * (1.0 - far), v * far);
   }

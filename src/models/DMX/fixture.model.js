@@ -28,6 +28,12 @@ import HeadDispatch from './gdtf/head_dispatch';
 import {
   channelRows, fixtureCategory, headInputs, wheelsForHead,
 } from './gdtf/fixture_parts';
+import { normaliseOverwrites, applyOverwrites, resolveImage } from './wheel_overwrites';
+import GOBOS from '../../plugins/visualizer/gobo_manifest';
+import GDTF_GOBOS from '../../plugins/visualizer/gdtf_gobos';
+import STOCK_DISCS, { ANIMATION_URL } from '../../plugins/visualizer/stock_discs';
+import UserGobos from '../../plugins/visualizer/user_gobos';
+import { goboThumbnail, GOBO_URL } from '../../plugins/visualizer/gobo_pick';
 
 /**
  * OFL profiles translated into the GDTF model, by profile key. A definition
@@ -320,10 +326,10 @@ class Fixture extends withTransform(Proxify) {
        */
       this.structure = null;
       /**
-       * Whether this fixture's beam casts a shadow. Off unless asked for --
-       * see Light's own accessor for why it is not given away freely.
+       * Gobos and discs swapped into this placement's wheels; see
+       * wheel_overwrites.js. The definition's own wheels stay as they are.
        */
-      this._castsShadow = !!data.castsShadow;
+      this._overwrites = normaliseOverwrites(data.overwrites);
       /** Where a hand-set lens is focused: see `focusDistance`. */
       this._focusDistance = DEFAULT_FOCUS_DISTANCE;
       if (data.focusDistance != null && Number.isFinite(Number(data.focusDistance))) {
@@ -488,8 +494,9 @@ class Fixture extends withTransform(Proxify) {
       rotation: this.rotation,
       groupId: this.group ? this.group.id : undefined,
       structureId: this.structure ? this.structure.id : undefined,
-      castsShadow: this._castsShadow,
       focusDistance: this.hasManualFocus ? this._focusDistance : undefined,
+      overwrites: this._overwrites && this._overwrites.length
+        ? this._overwrites.map((o) => ({ ...o })) : undefined,
       hidden: this._hidden || undefined,
       // Only the parked values, never what DMX happens to be saying -- the
       // same line the app already draws between an address and the wire.
@@ -1199,7 +1206,9 @@ class Fixture extends withTransform(Proxify) {
     }
     // eslint-disable-next-line prefer-destructuring
     this.category = this.OFLData.categories[0]; // We're only interested in the first category asset ATM.
-    this.wheels = this.OFLData.wheels; // Isolating and setting fixture's wheels configuration from OFL data
+    // The profile's wheels, and the placement's with its swaps in them.
+    this._definitionWheels = this.OFLData.wheels || {};
+    this.wheels = this.overwrittenWheels();
     this.bulb = (this.OFLData.physical || {}).bulb; // Isolating and setting fixture's bulb configuration from OFL data
     this._name = this.OFLData.name; // Isolating and setting fixture's default name from OFL data
     this.modes = this.OFLData.modes; // Isolating and setting fixture's modes configuration from OFL data
@@ -1230,7 +1239,8 @@ class Fixture extends withTransform(Proxify) {
     this._name = type.name;
     const inputs = this.applyGdtfMode();
     this.category = inputs.category;
-    this.wheels = wheelsForHead(type);
+    this._definitionWheels = wheelsForHead(type);
+    this.wheels = this.overwrittenWheels();
     if (HEAD_CATEGORIES.includes(inputs.category)) {
       const moving = inputs.category === FIXTURE_TYPES.MOVING_HEAD;
       const spec = {
@@ -1317,9 +1327,6 @@ class Fixture extends withTransform(Proxify) {
     this._3DModel = markRaw(light);
     // Reverse link, so a ray hitting the 3D model can name its fixture.
     light.fixtureHandle = this;
-    // Pushed down after building: a fixture reloaded from a show carries its
-    // own answer, and the renderer starts every light with shadows off.
-    light.castsShadow = this._castsShadow;
     if (this.hasManualFocus) light.focusDistance = this._focusDistance;
   }
 
@@ -1563,10 +1570,10 @@ class Fixture extends withTransform(Proxify) {
           colorTemp: (bulb || {}).colorTemperature || DEFAULT_COLOR_TEMP,
           lumens: Light.lumensOf(this.OFLData.physical),
           bodyHeight: this.bodyHeight,
-          // Every wheel the profile has, by name: the head sorts them into
-          // colour, gobo and prism wheels by what their slots hold, however
-          // many of each there are.
-          wheels: this.OFLData.wheels || {},
+          // Every wheel the profile has, by name, with this placement's swaps:
+          // the head sorts them into colour, gobo and prism wheels by what
+          // their slots hold, however many of each there are.
+          wheels: this.wheels || this.OFLData.wheels || {},
         }, true);
         this._dispatch = this.dispatchFor();
         break;
@@ -1681,26 +1688,6 @@ class Fixture extends withTransform(Proxify) {
   }
 
   /**
-   * Whether this fixture casts a shadow, where its renderer can draw one.
-   *
-   * Kept on the fixture rather than only on the renderer so it survives a
-   * save, and so the widget has something to bind to before the 3D model for
-   * a fixture has been built.
-   *
-   * @type {Boolean}
-   */
-  set castsShadow(state) {
-    this._castsShadow = !!state;
-    if (this._3DModel && 'castsShadow' in this._3DModel) {
-      this._3DModel.castsShadow = this._castsShadow;
-    }
-  }
-
-  get castsShadow() {
-    return !!this._castsShadow;
-  }
-
-  /**
    * Whether the lens is focused by hand: the mode the fixture runs in has a
    * focus channel with no DMX address. A GDTF file says so that way, and a
    * profile's translation does for `physical.lens.focus: "manual"`.
@@ -1721,6 +1708,109 @@ class Fixture extends withTransform(Proxify) {
    *
    * @type {Number}
    */
+  /**
+   * The gobos and discs swapped into this placement's wheels, as
+   * `{ wheel, slot, image, rotation }`; see wheel_overwrites.js. Setting it
+   * gives the light its wheels again with the new pictures.
+   *
+   * @type {Array<Object>}
+   */
+  set overwrites(list) {
+    this._overwrites = normaliseOverwrites(list);
+    this.wheels = this.overwrittenWheels();
+    if (this._3DModel && typeof this._3DModel.setWheels === 'function') {
+      this._3DModel.setWheels(this.wheels);
+    }
+  }
+
+  get overwrites() {
+    return (this._overwrites || []).map((o) => ({ ...o }));
+  }
+
+  /**
+   * The wheels this placement may swap gobos and discs into, for the panel:
+   * its gobo wheels and animation wheels, each slot with what it shows now.
+   * A wheel's kind is the attributes that drive it, for a GDTF file, and its
+   * slots' types for an OFL profile.
+   *
+   * @type {Array<Object>} `{ name, kind, slots: [{ number, name, open,
+   *   image, rotation, thumbnail }] }`; `image` the swapped picture's
+   *   reference or null, `thumbnail` a URL or null for an open slot
+   */
+  get swappableWheels() {
+    const base = this._definitionWheels || {};
+    const kinds = {};
+    const type = this.fixtureType;
+    if (type) {
+      type.modes.forEach((mode) => mode.channels.forEach((c) => c.logicalChannels
+        .forEach((l) => l.functions.forEach((f) => {
+          if (!f.wheel || !base[f.wheel]) return;
+          if (/^Animation(Wheel|System)/.test(f.attribute)) kinds[f.wheel] = 'animation';
+          else if (/^Gobo\d/.test(f.attribute) && !kinds[f.wheel]) kinds[f.wheel] = 'gobo';
+        }))));
+    } else {
+      Object.keys(base).forEach((name) => {
+        const slots = (base[name] && base[name].slots) || [];
+        if (slots.some((s) => s && /Animation/.test(String(s.type)))) kinds[name] = 'animation';
+        else if (slots.some((s) => s && s.type === 'Gobo')) kinds[name] = 'gobo';
+      });
+    }
+    const overwrites = this._overwrites || [];
+    return Object.keys(kinds).map((name) => {
+      const shown = (this.wheels && this.wheels[name]) || base[name];
+      const own = base[name].slots || [];
+      return {
+        name,
+        kind: kinds[name],
+        slots: (shown.slots || []).map((slot, i) => {
+          const o = overwrites.find((x) => x.wheel === name && x.slot === i + 1);
+          let thumbnail = slot && slot.image ? slot.image.url : null;
+          if (!thumbnail && slot && slot.type === 'Gobo') {
+            const pick = goboThumbnail(shown, i + 1);
+            thumbnail = pick ? pick.url : null;
+          }
+          const defined = own[i] || {};
+          return {
+            number: i + 1,
+            name: String(defined.name || '').trim() || `Slot ${i + 1}`,
+            open: !o && defined.type === 'Open',
+            image: o ? o.image : null,
+            rotation: o ? o.rotation : 0,
+            thumbnail,
+          };
+        }),
+      };
+    });
+  }
+
+  /**
+   * The definition's wheels with this placement's swaps applied.
+   *
+   * @private
+   * @returns {Object}
+   */
+  overwrittenWheels() {
+    const type = this.fixtureType;
+    const where = {
+      goboNames: GOBOS.map((g) => g.name),
+      collectedUrl: (name) => {
+        const gobo = GDTF_GOBOS.find((g) => g.name === name);
+        return gobo ? GOBO_URL + gobo.file : null;
+      },
+      animationUrl: (name) => {
+        const disc = STOCK_DISCS.find((d) => d.name === name);
+        return disc ? ANIMATION_URL + disc.file : null;
+      },
+      libraryUrl: (file) => UserGobos.urlFor(file),
+      ownImages: type && type.wheelImages ? type.wheelImages : null,
+      typeKey: type ? (type.fixtureTypeId || type.name) : this.profileKey,
+    };
+    return applyOverwrites(this._definitionWheels || {}, this._overwrites || [], (ref) => {
+      const shown = resolveImage(ref, where);
+      return shown && shown.image && !shown.image.url ? null : shown;
+    });
+  }
+
   set focusDistance(value) {
     this._focusDistance = focusDistanceOf(value);
     if (this.hasManualFocus && this._3DModel && 'focusDistance' in this._3DModel) {
@@ -1770,22 +1860,9 @@ class Fixture extends withTransform(Proxify) {
   }
 
   /**
-   * Whether this fixture is able to cast one at all.
-   *
-   * An emitter bar has no beam and no spotlight behind it, so the choice would
-   * be offered and do nothing.
-   *
-   * @readonly
-   * @type {Boolean}
-   */
-  get canCastShadow() {
-    return !!(this._3DModel && 'castsShadow' in this._3DModel);
-  }
-
-  /**
    * Highlights the fixture model
    *
-   * @param {Boolean} state wheter the fixture Model should be highlighted or not
+   * @param {Boolean} state if the fixture Model should be highlighted or not
    */
   highlight(state, centerControls = false) {
     if (this._3DModel) {

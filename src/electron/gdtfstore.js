@@ -33,18 +33,13 @@ import paths from './paths';
  * file name, not the fixture name, because two revisions of one fixture are
  * two files and a show must name exactly one.
  *
- * A file is never deleted, because a saved show names it by key and carries
- * no copy. Removing one, or replacing it on import, moves it to
- *
- *   Library/Removed/Profiles/<manufacturer>/<file>.gdtf
- *
- * where it is no longer listed but still resolves, so every show that uses
- * it still opens. Importing it again lists it again.
+ * Removing a file, or replacing it on import, deletes it. A project that
+ * names it by key and carries no copy of its own then has that fixture
+ * missing.
  */
 
 const PROFILES_DIR = 'Profiles';
 const EXTENSION = '.gdtf';
-const REMOVED_DIR = 'Removed';
 
 /** Listing results by path, kept while the file's size and time are unchanged. */
 const peekCache = new Map();
@@ -133,11 +128,6 @@ function peekFile(file) {
   }
   peekCache.set(file, { size: stat.size, mtimeMs: stat.mtimeMs, info });
   return info;
-}
-
-/** The Profiles folder of a library root. */
-function removedRoot() {
-  return path.join(library.libraryRoot(), REMOVED_DIR, PROFILES_DIR);
 }
 
 function profilesRoot(base) {
@@ -279,17 +269,6 @@ function shippedPathFor(key) {
 }
 
 /**
- * The GDTF fixtures removed from the user's library, which shows still
- * resolve.
- *
- * @returns {Array<Object>} as `list` gives them, `file` relative to the
- *   removed Profiles folder
- */
-function listRemoved() {
-  return listUnder(removedRoot());
-}
-
-/**
  * Absolute path of a GDTF fixture by key, in the user's library or the given
  * root, or null when there is none.
  *
@@ -305,30 +284,12 @@ function pathFor(key, base) {
 }
 
 /**
- * Absolute path of a removed GDTF fixture by key, or null when there is none.
- *
- * @param {String} key
- * @returns {String|null}
- */
-function removedPathFor(key) {
-  const segments = String(key || '').split('/');
-  if (segments.length !== 2 || segments.some((s) => !s || s === '.' || s === '..')) return null;
-  const file = path.join(removedRoot(), segments[0], `${segments[1]}${EXTENSION}`);
-  return fs.existsSync(file) ? file : null;
-}
-
-/**
- * Moves a library file to the removed folder, over any removed copy of the
- * same key.
+ * Deletes a library file.
  *
  * @param {String} relative `<manufacturer folder>/<file>.gdtf`
  */
-function moveToRemoved(relative) {
-  const parts = relative.split('/');
-  const target = path.join(removedRoot(), ...parts);
-  fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.rmSync(target, { force: true });
-  fs.renameSync(path.join(profilesRoot(), ...parts), target);
+function deleteFile(relative) {
+  fs.rmSync(path.join(profilesRoot(), ...relative.split('/')), { force: true });
 }
 
 /**
@@ -384,10 +345,8 @@ function importFile(source, { replace = false, keepBoth = false } = {}) {
 
   try {
     fs.mkdirSync(dir, { recursive: true });
-    conflicts.forEach((c) => moveToRemoved(c.file));
+    conflicts.forEach((c) => deleteFile(c.file));
     fs.copyFileSync(source, target);
-    // Listed again: the removed copy of this key is the same fixture, older.
-    fs.rmSync(path.join(removedRoot(), folder, `${stem}${EXTENSION}`), { force: true });
   } catch (err) {
     console.error('[gdtf] import failed:', err.message);
     return { ok: false, reason: err.message };
@@ -398,8 +357,8 @@ function importFile(source, { replace = false, keepBoth = false } = {}) {
 }
 
 /**
- * Removes a GDTF file from the user's library, and its marks. The file moves
- * to the removed folder, where shows that use it still find it.
+ * Removes a GDTF file from the user's library, and its marks: the file is
+ * deleted.
  *
  * @param {String} key `<manufacturer folder>/<file stem>`
  * @returns {Object} `{ ok }` or `{ ok: false, reason }`
@@ -408,7 +367,7 @@ function removeFile(key) {
   const file = pathFor(key);
   if (!file) return { ok: false, reason: `${key} is not in the library` };
   try {
-    moveToRemoved(path.relative(profilesRoot(), file).split(path.sep).join('/'));
+    deleteFile(path.relative(profilesRoot(), file).split(path.sep).join('/'));
   } catch (err) {
     console.error('[gdtf] remove failed:', err.message);
     return { ok: false, reason: err.message };
@@ -423,17 +382,13 @@ export default {
   peek,
   list,
   listAll,
-  listRemoved,
   pathFor,
   shippedPathFor,
-  removedPathFor,
   importFile,
   removeFile,
   marks,
   setBad,
   setFavourite,
   profilesRoot,
-  removedRoot,
   EXTENSION,
-  REMOVED_DIR,
 };

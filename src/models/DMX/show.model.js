@@ -34,10 +34,10 @@ import readGdtf, { wheelImages } from './gdtf/gdtf_reader';
 import buildBody, { laserBody } from '../../plugins/visualizer/gdtf_body';
 import { laserGeometry } from './gdtf/laser_parts';
 import { headInputs, isLaserType } from './gdtf/fixture_parts';
-import { MAX_SHADOW_CASTERS } from '../../plugins/visualizer/light';
 import MeasureTool from '../../plugins/visualizer/measure_tool';
 import { CLIP_KINDS, BUILT_IN_CLIPS } from './laser_clips';
 import { loadCards } from '../../plugins/visualizer/laser_cards';
+import UserGobos from '../../plugins/visualizer/user_gobos';
 
 /** The ILDA files that ship with Beam, which an export need not carry. */
 const SHIPPED_CLIP_FILES = new Set(BUILT_IN_CLIPS
@@ -187,12 +187,6 @@ class Show extends EventEmitter {
      * they are needed.
      */
     this.gdtfFixtures = [];
-    /**
-     * GDTF fixtures removed from the library, listed the same way. Not
-     * offered to add, but resolved after the library, so a show that uses one
-     * still opens.
-     */
-    this.removedGdtf = [];
     /**
      * GDTF fixture types read so far, by key. Read-only once read, so every
      * fixture of a type shares one.
@@ -794,7 +788,8 @@ class Show extends EventEmitter {
    * own parameters and has nothing to collect.
    *
    * @public
-   * @returns {Object} `{ profiles, objects, media, lasers, laserCards }`, each an array of keys
+   * @returns {Object} `{ profiles, objects, media, lasers, laserCards, gobos }`,
+   *   each an array of keys
    */
   referencedResources() {
     const profiles = new Set(this.fixturePool.fixtures
@@ -820,12 +815,21 @@ class Show extends EventEmitter {
         if (carried) lasers.add(clip.file);
       });
     });
+    // Images from the user's library swapped into wheels. Beam's stock gobos
+    // and discs, and a fixture's own images, travel with Beam and the profile.
+    const gobos = new Set();
+    this.fixturePool.fixtures.forEach((fixture) => {
+      (fixture.overwrites || []).forEach((o) => {
+        if (o.image.startsWith('library:')) gobos.add(o.image.slice('library:'.length));
+      });
+    });
     return {
       profiles: [...profiles],
       objects: [...objects],
       media,
       lasers: [...lasers],
       laserCards: [...laserCards],
+      gobos: [...gobos],
     };
   }
 
@@ -944,8 +948,6 @@ class Show extends EventEmitter {
     this.loading.message = 'Setting up show fixtures';
     this.loading.percentage = 60;
     await this.prepareFixtures(showData);
-
-    this.capShadowCasters();
 
     this.loading.message = 'Restoring groups';
     this.prepareGroups(showData);
@@ -1138,27 +1140,6 @@ class Show extends EventEmitter {
     }
     this.emit('refreshed', result);
     return result;
-  }
-
-  /**
-   * Holds the show to the shadow budget it can actually render.
-   *
-   * The checkbox refuses to spend more than there is, but a showfile is not
-   * the checkbox: one written by hand, or by a build where the limit was
-   * different, can ask for more shadow-casting fixtures than the GPU has
-   * texture units -- and the result is not a slow scene, it is a scene missing
-   * everything drawn with the standard material. The ones beyond the budget
-   * lose their shadow rather than the show losing its floor.
-   *
-   * @public
-   */
-  capShadowCasters() {
-    let spent = 0;
-    this.fixturePool.fixtures.forEach((fixture) => {
-      if (!fixture.castsShadow) return;
-      spent += 1;
-      if (spent > MAX_SHADOW_CASTERS) fixture.castsShadow = false;
-    });
   }
 
   /**
@@ -1512,20 +1493,17 @@ class Show extends EventEmitter {
   }
 
   /**
-   * A GDTF fixture by key: the open document's copy, else the library's,
-   * else one removed from the library.
+   * A GDTF fixture by key: the open document's copy, else the library's.
    *
    * @public
    * @param {String} key `<manufacturer folder>/<file stem>`
-   * @returns {Object|null} `{ entry, carried, removed }`
+   * @returns {Object|null} `{ entry, carried }`
    */
   gdtfEntry(key) {
     const carried = (this.collected.gdtf || []).find((e) => e.key === key);
-    if (carried) return { entry: carried, carried: true, removed: false };
+    if (carried) return { entry: carried, carried: true };
     const own = this.gdtfFixtures.find((e) => e.key === key);
-    if (own) return { entry: own, carried: false, removed: false };
-    const removed = this.removedGdtf.find((e) => e.key === key);
-    return removed ? { entry: removed, carried: false, removed: true } : null;
+    return own ? { entry: own, carried: false } : null;
   }
 
   /**
@@ -1545,7 +1523,6 @@ class Show extends EventEmitter {
     if (!found || typeof fetch === 'undefined' || typeof DOMParser === 'undefined') return null;
     let host = 'profiles';
     if (found.carried) host = 'projectprofiles';
-    else if (found.removed) host = 'removedprofiles';
     else if (found.entry.shipped) host = 'shippedprofiles';
     const path = found.entry.file.split('/').map(encodeURIComponent).join('/');
     try {
@@ -1925,7 +1902,6 @@ class Show extends EventEmitter {
 
     const structures = this.prepareStructures({ structures: fresh(data.structures) });
 
-    this.capShadowCasters();
     // A fixture inside a pasted structure or group is not a loose item, and
     // handing it back would put the gizmo on the members as well as on the
     // thing that holds them.
@@ -2137,7 +2113,8 @@ class Show extends EventEmitter {
   async preloadGdtfFixtures() {
     if (typeof window === 'undefined' || !window.library || !window.library.gdtfList) return;
     this.gdtfFixtures = await window.library.gdtfList();
-    if (window.library.gdtfRemoved) this.removedGdtf = await window.library.gdtfRemoved();
+    // The user's gobo and disc images, for placements that swap them in.
+    if (window.library.gobos) UserGobos.set(await window.library.gobos());
   }
 
   /**

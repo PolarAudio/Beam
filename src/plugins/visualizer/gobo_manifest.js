@@ -3,8 +3,7 @@
  * `resources/gobos`, generated from the files in `public/gobos`.
  *
  * `name` is the OFL resource name a profile's wheel slot references as
- * `gobos/<name>`; `file` is the image beside it. Each image's own JSON
- * sits in the same folder with its title, keywords and source. Sources and
+ * `gobos/<name>`; `file` is the image in `public/gobos`. Sources and
  * licences are listed in CREDITS.html.
  */
 export default [
@@ -15,17 +14,17 @@ export default [
   },
   {
     name: '10-circles',
-    file: '10-circles.svg',
+    file: '10-circles.png',
     title: '10 circles',
   },
   {
     name: '3-fold-spiral',
-    file: '3-fold-spiral.svg',
+    file: '3-fold-spiral.png',
     title: '3-fold spiral',
   },
   {
     name: '3-fold-swirl',
-    file: '3-fold-swirl.svg',
+    file: '3-fold-swirl.png',
     title: 'Swirl',
   },
   {
@@ -40,12 +39,12 @@ export default [
   },
   {
     name: '4-vertical-bars',
-    file: '4-vertical-bars.svg',
+    file: '4-vertical-bars.png',
     title: '4 vertical bars',
   },
   {
     name: '5-fold-swirl',
-    file: '5-fold-swirl.svg',
+    file: '5-fold-swirl.png',
     title: '5-fold swirl',
   },
   {
@@ -55,32 +54,32 @@ export default [
   },
   {
     name: '5-pointed-compass-rose-star',
-    file: '5-pointed-compass-rose-star.svg',
+    file: '5-pointed-compass-rose-star.png',
     title: '5-pointed compass-rose star',
   },
   {
     name: '5-pointed-star',
-    file: '5-pointed-star.svg',
+    file: '5-pointed-star.png',
     title: '5-Pointed Star',
   },
   {
     name: '6-mouse-heads',
-    file: '6-mouse-heads.svg',
+    file: '6-mouse-heads.png',
     title: '6 mouse heads',
   },
   {
     name: 'biohazard',
-    file: 'biohazard.svg',
+    file: 'biohazard.png',
     title: 'Biohazard',
   },
   {
     name: 'bubbles',
-    file: 'bubbles.svg',
+    file: 'bubbles.png',
     title: 'Bubbles',
   },
   {
     name: 'caro-flower',
-    file: 'caro-flower.svg',
+    file: 'caro-flower.png',
     title: 'Caro Flower',
   },
   {
@@ -90,12 +89,12 @@ export default [
   },
   {
     name: 'circled-clock-face',
-    file: 'circled-clock-face.svg',
+    file: 'circled-clock-face.png',
     title: 'Circled clock face',
   },
   {
     name: 'circular-beams',
-    file: 'circular-beams.svg',
+    file: 'circular-beams.png',
     title: 'Circular Beams',
   },
   {
@@ -105,12 +104,12 @@ export default [
   },
   {
     name: 'circular-drops',
-    file: 'circular-drops.svg',
+    file: 'circular-drops.png',
     title: 'Circular Drops',
   },
   {
     name: 'clockwork',
-    file: 'clockwork.svg',
+    file: 'clockwork.png',
     title: 'Clockwork',
   },
   {
@@ -120,22 +119,22 @@ export default [
   },
   {
     name: 'crescent',
-    file: 'crescent.svg',
+    file: 'crescent.png',
     title: 'Crescent',
   },
   {
     name: 'daisy-flower',
-    file: 'daisy-flower.svg',
+    file: 'daisy-flower.png',
     title: 'Daisy flower',
   },
   {
     name: 'dot-spiral',
-    file: 'dot-spiral.svg',
+    file: 'dot-spiral.png',
     title: 'Dot spiral',
   },
   {
     name: 'double-lines-star',
-    file: 'double-lines-star.svg',
+    file: 'double-lines-star.png',
     title: 'Double Lines Star',
   },
   {
@@ -145,7 +144,7 @@ export default [
   },
   {
     name: 'fragmented-star',
-    file: 'fragmented-star.svg',
+    file: 'fragmented-star.png',
     title: 'Fragmented Star',
   },
   {
@@ -155,12 +154,12 @@ export default [
   },
   {
     name: 'glass-red-10-circles',
-    file: 'glass-red-10-circles.svg',
+    file: 'glass-red-10-circles.png',
     title: 'Red with 10 circles',
   },
   {
     name: 'hypnotic-swirl',
-    file: 'hypnotic-swirl.svg',
+    file: 'hypnotic-swirl.png',
     title: 'Hypnotic Swirl',
   },
   {
@@ -180,7 +179,7 @@ export default [
   },
   {
     name: 'rose-petal',
-    file: 'rose-petal.svg',
+    file: 'rose-petal.png',
     title: 'Rose petal',
   },
   {
@@ -195,12 +194,12 @@ export default [
   },
   {
     name: 'square-arrows',
-    file: 'square-arrows.svg',
+    file: 'square-arrows.png',
     title: 'Square Arrows',
   },
   {
     name: 'square-outline',
-    file: 'square-outline.svg',
+    file: 'square-outline.png',
     title: 'Square outline',
   },
   {
@@ -210,12 +209,12 @@ export default [
   },
   {
     name: 'stones',
-    file: 'stones.svg',
+    file: 'stones.png',
     title: 'Stones',
   },
   {
     name: 'striped-iris',
-    file: 'striped-iris.svg',
+    file: 'striped-iris.png',
     title: 'Striped Iris',
   },
   {
@@ -225,7 +224,7 @@ export default [
   },
   {
     name: 'triangle-hexagon-pattern',
-    file: 'triangle-hexagon-pattern.svg',
+    file: 'triangle-hexagon-pattern.png',
     title: 'Triangle/hexagon pattern',
   },
   {
@@ -235,7 +234,7 @@ export default [
   },
   {
     name: 'vibrating-triangle',
-    file: 'vibrating-triangle.svg',
+    file: 'vibrating-triangle.png',
     title: 'Vibrating triangle',
   },
 ];

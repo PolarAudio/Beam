@@ -1068,7 +1068,6 @@ class Controls {
       if (Math.hypot(e.clientX - down.x, e.clientY - down.y) <= CLICK_SLOP_PX) MeasureTool.click(e);
       return;
     }
-    if (this.handle && (this.handle.dragging || this.handle.axis)) return;
     // Ctrl/Shift/Cmd extend the selection, matching the fixture list.
     const additive = e.shiftKey || e.ctrlKey || e.metaKey;
 
@@ -1084,6 +1083,9 @@ class Controls {
     // selection out from under the piece being aimed.
     if (this.snapEnabled && this.chooseAnchorAt(e)) return;
 
+    // A click on the gizmo itself must not also pick or clear the scene
+    // selection.
+    if (this.handle && (this.handle.dragging || this.handle.axis)) return;
     // A click in the scene moves the selection there, away from a measurement.
     MeasureTool.select(null);
 

@@ -28,21 +28,20 @@ import Preferences from '../../plugins/visualizer/preferences';
 import SceneObjects from '../../plugins/visualizer/scene_objects';
 import Studio from './studio';
 import { normaliseMatrixProfile } from './ofl_matrix';
-<<<<<<< Updated upstream
+import withBeamSection from './generic/beam_section';
+import movedProfile from './moved_profiles';
 import readGdtf, { wheelImages } from './gdtf/gdtf_reader';
-import buildBody from '../../plugins/visualizer/gdtf_body';
-import { headInputs } from './gdtf/fixture_parts';
-import { MAX_SHADOW_CASTERS } from '../../plugins/visualizer/light';
-=======
-import { MAX_SHADOW_CASTERS } from '../../plugins/visualizer/moving_head';
-import {
-  SCENE_ITEM_KINDS, kindOf, readMemberRef, isObjectRecord,
-} from './scene_item';
->>>>>>> Stashed changes
+import buildBody, { laserBody } from '../../plugins/visualizer/gdtf_body';
+import { laserGeometry } from './gdtf/laser_parts';
+import { headInputs, isLaserType } from './gdtf/fixture_parts';
+import MeasureTool from '../../plugins/visualizer/measure_tool';
+import { CLIP_KINDS, BUILT_IN_CLIPS } from './laser_clips';
+import { loadCards } from '../../plugins/visualizer/laser_cards';
+import UserGobos from '../../plugins/visualizer/user_gobos';
 
-const SHOWFILE_EXTENSIONS = {
-  JSON: 'json',
-};
+/** The ILDA files that ship with Beam, which an export need not carry. */
+const SHIPPED_CLIP_FILES = new Set(BUILT_IN_CLIPS
+  .filter((clip) => clip.kind === CLIP_KINDS.FILE).map((clip) => clip.file));
 
 const fixtureDataCache = {};
 
@@ -115,7 +114,7 @@ async function fetchProfile(profileKey) {
     // is written out here, once, so that nothing downstream has to know the
     // difference between a profile that listed its channels and one that
     // described them.
-    return usable ? normaliseMatrixProfile(profile) : null;
+    return usable ? normaliseMatrixProfile(withBeamSection(profile)) : null;
   } catch (err) {
     return null;
   }
@@ -189,12 +188,6 @@ class Show extends EventEmitter {
      */
     this.gdtfFixtures = [];
     /**
-     * GDTF fixtures removed from the library, listed the same way. Not
-     * offered to add, but resolved after the library, so a show that uses one
-     * still opens.
-     */
-    this.removedGdtf = [];
-    /**
      * GDTF fixture types read so far, by key. Read-only once read, so every
      * fixture of a type shares one.
      */
@@ -238,6 +231,11 @@ class Show extends EventEmitter {
     // Installed once: the lookups read the live array each time, so inputs
     // added or removed later are found without re-installing.
     this.publishVideoInputs();
+    /**
+     * The project's details, set in Project Details and printed on the patch
+     * sheet: `{ author, version, notes }`, each free text.
+     */
+    this.details = Show.noDetails();
     /** Library models available to place, by key. Read once per load. */
     this.objectLibrary = {};
     /** Saved structure definitions, keyed by name, for placing again. */
@@ -265,10 +263,14 @@ class Show extends EventEmitter {
     this.loadChain = Promise.resolve();
     this.artnetServerUrl = import.meta.env.VITE_APP_DMX2WS_SERVER_URL;
     this.visualizerHandle = null;
+    /** An opening view waiting for the viewport's camera; see `applyOpeningView`. */
+    this.pendingOpeningView = null;
     ProxifySingleton.on('changed', () => {
       this.isSaved = false;
       this.emit('saveState', this.isSaved);
     });
+    // Measurements are kept by the measure tool, outside the proxied data.
+    MeasureTool.onChange(() => this.touch());
     this.preloadManufacturers();
     this.preloadFixtureList();
   }
@@ -303,6 +305,52 @@ class Show extends EventEmitter {
 
   set isSaved(isSaved) {
     this._isSaved = isSaved;
+  }
+
+  /**
+   * Sets the project's details, marking the show changed when any differ.
+   *
+   * @public
+   * @param {Object} details `{ author, version, notes }`; missing fields are
+   *   left as they are
+   */
+  setDetails(details) {
+    const next = { ...this.details };
+    Object.keys(next).forEach((key) => {
+      if (details[key] !== undefined) next[key] = String(details[key] || '');
+    });
+    if (Object.keys(next).every((key) => next[key] === this.details[key])) return;
+    this.details = next;
+    this.touch();
+  }
+
+  /**
+   * Details with every field empty.
+   *
+   * @static
+   * @returns {Object}
+   */
+  static noDetails() {
+    return { author: '', version: '', notes: '' };
+  }
+
+  /**
+   * Details as a show file holds them. Older files kept only notes, at the top
+   * level as `notes` or `patchSheetNotes`.
+   *
+   * @static
+   * @param {Object} showData
+   * @returns {Object}
+   */
+  static detailsFrom(showData) {
+    const stored = showData.details || {
+      notes: showData.notes !== undefined ? showData.notes : showData.patchSheetNotes,
+    };
+    const details = Show.noDetails();
+    Object.keys(details).forEach((key) => {
+      if (typeof stored[key] === 'string') details[key] = stored[key];
+    });
+    return details;
   }
 
   // eslint-disable-next-line class-methods-use-this
@@ -355,7 +403,43 @@ class Show extends EventEmitter {
       // being saved.
       cameras: Studio.showData,
       studio: Studio.showSettings,
+      details: Object.values(this.details).some(Boolean) ? { ...this.details } : undefined,
+      measurements: MeasureTool.toJSON(),
     };
+  }
+
+  /**
+   * Puts the viewport on a show's opening view: its stored editor view, or a
+   * framing of what it contains when it has none.
+   *
+   * A show opened at launch loads before the viewport has a camera; the view
+   * is then held until `visualizerReady` says there is one.
+   *
+   * @public
+   * @param {Boolean} stored whether the show carried an editor view
+   */
+  applyOpeningView(stored) {
+    const handle = this.visualizerHandle;
+    if (!handle || !handle.camera || !handle.controls) {
+      this.pendingOpeningView = { stored: !!stored };
+      return;
+    }
+    this.pendingOpeningView = null;
+    if (stored) {
+      handle.viewpoint = Studio.viewpointOf(Studio.SCENE_CAMERA_ID);
+    } else if (handle.frameDefault) {
+      handle.frameDefault();
+    }
+  }
+
+  /**
+   * Called once the viewport has its camera: applies an opening view that
+   * arrived before it did.
+   *
+   * @public
+   */
+  visualizerReady() {
+    if (this.pendingOpeningView) this.applyOpeningView(this.pendingOpeningView.stored);
   }
 
   /**
@@ -529,12 +613,9 @@ class Show extends EventEmitter {
     PatchSingleton.clearAll();
     this.fixturePool.clearAll(true);
     // Their handles are Object3Ds in the scene, so dropping the array is not
-    // enough -- the old show's structures would keep a node each. Groups hold a
-    // handle too, for the same reason.
+    // enough -- the old show's structures would keep a node each.
     this.structures.forEach((structure) => structure.dispose());
     this.structures = [];
-    this.groups.forEach((group) => group.dispose());
-    this.groups = [];
     this.objects.forEach((object) => object.dispose());
     this.objects = [];
     // And the geometry they were drawn from. Disposing an object removes its
@@ -547,6 +628,7 @@ class Show extends EventEmitter {
     // resource, only numbers.
     this.videoInputs = withTestCard([]);
     this.definitions = new DefinitionStore();
+    MeasureTool.load([]);
     this.isSaved = true;
   }
 
@@ -559,6 +641,15 @@ class Show extends EventEmitter {
    *
    * @type {String}
    */
+  /**
+   * The folder the open project lives in, or null for one never saved.
+   *
+   * @type {String|null}
+   */
+  get documentFolder() {
+    return this.documentPath ? this.documentPath.replace(/[\\/][^\\/]*$/, '') : null;
+  }
+
   get documentTitle() {
     return this.projectName || 'untitled';
   }
@@ -653,7 +744,7 @@ class Show extends EventEmitter {
    */
   async saveDocumentAs() {
     if (typeof window === 'undefined' || !window.documentStore) return false;
-    const target = await window.documentStore.saveAs(this.documentPath || this.projectName);
+    const target = await window.documentStore.saveAs(this.documentPath || this.projectName, undefined, 'project');
     // Cancelling a save dialog is an ordinary answer, not a failure.
     if (!target) return false;
     return this.writeDocument(target);
@@ -675,7 +766,11 @@ class Show extends EventEmitter {
    */
   async exportDocument() {
     if (typeof window === 'undefined' || !window.documentStore) return false;
-    const target = await window.documentStore.saveAs(this.projectName, 'Export project');
+    const target = await window.documentStore.saveAs(
+      this.projectName,
+      'Export project',
+      `project-export|${this.documentPath || ''}`,
+    );
     // Cancelling is an ordinary answer, not a failure.
     if (!target) return false;
     const json = JSON.stringify(this.showData, null, 2);
@@ -693,7 +788,8 @@ class Show extends EventEmitter {
    * own parameters and has nothing to collect.
    *
    * @public
-   * @returns {Object} `{ profiles, objects, media }`, each an array of keys
+   * @returns {Object} `{ profiles, objects, media, lasers, laserCards, gobos }`,
+   *   each an array of keys
    */
   referencedResources() {
     const profiles = new Set(this.fixturePool.fixtures
@@ -706,7 +802,35 @@ class Show extends EventEmitter {
       // The built-in test card ships with Beam, so an export need not carry it.
       .filter((input) => input.kind === INPUT_KINDS.FILE && input.file && !input.builtIn)
       .map((input) => input.file);
-    return { profiles: [...profiles], objects: [...objects], media };
+    // ILDA files in laser clip lists, and the cards they are copies of. The
+    // shipped files travel with Beam.
+    const lasers = new Set();
+    const laserCards = new Set();
+    this.fixturePool.fixtures.forEach((fixture) => {
+      const card = fixture.device && fixture.device.value ? fixture.device.value('card') : null;
+      if (card) laserCards.add(card);
+      const clips = fixture.device && fixture.device.value ? fixture.device.value('clips') : null;
+      (Array.isArray(clips) ? clips : []).forEach((clip) => {
+        const carried = clip.kind === CLIP_KINDS.FILE && !SHIPPED_CLIP_FILES.has(clip.file);
+        if (carried) lasers.add(clip.file);
+      });
+    });
+    // Images from the user's library swapped into wheels. Beam's stock gobos
+    // and discs, and a fixture's own images, travel with Beam and the profile.
+    const gobos = new Set();
+    this.fixturePool.fixtures.forEach((fixture) => {
+      (fixture.overwrites || []).forEach((o) => {
+        if (o.image.startsWith('library:')) gobos.add(o.image.slice('library:'.length));
+      });
+    });
+    return {
+      profiles: [...profiles],
+      objects: [...objects],
+      media,
+      lasers: [...lasers],
+      laserCards: [...laserCards],
+      gobos: [...gobos],
+    };
   }
 
   /**
@@ -748,43 +872,6 @@ class Show extends EventEmitter {
     const res = await fetch(url);
     const data = await res.json();
     await this.loadFromData(data);
-  }
-
-  /**
-   * Loads showfile from provided frile
-   *
-   * @param {File} file handle to raw showfile instance
-   * @returns {Promise}
-   * @async
-   * @public
-   */
-  async loadFromFile(file) {
-    try {
-      const fileData = await Show.readFileAsync(file);
-      await this.loadShowFile(file.name, fileData);
-    } catch (err) {
-      console.log(err);
-    }
-  }
-
-  /**
-   * Parses and loads showfile from provided data
-   *
-   * @todo re-implement QLC loader better
-   *
-   * @param {String} filename Name of the file
-   * @param {Object} data RAW show data to be parsed
-   * @async
-   * @public
-   */
-  async loadShowFile(filename, data) {
-    const extension = Show._getShowFileType(filename);
-    const showData = await Show._parseShowData(data, extension);
-    await this.loadFromData(showData);
-    // Importing a loose showfile is not opening a project. Leaving the previous
-    // document in place would point Save at somebody else's project and write
-    // this show straight over it.
-    await this.setDocument(null);
   }
 
   /**
@@ -862,24 +949,13 @@ class Show extends EventEmitter {
     this.loading.percentage = 60;
     await this.prepareFixtures(showData);
 
-    this.capShadowCasters();
-
-    // Before the structures, because a structure may hold objects and holds
-    // them rather than their ids: the objects have to exist to be given over.
-    // A structure holding nothing but fixtures does not notice the order.
-    this.loading.message = 'Placing objects';
-    await this.prepareObjects(showData);
-
     this.loading.message = 'Restoring groups';
     this.prepareGroups(showData);
 
-<<<<<<< Updated upstream
     // Objects before structures, which may hold them.
     this.loading.message = 'Placing objects';
     await this.prepareObjects(showData);
 
-=======
->>>>>>> Stashed changes
     this.loading.message = 'Restoring structures';
     this.prepareStructures(showData);
 
@@ -898,6 +974,8 @@ class Show extends EventEmitter {
     // and would fly straight over the top of it.
     const storedView = Studio.loadCameras(showData.cameras);
     Studio.loadSettings(showData.studio);
+    this.details = Show.detailsFrom(showData);
+    MeasureTool.load(showData.measurements);
 
     this.loading.message = 'Patching fixtures';
     this.loading.percentage = 80;
@@ -916,15 +994,11 @@ class Show extends EventEmitter {
     // has nowhere else to live. `frameDefault` is the fallback for a show that
     // carries none -- and it has to be an either/or, because it flies rather
     // than jumps, so running both would animate away from the restored view.
-    if (this.visualizerHandle) {
-      if (storedView) {
-        this.visualizerHandle.viewpoint = Studio.viewpointOf(Studio.SCENE_CAMERA_ID);
-      } else if (this.visualizerHandle.frameDefault) {
-        this.visualizerHandle.frameDefault();
-      }
-    }
+    this.applyOpeningView(storedView);
 
     VideoRouter.refresh();
+    // Lasers on a library card take the library's version of it.
+    loadCards(this).catch(() => {});
     // Said once, when the show opens: these devices showed part of a picture
     // and now show all of it.
     if (video.lostCrop.length) this.emit('videoCropsDropped', video.lostCrop);
@@ -947,6 +1021,9 @@ class Show extends EventEmitter {
     this.missingProfiles = [];
     for (let i = 0; i < showData.fixtures.length; i++) {
       const fixtureData = showData.fixtures[i];
+      // A profile replaced by another file is looked for under its new name,
+      // and the project saves that name from here on.
+      Object.assign(fixtureData, movedProfile(fixtureData.manufacturer, fixtureData.model));
       const profileKey = `${fixtureData.manufacturer}/${fixtureData.model}`;
       if (this.gdtfEntry(profileKey)) {
         // eslint-disable-next-line no-await-in-loop
@@ -1066,27 +1143,6 @@ class Show extends EventEmitter {
   }
 
   /**
-   * Holds the show to the shadow budget it can actually render.
-   *
-   * The checkbox refuses to spend more than there is, but a showfile is not
-   * the checkbox: one written by hand, or by a build where the limit was
-   * different, can ask for more shadow-casting fixtures than the GPU has
-   * texture units -- and the result is not a slow scene, it is a scene missing
-   * everything drawn with the standard material. The ones beyond the budget
-   * lose their shadow rather than the show losing its floor.
-   *
-   * @public
-   */
-  capShadowCasters() {
-    let spent = 0;
-    this.fixturePool.fixtures.forEach((fixture) => {
-      if (!fixture.castsShadow) return;
-      spent += 1;
-      if (spent > MAX_SHADOW_CASTERS) fixture.castsShadow = false;
-    });
-  }
-
-  /**
    * Rebuilds groups and their membership from a showfile.
    *
    * Runs after the fixtures exist, since a group holds its members rather than
@@ -1180,33 +1236,18 @@ class Show extends EventEmitter {
   }
 
   /**
-   * Saves a structure's arrangement to the library.
+   * Saves a group's arrangement as a structure.
    *
-   * What is kept is the shape, not the items themselves: for a fixture its
-   * profile and where it sits relative to the structure's origin, for an object
-   * what it *is* -- a library key or its own parameters -- and its scale.
-   * Placing it again builds new items, which is why no address is recorded:
-   * fixtures are patched as they are created, exactly as adding one by hand
-   * would be.
-   *
-   * **Members are told apart by `kind`.** A fixture and an object are different
-   * things that happen to share a field called `model` -- one is a profile name
-   * inside a manufacturer folder, the other is a library key -- so a reader
-   * cannot tell them apart without being told. A record with no `kind` is a
-   * fixture, which is all a definition written before objects could be members
-   * can be. See `isObjectRecord`, which is what reads it.
-   *
-   * **An object's scale is its own field**, not part of its transform: the
-   * local matrix is composed at unit scale, because that is what a relative
-   * position and rotation are, and a truss that came back the size it was saved
-   * at would have to say so somewhere.
+   * What is kept is the shape, not these fixtures: each member's profile and
+   * where it sits relative to the group's origin. Placing it again builds new
+   * fixtures, which is why no address is recorded -- they are patched as they
+   * are created, exactly as adding one by hand would be.
    *
    * @public
    * @async
-   * @param {Object} structure structure to save; a group may also be passed,
-   *   and holds fixtures only
-   * @returns {String|null} the structure's name, or null when nothing was
-   *   written
+   * @param {Object} group group to save
+   * @returns {String|null} the structure's name, or null when it has none of
+   *   its own and nothing was written
    */
   async saveStructure(group) {
     // Refused rather than filed under `untitled 1`. The name is the key: it is
@@ -1217,19 +1258,8 @@ class Show extends EventEmitter {
     if (!isNamedByUser(group.name)) return null;
     const matrix = group.matrix.clone();
     const inverse = matrix.clone().invert();
-    /**
-     * Where a member sits relative to the structure, or `inverse` itself when
-     * it has not recorded one. Both are the same thing spelled two ways: a
-     * member that has never moved has no relative transform, and the inverse
-     * puts it back where it already is.
-     */
-    const localOf = (member) => (member.localTransform
-      ? member.localTransform.clone()
-      : inverse.clone());
-
     const structure = {
       name: group.name,
-<<<<<<< Updated upstream
       members: group.members.map((member) => {
         const local = member.localTransform
           ? member.localTransform.clone()
@@ -1248,32 +1278,13 @@ class Show extends EventEmitter {
           };
         }
         return {
-=======
-      members: group.members.map((member) => (kindOf(member) === SCENE_ITEM_KINDS.OBJECT
-        ? {
-          kind: SCENE_ITEM_KINDS.OBJECT,
-          name: member.name,
-          // A reference names a model; an inline object carries its own
-          // parameters, which is what makes it editable and what a placement
-          // cannot change. Never both, never neither.
-          model: member.isInline ? undefined : member.model,
-          primitive: member.isInline ? {
-            type: member.primitive.type,
-            size: { ...member.primitive.size },
-            color: member.primitive.color,
-          } : undefined,
-          scale: member.scale,
-          transform: localOf(member).elements.slice(),
-        }
-        : {
-          kind: SCENE_ITEM_KINDS.FIXTURE,
->>>>>>> Stashed changes
           manufacturer: member.manufacturer,
           model: member.model,
           mode: member.mode ? member.mode.name : undefined,
           universeAligned: !!member.universeAligned,
-          transform: localOf(member).elements.slice(),
-        })),
+          transform: local.elements.slice(),
+        };
+      }),
     };
     this.structureLibrary[group.name] = structure;
     if (typeof window !== 'undefined' && window.library) {
@@ -1285,25 +1296,18 @@ class Show extends EventEmitter {
   }
 
   /**
- * Places a saved structure as a new group of new items.
+   * Places a saved structure as a new group of new fixtures.
    *
    * Each member is created and patched exactly as adding it by hand would be,
    * which is why the structure carries no addresses: they are found free at
    * the moment of placing, so the same structure can be put down repeatedly.
    *
-   * Fixtures and objects alike. An object is a reference to a library model or
-   * an inline set of parameters -- the two states `SceneObject` distinguishes,
-   * and the record says which by carrying one or the other. A reference whose
-   * model is not on this machine still arrives, marked unresolved and naming
-   * the file, exactly as it would in a loaded show; an inline one needs nothing
-   * from the library and always arrives whole.
-   *
    * @public
    * @async
    * @param {String} name structure to place
    * @param {Object} placement world position and rotation, in metres and radians
-   * @returns {Promise<Object|null>} the structure created, or null when the
-   *   definition is unknown or nothing in it could be resolved
+   * @returns {Object|null} the group created, or null when the structure is
+   *   unknown or none of its members could be resolved
    */
   async placeStructure(name, placement = {}) {
     const definition = this.structureLibrary[name];
@@ -1330,27 +1334,15 @@ class Show extends EventEmitter {
     const euler = new THREE.Euler();
     const members = [];
 
-    // A record without a kind is a fixture: definitions written before objects
-    // could be members say nothing else, and reading one as anything but a
-    // fixture would look for a profile that is not there. See `isObjectRecord`.
-    const records = definition.members || [];
-    const fixtures = records.filter((member) => !isObjectRecord(member));
-
     // Every distinct profile the definition needs, warmed before the loop and
     // all at once. With the cache above this is what makes the loop's awaits
     // microtasks without exception: one yield here rather than one per member,
-    // and the distinct profiles fetched together rather than in series. Objects
-    // are not warmed -- an object has no profile, and asking for
-    // `undefined/<library key>` would fetch nothing and look like a miss.
+    // and the distinct profiles fetched together rather than in series.
     const wanted = new Set();
-<<<<<<< Updated upstream
     const isObject = (member) => member.kind === SCENE_ITEM_KINDS.OBJECT;
     if (definition.members.some(isObject)) await this.preloadObjectLibrary();
     const distinct = definition.members.filter((member) => {
       if (isObject(member)) return false;
-=======
-    const distinct = fixtures.filter((member) => {
->>>>>>> Stashed changes
       const key = `${member.manufacturer}/${member.model}`;
       if (wanted.has(key)) return false;
       wanted.add(key);
@@ -1360,7 +1352,6 @@ class Show extends EventEmitter {
       distinct.map((member) => this.resolveFixture(member.manufacturer, member.model)),
     );
 
-<<<<<<< Updated upstream
     for (let i = 0; i < definition.members.length; i += 1) {
       const member = definition.members[i];
       if (isObject(member)) {
@@ -1386,10 +1377,6 @@ class Show extends EventEmitter {
         // eslint-disable-next-line no-continue
         continue;
       }
-=======
-    for (let i = 0; i < fixtures.length; i += 1) {
-      const member = fixtures[i];
->>>>>>> Stashed changes
       // eslint-disable-next-line no-await-in-loop
       const resolved = await this.resolveFixture(member.manufacturer, member.model);
       if (resolved) {
@@ -1425,54 +1412,6 @@ class Show extends EventEmitter {
           PatchSingleton.patchFixture(fixture);
         }
         members.push(fixture);
-      }
-    }
-
-    // The library listing an object needs. Re-read only when the definition names
-    // something this listing has not heard of, which is the definition written
-    // since it was last read -- and *not* on every copy: placing four of the
-    // same structure in a row would otherwise re-list the whole library four
-    // times over IPC. A model this machine genuinely does not have keeps the
-    // re-read, which is the price of noticing it has since been added.
-    const objects = records.filter(isObjectRecord);
-    if (objects.length) {
-      const library = this.objectLibrary || {};
-      const unheard = objects.some((member) => !member.primitive
-        && !library[foldModelKey(member.model)]);
-      if (unheard) await this.preloadObjectLibrary();
-      for (let i = 0; i < objects.length; i += 1) {
-        const member = objects[i];
-        world.multiplyMatrices(origin, new THREE.Matrix4().fromArray(member.transform));
-        world.decompose(position, quaternion, scale);
-        euler.setFromQuaternion(quaternion);
-        // Degrees, as `placeObject` writes them: the matrix gave us radians and
-        // the fixture branch above is explicit about the same conversion.
-        //
-        // The entry is spread under a `key` of its own so a model this machine
-        // does not have still arrives pointing at what it was saved from -- it
-        // is marked unresolved and names the file, which is the same thing a
-        // loaded show does with a missing model, and better than arriving as
-        // `undefined`.
-        // eslint-disable-next-line no-await-in-loop
-        const entry = (this.objectLibrary || {})[foldModelKey(member.model)];
-        const placed = await this.placeObject(
-          member.primitive
-            ? { name: member.name, primitive: member.primitive }
-            : { ...(entry || {}), name: member.name || (entry || {}).name, key: member.model },
-          {
-            position: { x: position.x, y: position.y, z: position.z },
-            rotation: {
-              x: THREE.MathUtils.radToDeg(euler.x),
-              y: THREE.MathUtils.radToDeg(euler.y),
-              z: THREE.MathUtils.radToDeg(euler.z),
-            },
-            // The local matrix was composed at unit scale, so this is the only
-            // place the object's own size is recorded.
-            scale: member.scale === undefined ? 1 : member.scale,
-          },
-          { inline: !!member.primitive },
-        );
-        if (placed) members.push(placed);
       }
     }
 
@@ -1534,7 +1473,8 @@ class Show extends EventEmitter {
    *   with one of the two set, or null when neither is found
    */
   async resolveFixture(manufacturer, model) {
-    const key = `${manufacturer}/${model}`;
+    const moved = movedProfile(manufacturer, model);
+    const key = `${moved.manufacturer}/${moved.model}`;
     if (this.gdtfEntry(key)) {
       const fixtureType = await this.loadGdtfType(key);
       if (!fixtureType) return null;
@@ -1553,20 +1493,17 @@ class Show extends EventEmitter {
   }
 
   /**
-   * A GDTF fixture by key: the open document's copy, else the library's,
-   * else one removed from the library.
+   * A GDTF fixture by key: the open document's copy, else the library's.
    *
    * @public
    * @param {String} key `<manufacturer folder>/<file stem>`
-   * @returns {Object|null} `{ entry, carried, removed }`
+   * @returns {Object|null} `{ entry, carried }`
    */
   gdtfEntry(key) {
     const carried = (this.collected.gdtf || []).find((e) => e.key === key);
-    if (carried) return { entry: carried, carried: true, removed: false };
+    if (carried) return { entry: carried, carried: true };
     const own = this.gdtfFixtures.find((e) => e.key === key);
-    if (own) return { entry: own, carried: false, removed: false };
-    const removed = this.removedGdtf.find((e) => e.key === key);
-    return removed ? { entry: removed, carried: false, removed: true } : null;
+    return own ? { entry: own, carried: false } : null;
   }
 
   /**
@@ -1586,7 +1523,7 @@ class Show extends EventEmitter {
     if (!found || typeof fetch === 'undefined' || typeof DOMParser === 'undefined') return null;
     let host = 'profiles';
     if (found.carried) host = 'projectprofiles';
-    else if (found.removed) host = 'removedprofiles';
+    else if (found.entry.shipped) host = 'shippedprofiles';
     const path = found.entry.file.split('/').map(encodeURIComponent).join('/');
     try {
       const response = await fetch(`library://${host}/${path}`);
@@ -1604,7 +1541,16 @@ class Show extends EventEmitter {
       // The body its meshes make, shared by every fixture of the type. A file
       // whose meshes cannot be read keeps the shipped body.
       try {
-        fixtureType.body = await buildBody(fixtureType, files);
+        // A laser is drawn by the laser renderer, standing; a light by the head.
+        // A laser known only by its channels has no frame its model is drawn
+        // in for a laser, so it takes the box.
+        if (isLaserType(fixtureType)) {
+          fixtureType.body = null;
+          fixtureType.laserBody = laserGeometry(fixtureType)
+            ? await laserBody(fixtureType, files) : null;
+        } else {
+          fixtureType.body = await buildBody(fixtureType, files);
+        }
       } catch (err) {
         // eslint-disable-next-line no-console
         console.warn(`[gdtf] ${key}: body not built: ${err.message}`);
@@ -1658,6 +1604,21 @@ class Show extends EventEmitter {
   }
 
   /**
+   * Rebuilds placed structures and their membership from a showfile.
+   *
+   * Runs after the fixtures exist, since a structure holds its members rather
+   * than their ids. A showfile without structures is simply one where nothing
+   * was structured, so this is safe on older files.
+   *
+   * Membership is re-taken with `add`, which recaptures each member's relative
+   * transform from where it now stands. That is deliberate: the members were
+   * saved at absolute coordinates, so the file already agrees with itself and
+   * the relative transforms fall straight back out of it.
+   *
+   * @public
+   * @param {Object} showData raw showfile contents
+   */
+  /**
    * Rebuilds the models placed in a show.
    *
    * Each object names a library key, and the key is resolved here rather than
@@ -1670,22 +1631,12 @@ class Show extends EventEmitter {
    * Geometry loads in the background. Nothing waits on it: a hundred objects
    * are a hundred rows in an instanced buffer and appear as they arrive.
    *
-   * The saved id is kept as an index rather than as the object's own id when
-   * `freshIds` is asked for, which is what a paste does: the structure that
-   * held the original refers to it by the id it had in the chunk, and a copy
-   * cannot keep that without colliding with the original. The same arrangement
-   * `prepareFixtures` makes -- see `loadedFixturesById`.
-   *
    * @public
    * @async
    * @param {Object} showData raw showfile contents
-   * @param {Object} [options]
-   * @param {Boolean} [options.freshIds] mint new ids and index the saved ones
-   * @returns {Array} the objects created
    */
-  async prepareObjects(showData, { freshIds = false } = {}) {
+  async prepareObjects(showData) {
     const records = showData.objects || [];
-<<<<<<< Updated upstream
     const made = records.map((data) => new SceneObject(data));
     made.forEach((object, i) => restoreListOrder(object, records[i]));
     // By the id the record was saved or copied with, for the structures that
@@ -1696,22 +1647,6 @@ class Show extends EventEmitter {
       if (id !== undefined) this.loadedObjectsById.set(id, made[i]);
     });
     Show.joinNumbered(this.objects, made);
-=======
-    /**
-     * Showfile object id to the instance created for it. The counterpart of
-     * `loadedFixturesById`, and needed for the same reason: a structure names
-     * its object members by the id the file gave them.
-     */
-    this.loadedObjectsById = new Map();
-    const made = records.map((data) => {
-      const created = new SceneObject(
-        freshIds ? { ...data, id: undefined } : data,
-      );
-      if (data.id !== undefined) this.loadedObjectsById.set(data.id, created);
-      return created;
-    });
-    this.objects.push(...made);
->>>>>>> Stashed changes
     if (!made.length) return made;
     await this.preloadObjectLibrary();
     // Awaited, all of them. Fired and left to land, the load would report
@@ -1730,60 +1665,6 @@ class Show extends EventEmitter {
       // eslint-disable-next-line no-console
       console.warn(`[show] ${missing.length} object(s) reference models this machine does not have: ${[...new Set(missing.map((o) => o.model))].join(', ')}`);
     }
-    return made;
-  }
-
-  /**
-   * The item a saved member reference resolves to, or null.
-   *
-   * A structure holds fixtures *and* objects, and ids are numbered per kind, so
-   * the reference has to say which it meant -- see `readMemberRef`. A reference
-   * that resolves to nothing is skipped rather than guessed at: a member id
-   * that no longer matches anything is a member a file already knows less about
-   * than we do.
-   *
-   * @public
-   * @param {Number|Object} ref as saved: `{ kind, id }`, or a bare fixture id
-   * @returns {Object|null} the fixture or object
-   */
-  memberOfRef(ref) {
-    const read = readMemberRef(ref);
-    if (!read) return null;
-    if (read.kind === SCENE_ITEM_KINDS.OBJECT) {
-      return this.loadedObjectsById.get(read.id) || null;
-    }
-    return this.loadedFixturesById.get(read.id) || null;
-  }
-
-  /**
-   * Rebuilds placed structures and their membership from a showfile.
-   *
-   * Runs after the fixtures and the objects exist, since a structure holds its
-   * members rather than their ids. A showfile without structures is simply one
-   * where nothing was structured, so this is safe on older files.
-   *
-   * Membership is re-taken with `add`, which recaptures each member's relative
-   * transform from where it now stands. That is deliberate: the members were
-   * saved at absolute coordinates, so the file already agrees with itself and
-   * the relative transforms fall straight back out of it.
-   *
-   * @public
-   * @param {Object} showData raw showfile contents
-   * @returns {Array} the structures created
-   */
-  prepareStructures(showData) {
-    const made = (showData.structures || []).map((structureData) => {
-      const structure = new Structure(structureData);
-      (structureData.members || []).forEach((ref) => {
-        // Resolved through the load indexes rather than the pool: addRaw hands
-        // out fresh ids, so a saved member id means nothing once a fixture has
-        // been deleted and the rest have shuffled down.
-        const member = this.memberOfRef(ref);
-        if (member) structure.add(member);
-      });
-      return structure;
-    });
-    this.structures.push(...made);
     return made;
   }
 
@@ -2012,7 +1893,6 @@ class Show extends EventEmitter {
 
     const groups = this.prepareGroups({ groups: fresh(data.groups) });
 
-<<<<<<< Updated upstream
     // Objects before structures, which may hold them. A copy gets a new id,
     // and keeps the one it was copied from as `sourceId`, which is what a
     // pasted structure names its members by.
@@ -2022,28 +1902,11 @@ class Show extends EventEmitter {
 
     const structures = this.prepareStructures({ structures: fresh(data.structures) });
 
-=======
-    // Before the structures, which hold their members rather than their ids:
-    // an object member has to exist before the structure can be given it. The
-    // saved ids are indexed rather than kept -- `freshIds` -- because a copy
-    // cannot hold the id of what it was copied from.
-    const objects = await this.prepareObjects({ objects: data.objects || [] }, { freshIds: true });
-    objects.forEach((object) => { object.name = this.uniqueObjectName(object.name, object.id); });
-
-    const structures = this.prepareStructures({ structures: fresh(data.structures) });
-    structures.forEach((structure) => {
-      structure.name = this.uniqueStructureName(structure.name, structure.id);
-    });
-
->>>>>>> Stashed changes
-    this.capShadowCasters();
-    // A member inside a pasted structure or group is not a loose item, and
+    // A fixture inside a pasted structure or group is not a loose item, and
     // handing it back would put the gizmo on the members as well as on the
-    // thing that holds them. Objects can be members now, so they are filtered
-    // on the same rule the fixtures already were.
+    // thing that holds them.
     const loose = fixtures.filter((fixture) => !fixture.structure && !fixture.group);
-    const looseObjects = objects.filter((object) => !object.structure);
-    return [...loose, ...looseObjects, ...structures, ...groups];
+    return [...loose, ...objects, ...structures, ...groups];
   }
 
   /**
@@ -2061,7 +1924,6 @@ class Show extends EventEmitter {
     return true;
   }
 
-<<<<<<< Updated upstream
   prepareStructures(showData) {
     const made = (showData.structures || []).map((structureData) => {
       const structure = new Structure(structureData);
@@ -2085,21 +1947,6 @@ class Show extends EventEmitter {
     });
     Show.joinNumbered(this.structures, made);
     return made;
-=======
-  /**
-   * A name not already taken by another object.
-   *
-   * @public
-   * @param {String} base the model's name
-   * @returns {String}
-   */
-  numberedObjectName(base) {
-    const taken = new Set(this.objects.map((object) => object.name));
-    if (!taken.has(base)) return base;
-    let n = 2;
-    while (taken.has(`${base} ${n}`)) n += 1;
-    return `${base} ${n}`;
->>>>>>> Stashed changes
   }
 
   /**
@@ -2154,10 +2001,6 @@ class Show extends EventEmitter {
    *
    * Keeping the contents is a different intention, and has its own word:
    * `explodeStructure`.
-   *
-   * Members are deleted by kind rather than assumed to be fixtures: a structure
-   * may hold objects, and releasing one without taking it out of the show would
-   * leave it standing there still reporting an owner that no longer exists.
    *
    * @public
    * @param {Object} structure structure to remove
@@ -2270,7 +2113,8 @@ class Show extends EventEmitter {
   async preloadGdtfFixtures() {
     if (typeof window === 'undefined' || !window.library || !window.library.gdtfList) return;
     this.gdtfFixtures = await window.library.gdtfList();
-    if (window.library.gdtfRemoved) this.removedGdtf = await window.library.gdtfRemoved();
+    // The user's gobo and disc images, for placements that swap them in.
+    if (window.library.gobos) UserGobos.set(await window.library.gobos());
   }
 
   /**
@@ -2525,15 +2369,16 @@ class Show extends EventEmitter {
     all.forEach((entry) => {
       const maker = fold(entry.manufacturer);
       const match = named.find(({ name }) => name && (maker === name || maker.startsWith(`${name} `)));
-      // Typed and marked as an OFL profile is: GDTF draws moving heads and
-      // static lights so far, and the rest patch and draw nothing.
+      // Typed and marked as an OFL profile is: GDTF draws moving heads, static
+      // lights and lasers so far, and the rest patch and draw nothing.
       const row = {
         file: entry.key,
         name: entry.name,
         manufacturer: entry.key.split('/')[0],
         category: entry.category || 'unreadable file',
-        supported: entry.category === 'Moving Head' || entry.category === 'Static',
+        supported: ['Moving Head', 'Static', 'Laser'].includes(entry.category),
         gdtf: true,
+        shipped: !!entry.shipped,
         fixtureTypeId: entry.fixtureTypeId || null,
         revision: entry.revision || null,
       };
@@ -2650,55 +2495,6 @@ class Show extends EventEmitter {
       generated: true,
       fixtures: byManufacturer[name],
     }));
-  }
-
-  /**
-   * Gets showfile type from showfile extension
-   *
-   * @todo Implement QLC and other showfile formats better
-   *
-   * @param {String} showFileName show file name
-   * @static
-   */
-  static _getShowFileType(showFileName) {
-    const splitted = showFileName.split('.');
-    return splitted[splitted.length - 1];
-  }
-
-  /**
-   * Parses show data
-   *
-   * @param {File} showFile handle to raw showfile instance
-   * @param {String} extension extendion of the provided showfile
-   * @static
-   */
-  static _parseShowData(showFile, extension) {
-    switch (extension) {
-      case SHOWFILE_EXTENSIONS.JSON:
-        return JSON.parse(showFile);
-      default:
-        throw new Error('Could not load provided file');
-    }
-  }
-
-  /**
-   * Reads a file asynchronously
-   *
-   * @todo put this in utils
-   *
-   * @param {File} file handle to file instance
-   * @static
-   * @async
-   */
-  static async readFileAsync(file) {
-    return new Promise((resolve, reject) => {
-      const fr = new FileReader();
-      fr.onload = () => {
-        resolve(fr.result);
-      };
-      fr.onerror = reject;
-      fr.readAsText(file);
-    });
   }
 }
 

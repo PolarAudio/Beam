@@ -35,6 +35,17 @@ const EMITTERS = new Set(['Beam', 'Laser', 'Display']);
 /** A typed-array view's bytes as an ArrayBuffer of their own. */
 const bufferOf = (u8) => u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
 
+/** The colour of the first material in a loaded model, `#rrggbb`, or null. */
+function colourOf(object) {
+  let found = null;
+  object.traverse((node) => {
+    if (found || !node.isMesh) return;
+    const material = Array.isArray(node.material) ? node.material[0] : node.material;
+    if (material && material.color) found = `#${material.color.getHexString()}`;
+  });
+  return found;
+}
+
 /** A GDTF Position, row-major, as a Matrix4; identity when absent. */
 function matrixOf(position) {
   const m = new THREE.Matrix4();
@@ -71,20 +82,25 @@ function primitiveOf(model) {
 
 /**
  * A model's mesh, oriented Z-up and scaled to the Model's size about its own
- * origin, as `{ geometry, fromFile }`: `fromFile` false for a primitive drawn
- * in its place. Null when there is nothing to draw.
+ * origin, as `{ geometry, fromFile, colour }`: `fromFile` false for a
+ * primitive drawn in its place, `colour` the file's first material or null.
+ * Null when there is nothing to draw.
  */
 async function meshOf(model, files) {
   const found = modelFiles(files, model);
   let geometry = null;
   let fromFile = false;
+  let colour = null;
   try {
     if (found.gltf) {
       const gltf = await new GLTFLoader().parseAsync(bufferOf(files[found.gltf]), '');
+      colour = colourOf(gltf.scene);
       geometry = flatten(gltf.scene);
       if (geometry) geometry.applyMatrix4(Y_UP_TO_Z_UP);
     } else if (found['3ds']) {
-      geometry = flatten(new TDSLoader().parse(bufferOf(files[found['3ds']]), ''));
+      const scene = new TDSLoader().parse(bufferOf(files[found['3ds']]), '');
+      colour = colourOf(scene);
+      geometry = flatten(scene);
     }
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -103,7 +119,27 @@ async function meshOf(model, files) {
     scale(model.width, size.y),
     scale(model.height, size.z),
   );
-  return { geometry, fromFile };
+  return { geometry, fromFile, colour };
+}
+
+/**
+ * A laser's body from its GDTF file: the root geometry's model, drawn about
+ * the root's origin, and the colour its file gives it.
+ *
+ * Unlike a light's, a laser's file is drawn standing, as Beam's laser is: Z
+ * up, the beam leaving along -Y.
+ *
+ * @param {Object} type a GDTF fixture type with a Laser geometry
+ * @param {Object} files the archive's files, from `readGdtf`
+ * @returns {Promise<Object|null>} `{ geometry, colour }`, null when the root
+ *   has no model to draw
+ */
+export async function laserBody(type, files) {
+  const root = (type.geometries || [])[0];
+  const model = root && root.model ? type.index.model.get(root.model) : null;
+  if (!model) return null;
+  const mesh = await meshOf(model, files);
+  return mesh ? { geometry: mesh.geometry, colour: mesh.colour } : null;
 }
 
 /** The geometry names a mode's pan and tilt channels move. */

@@ -44,6 +44,8 @@ check('no name is nobody\'s', isOwnPretty('Color1', ''), false);
 console.log('\nlabels');
 check('standard pretty keeps Beam\'s reading', attributeLabel('Gobo1PosRotate', 'Rotate'), 'Gobo 1 rotation');
 check('own pretty is shown', attributeLabel('Effects1', 'Sound'), 'Sound');
+check('animation system, spec pretty', attributeLabel('AnimationSystem1', 'Anim System'), 'Animation system 1');
+check('animation system rotation', attributeLabel('AnimationSystem1PosRotate', 'Anim System Rotate'), 'Animation system 1 rotation');
 check('own pretty is trimmed', attributeLabel('Shutter1', ' Strobe '), 'Strobe');
 check('no reading and the spec\'s pretty shows the attribute', attributeLabel('Dimmer', 'Dim'), 'Dimmer');
 check('no reading and no pretty shows the attribute', attributeLabel('PatternSelection'), 'PatternSelection');

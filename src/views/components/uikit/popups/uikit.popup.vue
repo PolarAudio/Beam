@@ -360,7 +360,9 @@ export default {
       if (!this.noValidation) {
         if (e.key === 'Escape') {
           this.close();
-        } else if (e.key === 'Enter' && this.valid) {
+        } else if (e.key === 'Enter' && this.valid
+          // Enter in a multi-line box is a new line, not a submit.
+          && !(e.target && e.target.tagName === 'TEXTAREA')) {
           this.submit();
         }
       }

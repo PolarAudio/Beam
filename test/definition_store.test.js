@@ -49,7 +49,7 @@ console.log('\n-- it travels in the show file, compact --');
 
   check('both keys written', Object.keys(json).length, 2);
   check('a bar is written without its channels', json['Beatline/Bar 60'].modes, undefined);
-  check('but keeps its geometry', json['Beatline/Bar 60'].asls.bar.columns, 60);
+  check('but keeps its geometry', json['Beatline/Bar 60'].beam.bar.columns, 60);
   check('a projector is written as it is', Array.isArray(json['Beatline/Beamer'].modes), true);
 
   const back = DefinitionStore.fromJSON(json);

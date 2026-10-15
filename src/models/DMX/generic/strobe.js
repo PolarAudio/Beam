@@ -8,7 +8,7 @@
  *
  * Like the others the generated document is OFL-shaped, so `Fixture` reads it
  * through the same path as a library profile, and everything OFL cannot say
- * lives under `asls.strobe`.
+ * lives under `beam.strobe`.
  *
  * What the strobe is *doing* -- its rate, its flash length, its mode, its
  * colour, whether it is held on as a blinder -- is a set of controls, each
@@ -615,7 +615,7 @@ export function strobeChannels(params) {
  * Whether a profile was made here.
  *
  * Asked of the geometry rather than of the Strobe category, for the same
- * reason `prepare3DModelInstance` asks it of `asls.bar`: a library strobe
+ * reason `prepare3DModelInstance` asks it of `beam.bar`: a library strobe
  * carries the category and none of these parameters.
  *
  * @public
@@ -623,7 +623,7 @@ export function strobeChannels(params) {
  * @returns {Boolean}
  */
 export function isStrobeProfile(profile) {
-  return !!(profile && profile.asls && profile.asls.strobe);
+  return !!(profile && profile.beam && profile.beam.strobe);
 }
 
 /**
@@ -645,9 +645,8 @@ export function buildStrobeProfile(overrides = {}) {
     categories: ['Strobe'],
     meta: { generated: true },
     physical: {
-      // OFL's order is width, height, depth, in millimetres. The geometry the
-      // renderer needs is in `asls.strobe`; this is for whatever reads it next.
-      dimensions: [params.width * 1000, params.height * 1000, params.depth * 1000],
+      // No `dimensions`: the size is the parameters', read through
+      // `FixtureKind.sizeOf`. A second copy drifts when a file is edited by hand.
       power: Number(params.power) || 0,
       bulb: {
         type: source === STROBE_SOURCES.XENON ? 'Xenon flash tube' : 'LED',
@@ -665,7 +664,7 @@ export function buildStrobeProfile(overrides = {}) {
     modes,
     // Everything OFL cannot express: the lamp, the flood, the box, and how
     // each control is decided.
-    asls: { strobe: params },
+    beam: { strobe: params },
   };
 }
 

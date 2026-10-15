@@ -22,7 +22,8 @@ import HeadDispatch from '@/models/DMX/gdtf/head_dispatch';
 import gdtfGuide from '@/models/DMX/gdtf/gdtf_guide';
 import { wheelsForHead } from '@/models/DMX/gdtf/fixture_parts';
 import {
-  namesClosed, namesOpen, slotKind, prismFromText,
+  namesClosed, namesOpen, slotKind, prismFromText, percentInName, namesScalePoint, NAMED_RATE_ENDS,
+  namesFalling, degreesInName, namesStop, namesOriginal, namesClockwise, namesAnticlockwise,
 } from '@/models/DMX/gdtf/name_rules';
 
 let failures = 0;
@@ -128,6 +129,16 @@ const text = (n) => guide.channels[n - 1].text;
 check('shutter words', text(2), '0–31 closed · 32–255 open');
 check('prism words', text(4), '0–127 off · 128–255 prism in (8 facet prism)');
 check('rotation words', text(5), '0–126 spin fast→slow CW · 127–128 spin stop · 129–255 spin slow→fast CCW');
+
+console.log('\nlaser rates and speeds');
+check('percentages in names', ['25%', 'Speed 200 %', '-050', 'Default', '22-5'].map(percentInName), [25, 200, -50, null, null]);
+check('points on a scale', ['Default Speed', 'Min', 'Maximum', 'Mid'].map(namesScalePoint), ['default', 'min', 'max', null]);
+check('Min to Max on a speed', NAMED_RATE_ENDS.speed, { min: 0, max: 255 });
+check('degrees in names', ['90', '-180', 'acw 180', 'cw 180', 'Home', 'center', 'Rotation Angle', '<<<'].map(degreesInName), [90, -180, -180, 180, 0, 0, null, null]);
+check('stops and resets', [namesStop('Stop'), namesStop('No Spin Zone'), namesOriginal('Reset'), namesOriginal('Rotation')], [true, true, true, false]);
+check('directions', ['<<<', '>>>', 'Reverse Spin', 'Forward Spin', 'Rotation CCW', 'Rotation CW'].map((n) => (namesClockwise(n) ? 1 : 0) - (namesAnticlockwise(n) ? 1 : 0)), [-1, 1, -1, 1, -1, 1]);
+check('a range that falls', ['Size X from big to small', 'small to big', 'Scale X'].map(namesFalling), [true, false, false]);
+check('Min to Max on a scan rate', NAMED_RATE_ENDS.scanRate, { min: 0, max: 100 });
 
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');
 process.exit(failures ? 1 : 0);

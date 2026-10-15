@@ -72,13 +72,6 @@
         :options="modeOptions"
         @input="pickMode"
       />
-      <uk-checkbox
-        v-if="canCastShadow"
-        v-model="castsShadow"
-        :mixed="shadowMixed"
-        :disabled="shadowBudgetSpent"
-        :label="shadowLabel"
-      />
       <uk-num-input
         v-if="hasManualFocus"
         :mixed="focusMixed"
@@ -86,13 +79,18 @@
         style="width: 92px"
         label="Focus at (m)"
         :precision="1"
-        :min="1"
+        :min="2.5"
         :max="100"
         @update:model-value="writeFocus"
       />
+      <uk-button
+        v-if="hasSwappableWheels"
+        label="Gobos and discs…"
+        @click="editWheels"
+      />
 
-      <!-- A video device's own settings live here for the same reason the
-           shadow tick above does: they belong to *this* placement, and a
+      <!-- A video device's own settings live here because they belong to
+           *this* placement, and a
            fixture's placement settings are what this widget is. The Model
            widget beside it is profile-scoped -- it speaks for every device of
            the model -- so a projector's throw *range* belongs there and its
@@ -215,6 +213,21 @@
              Dream and LaserCube name a device by its address alone, so one
              laser each, while IDN offers a named service per laser at one
              address. -->
+        <!-- Overrides whatever the laser is fed, as a projector's service test
+             does. Several lasers at once is how a rig is aligned. -->
+        <uk-flex
+          v-if="isLaser"
+          :gap="8"
+          class="row"
+        >
+          <uk-select-input
+            :model-value="testPatternIndex"
+            style="flex: 1"
+            label="Test pattern"
+            :options="testPatternOptions"
+            @input="pickTestPattern"
+          />
+        </uk-flex>
         <!-- Not for several at once: an address is where one device lives. -->
         <template v-if="isLaser && !many">
           <uk-flex
@@ -250,6 +263,27 @@
               @input="pickSource"
             />
           </uk-flex>
+          <!-- The standalone list: the user's ILDA files, as a laser's memory
+               card holds them, managed in the Clip list window. The number is
+               what a Clip channel picks. -->
+          <template v-if="usesClips">
+            <uk-flex
+              :gap="6"
+              class="row clip_controls"
+            >
+              <uk-select-input
+                :model-value="clipIndex"
+                style="flex: 1"
+                label="Clip"
+                :options="clipOptions"
+                @input="pickClip"
+              />
+              <uk-button
+                label="Edit clip list…"
+                @click="editClips"
+              />
+            </uk-flex>
+          </template>
           <span class="hint">{{ inputStatus }}</span>
         </template>
 
@@ -522,21 +556,25 @@
 
         <!-- A laser's output stage: what it lays over the DAC's stream, grouped
              and laid out across so it is not one tall column. A fixed parameter
-             is baked in the profile and dropped from the panel; a driven one is
-             greyed and holds the live DMX value; an adjustable one is yours to
-             set here. -->
+             is baked in the profile and dropped from the panel, and a group with
+             nothing left is dropped whole; a driven one is greyed and holds the
+             live DMX value; an adjustable one is yours to set here. -->
         <template v-if="isLaser">
           <template
             v-for="group in laserGroups"
             :key="group.label"
           >
-            <span class="section_label">{{ group.label }}</span>
+            <span
+              v-if="groupShown(group)"
+              class="section_label"
+            >{{ group.label }}</span>
             <!-- Lines are declared, not left to wrap: which fields sit together
                  is a statement about what they are -- the two scales, then the
                  two positions -- and letting flex decide put them wherever the
                  widget's width happened to break. -->
             <uk-flex
               v-for="(line, at) in group.lines"
+              v-show="line.some((row) => byHand(row.key))"
               :key="`${group.label}-${at}`"
               :gap="6"
               class="control_wrap"
@@ -556,7 +594,8 @@
               />
             </uk-flex>
             <uk-flex
-              v-if="group.shutter || (group.toggles || []).length"
+              v-if="(group.shutter && byHand('shutter'))
+                || (group.toggles || []).some((toggle) => byHand(toggle.key))"
               :gap="6"
               class="control_wrap"
             >
@@ -677,13 +716,14 @@
 import { DMX_UNIVERSE_LENGTH } from '@/models/DMX/patch.model';
 import { ROTATIONS } from '@/models/DMX/video_input';
 import { SCALE_MODES, PICTURE_KEYS } from '@/models/DMX/picture_controls';
-import { MAX_SHADOW_CASTERS } from '@/plugins/visualizer/light';
 import { imageSizeAt } from '@/models/DMX/generic/projector';
 import { GENERIC_KINDS } from '@/models/DMX/generic/kinds';
 import EventBus from '@/plugins/eventbus';
 import LaserStream from '@/plugins/laser_stream';
 import Laser from '@/plugins/visualizer/laser';
-import { SELECTABLE_PROTOCOLS, PROTOCOL_LABELS } from '@/models/DMX/laser_settings';
+import { SELECTABLE_PROTOCOLS, PROTOCOL_LABELS, CLIPS_PROTOCOL } from '@/models/DMX/laser_settings';
+import { TEST_PATTERN_IDS, TEST_PATTERN_LABELS, selectedClip } from '@/models/DMX/laser_clips';
+import { cardFor } from '@/plugins/visualizer/laser_cards';
 import { SHUTTER_MODE_ORDER, SHUTTER_MODE_LABELS } from '@/plugins/visualizer/shutter';
 import { formatAddress } from '@/models/DMX/address_format';
 import fixtureGuide from '@/models/DMX/fixture_guide';
@@ -807,6 +847,11 @@ export default {
     targetIds() {
       return this.targets.map((target) => target.id);
     },
+    /** Whether the fixture has a gobo or animation wheel to swap images into. */
+    hasSwappableWheels() {
+      const f = this.fixture;
+      return !!(f && f.swappableWheels && f.swappableWheels.length);
+    },
     /** Whether the panel stands for several fixtures. */
     many() {
       return this.targets.length > 1;
@@ -835,11 +880,6 @@ export default {
       const first = !!this.fixture.universeAligned;
       return this.targets.some((target) => !!target.universeAligned !== first);
     },
-    shadowMixed() {
-      if (!this.many) return false;
-      const first = !!this.fixture.castsShadow;
-      return this.targets.some((target) => !!target.castsShadow !== first);
-    },
     /**
      * Whether the lens is focused by hand, so the placement holds the focus.
      *
@@ -852,15 +892,6 @@ export default {
       if (!this.many) return false;
       const first = this.fixture.focusDistance;
       return this.targets.some((target) => target.focusDistance !== first);
-    },
-    /**
-     * Whether this fixture can cast a shadow at all. An emitter bar has no
-     * beam behind which to cast one, so it is not offered the choice.
-     *
-     * @type {Boolean}
-     */
-    canCastShadow() {
-      return !!(this.fixture && this.fixture.canCastShadow);
     },
     /**
      * This projector's placement settings, or null for anything else.
@@ -927,8 +958,8 @@ export default {
       // A basis rather than a width: the controls share whatever the widget
       // is, so three colours fit across one row and four geometry fields fall
       // into two, whatever width the widget has.
-      const pct = (key, label, min = 0, basis = 88) => ({
-        key, label, min, max: 100, basis,
+      const pct = (key, label, min = 0, basis = 88, max = 100) => ({
+        key, label, min, max, basis,
       });
       return [
         { label: 'Intensity', lines: [[pct('dimmer', 'Dimmer %')]], shutter: true },
@@ -954,6 +985,10 @@ export default {
               key: 'mirrorY', label: 'Mirror Y', icon: 'flip_y', axis: 'y',
             },
           ],
+        },
+        {
+          label: 'Playback %',
+          lines: [[pct('scanRate', 'Scan rate', 0, 80, 200), pct('speed', 'Speed', 0, 80, 400)]],
         },
       ];
     },
@@ -1002,6 +1037,11 @@ export default {
         // default and the Address row would never appear.
         protocol: device.value('protocol'),
         address: device.value('address'),
+        // A laser's clip list and the clip playing from it.
+        clips: device.value('clips'),
+        clip: device.value('clip'),
+        testPattern: device.value('testPattern'),
+        card: device.value('card'),
         // The laser output stage. Undefined for any device without these, which
         // reads as nothing to show -- the rows are gated on the kind anyway.
         red: device.value('red'),
@@ -1149,6 +1189,38 @@ export default {
     usesStream() {
       return this.isLaser && this.protocol === 'ponk';
     },
+    /** A laser playing its own clip list. */
+    usesClips() {
+      return this.isLaser && this.protocol === CLIPS_PROTOCOL;
+    },
+    /** The laser's clip list, as stored. */
+    clips() {
+      const list = this.read('clips');
+      return Array.isArray(list) ? list : [];
+    },
+    /** The id of the clip playing: the chosen one, or the first. */
+    playingClipId() {
+      const clip = selectedClip(this.clips, this.read('clip'));
+      return clip ? clip.id : null;
+    },
+    clipOptions() {
+      return this.clips.length
+        ? this.clips.map((clip, i) => `${i + 1}  ${clip.name}`)
+        : ['— add an ILDA file —'];
+    },
+    testPatternOptions() {
+      const list = TEST_PATTERN_IDS.map((id) => TEST_PATTERN_LABELS[id]);
+      return this.isMixed('testPattern') ? ['*', ...list] : list;
+    },
+    testPatternIndex() {
+      if (this.isMixed('testPattern')) return 0;
+      const at = TEST_PATTERN_IDS.indexOf(this.read('testPattern'));
+      return at < 0 ? 0 : at;
+    },
+    clipIndex() {
+      const at = this.clips.findIndex((clip) => clip.id === this.playingClipId);
+      return at < 0 ? 0 : at;
+    },
     /**
      * The protocols on offer, plus whatever this laser is already set to --
      * so a show holding a withdrawn one still shows the truth rather than
@@ -1237,6 +1309,24 @@ export default {
       if (!state) return '';
       // A device that never started -- a port another program owns, most often
       // -- is the answer whatever else the streams say.
+      if (state.mode === 'off' && !state.test) return 'Off by the Mode channel.';
+      if (state.protocol === CLIPS_PROTOCOL) {
+        const fed = PROTOCOL_LABELS[state.fed] || state.fed;
+        const over = state.test && state.fed !== CLIPS_PROTOCOL ? `, over ${fed}` : '';
+        const byMode = !state.test && state.mode === 'standalone' && state.fed !== CLIPS_PROTOCOL
+          ? ' (standalone by the Mode channel)' : '';
+        if (!state.name) return `Add an ILDA file to play${byMode}.`;
+        if (state.test && state.live) {
+          return `Test pattern ${state.name}${over}: ${state.points} points at ${Math.round(state.rate / 1000)} kpps.`;
+        }
+        if (state.error) return `${state.name}: ${state.error}.`;
+        if (state.clipState === 'missing') return `${state.name}: the file is not in the library or the project.`;
+        if (!state.live) return `Loading ${state.name}…`;
+        const frames = state.frames > 1 ? `, ${state.frames} frames` : '';
+        const cardKey = this.read('card');
+        const card = cardKey ? ` from card ${(cardFor(cardKey) || {}).name || cardKey}` : '';
+        return `Playing ${state.name}${card}${byMode}: ${state.points} points${frames} at ${Math.round(state.rate / 1000)} kpps.`;
+      }
       if (state.error) return `Not connected — ${state.error}.`;
       if (state.protocol === 'ponk') {
         if (!state.live) return 'Waiting — no Ponk stream. Turn on "Publish to PONK" in MadMapper.';
@@ -1292,68 +1382,11 @@ export default {
     throwHint() {
       if (!this.device) return '';
       if (this.isMixed('zoom')) return 'throw ratios differ';
-      const params = this.fixture.OFLData.asls.projector;
+      const params = this.fixture.OFLData.beam.projector;
       const at = imageSizeAt(5, this.read('zoom'), params);
       const size = `at 5 m ${at.width.toFixed(2)} × ${at.height.toFixed(2)} m`;
       if (!this.device.zooms) return `prime · ${size}`;
       return `${this.device.range.min} – ${this.device.range.max} · ${size}`;
-    },
-    /**
-     * Whether this fixture's beam casts a shadow.
-     *
-     * Per fixture and off by default. Shadow maps come out of a small fixed
-     * pool the whole scene shares -- around sixteen on a typical GPU, counting
-     * everything else that samples a texture -- so this is a few fixtures'
-     * worth of budget to spend where it reads, not a switch to leave on.
-     *
-     * @type {Boolean}
-     */
-    castsShadow: {
-      get() {
-        return !!(this.fixture && this.fixture.castsShadow);
-      },
-      set(state) {
-        if (!state) {
-          this.targets.forEach((target) => { target.castsShadow = false; });
-          return;
-        }
-        // Turned on for as many as the budget has room for, in selection order.
-        let casting = this.shadowCasters;
-        this.targets.forEach((target) => {
-          if (target.castsShadow) return;
-          if (casting >= MAX_SHADOW_CASTERS) return;
-          target.castsShadow = true;
-          casting += 1;
-        });
-      },
-    },
-    /**
-     * How many fixtures in the show are casting shadows.
-     *
-     * @type {Number}
-     */
-    shadowCasters() {
-      return this.$show.fixturePool.fixtures.filter((f) => f.castsShadow).length;
-    },
-    /**
-     * Whether the budget is gone.
-     *
-     * A fixture that is already casting is never blocked -- that would be a
-     * tick you could not untick -- so this only ever stops the next one.
-     *
-     * @type {Boolean}
-     */
-    shadowBudgetSpent() {
-      return !this.castsShadow && this.shadowCasters >= MAX_SHADOW_CASTERS;
-    },
-    /**
-     * The label carries the count, so the limit is visible before it is hit
-     * rather than appearing as a checkbox that mysteriously will not tick.
-     *
-     * @type {String}
-     */
-    shadowLabel() {
-      return `Casts shadows (${this.shadowCasters}/${MAX_SHADOW_CASTERS})`;
     },
     /**
      * Universe the fixture starts in. Setting it slides the fixture by whole
@@ -1448,9 +1481,11 @@ export default {
     }, WIRE_POLL_MS);
     // The Video inputs window can set a device's input; the rows re-read.
     EventBus.on('video_input_assigned', this.onInputAssigned);
+    EventBus.on('laser_clips_changed', this.onClipsChanged);
   },
   beforeUnmount() {
     EventBus.off('video_input_assigned', this.onInputAssigned);
+    EventBus.off('laser_clips_changed', this.onClipsChanged);
     if (this.streamTimer) clearInterval(this.streamTimer);
     this.streamTimer = null;
     if (this.wireTimer) clearInterval(this.wireTimer);
@@ -1519,6 +1554,20 @@ export default {
     byHand(key) {
       if (!this.device) return false;
       return !this.device.isFixed(key) && !this.device.isDriven(key);
+    },
+    /**
+     * Whether a laser control group has anything set by hand, so a group whose
+     * every control is fixed or driven shows no heading.
+     *
+     * @public
+     * @param {Object} group one of `laserGroups`
+     * @returns {Boolean}
+     */
+    groupShown(group) {
+      const keys = group.lines.flat().map((row) => row.key)
+        .concat((group.toggles || []).map((toggle) => toggle.key))
+        .concat(group.shutter ? ['shutter'] : []);
+      return keys.some((key) => this.byHand(key));
     },
     /**
      * The name of the range a channel's byte falls in, from the profile.
@@ -1654,19 +1703,17 @@ export default {
      */
     setChannelValue(index, value) {
       this.targets.forEach((target) => {
-        if (target.device) {
-          // Straight to the channel: a device's values are its controls, and
-          // the show saves those. Parking the byte as well would store the
-          // same fact twice and let the two disagree on the next load.
-          target.setChannel(index, Math.max(0, Math.min(255, Math.round(Number(value) || 0))));
-        } else if (target.parkChannel) {
-          target.parkChannel(index, value);
-        }
+        // Held and saved for every fixture, so the table loads as it was
+        // left; a device's control values are restored after its bytes.
+        if (target.parkChannel) target.parkChannel(index, value);
         // The renderer reads the fixture rather than watching it, the same as
         // every other write in this widget.
         const model = target._3DModel;
         if (model && model.refresh) model.refresh();
       });
+      // A held value is saved with the project, and the proxy does not see
+      // it written, so changing one is marked as an edit here.
+      if (this.$show && this.$show.touch) this.$show.touch();
       if (this.device) this.deviceRevision += 1;
       this.channelRevision += 1;
     },
@@ -1735,6 +1782,39 @@ export default {
       // by a DAC would be a setting that says something untrue.
       if (protocol !== 'ponk' && this.read('source')) this.writeDevice('source', null);
     },
+    /**
+     * Sets the test pattern, which overrides whatever the laser is fed.
+     *
+     * @public
+     * @param {Number} index into `testPatternOptions`
+     */
+    pickTestPattern(index) {
+      const id = TEST_PATTERN_IDS[Number(index) - (this.isMixed('testPattern') ? 1 : 0)];
+      if (id) this.writeDevice('testPattern', id);
+    },
+    /**
+     * Plays one clip of the list.
+     *
+     * @public
+     * @param {Number} index into the list
+     */
+    pickClip(index) {
+      const clip = this.clips[index];
+      if (clip) this.writeDevice('clip', clip.id);
+    },
+    /** Opens the Gobos and discs window on the fixtures this panel stands for. */
+    editWheels() {
+      EventBus.emit('open_wheels', { fixtureIds: this.targetIds });
+    },
+    /** Opens the Clip list window on this laser. */
+    editClips() {
+      if (this.fixture) EventBus.emit('open_laser_clips', { fixtureId: this.fixture.id });
+    },
+    /** The Clip list window changed this laser; read it again. */
+    onClipsChanged() {
+      this.deviceRevision += 1;
+    },
+
     /**
      * Binds this laser's device to one of the machine's addresses.
      *
@@ -1817,6 +1897,13 @@ export default {
   flex-wrap: wrap;
   align-items: flex-start;
 }
+.clip_controls {
+  align-items: flex-end;
+}
+.icon_toggle:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
 .icon_toggle {
   display: flex;
   align-items: center;
@@ -1835,6 +1922,11 @@ export default {
    does rather than only whether it is on. */
 .icon_toggle :deep(.icon) {
   transition: transform 0.12s ease;
+}
+/* Icons whose paths carry no fill of their own would draw black; they take
+   the button's colour like the rest. */
+.icon_toggle :deep(.icon path) {
+  fill: currentColor;
 }
 .icon_toggle.on {
   background: var(--accent-blue);
@@ -1855,6 +1947,8 @@ export default {
 /* The channel table: the same table the Model widget draws for a bar, with
    the byte's box in a cell. Rows are as tight as the box allows. */
 .channel_table {
+  /* A scroll box in the body's column: without this it shrinks to nothing. */
+  flex-shrink: 0;
   overflow-x: auto;
   border: 1px solid var(--primary-dark);
   border-radius: 3px;

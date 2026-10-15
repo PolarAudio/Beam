@@ -35,6 +35,8 @@ import projectexport from './projectexport';
 import videorecorder from './videorecorder';
 import environmentstore from './environmentstore';
 import mediastore from './mediastore';
+import laserclipstore from './laserclipstore';
+import gobostore from './gobostore';
 import gdtfstore from './gdtfstore';
 import gdtfshare from './gdtfshare';
 import fileexport from './fileexport';
@@ -607,14 +609,20 @@ function setupLibrary() {
   ipcMain.handle('library:environments', () => environmentstore.list());
   ipcMain.handle('library:media', () => mediastore.list());
   ipcMain.handle('library:addMedia', () => mediastore.add(mainWindow));
+  ipcMain.handle('library:gobos', () => gobostore.list());
+  ipcMain.handle('library:addGobos', () => gobostore.add(mainWindow));
+  ipcMain.handle('library:laserClips', () => laserclipstore.list());
+  ipcMain.handle('library:addLaserClips', () => laserclipstore.add(mainWindow));
+  ipcMain.handle('library:laserCards', () => laserclipstore.listCards());
+  ipcMain.handle('library:saveLaserCard', (event, name, clips) => laserclipstore.saveCard(name, clips));
+  ipcMain.handle('library:exportLaserClips', (event, clips) => laserclipstore.exportToFolder(mainWindow, clips));
   // The dialog is attached to the window so it is modal to Beam rather than
   // floating loose, which is how every other file prompt here behaves.
   ipcMain.handle('library:addEnvironment', () => environmentstore.add(mainWindow));
 
   // GDTF fixtures, kept as downloaded. The list is metadata only; the bytes
   // are served as `library://profiles/<file>`.
-  ipcMain.handle('library:gdtfList', () => gdtfstore.list());
-  ipcMain.handle('library:gdtfRemoved', () => gdtfstore.listRemoved());
+  ipcMain.handle('library:gdtfList', () => gdtfstore.listAll());
   ipcMain.handle('library:pickGdtf', async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
       title: 'Import GDTF fixtures',
@@ -678,7 +686,7 @@ function setupDocumentStore() {
   ipcMain.handle('document:export', (_event, target, json, wanted) => projectexport.exportTo(target, json, wanted));
   ipcMain.handle('document:refresh', (_event, wanted) => projectexport.refresh(wanted));
   ipcMain.handle('document:open', () => documentstore.openDialog());
-  ipcMain.handle('document:saveAs', (_event, name, title) => documentstore.saveDialog(name, title));
+  ipcMain.handle('document:saveAs', (_event, name, title, folderKey) => documentstore.saveDialog(name, title, folderKey));
   ipcMain.handle('document:projectName', (_event, target) => documentstore.projectNameFor(target));
   ipcMain.handle('document:root', () => documentstore.projectRoot());
   // Claimed rather than read: the renderer opens it once, and a reload must not

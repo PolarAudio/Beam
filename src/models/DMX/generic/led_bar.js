@@ -1,3 +1,5 @@
+import withBeamSection from './beam_section';
+
 /**
  * @file Generic LED bar: a rigid body carrying a grid of emitters.
  *
@@ -318,14 +320,15 @@ export function ledBarChannels(params) {
  *
  * What gets written to the library. A 256 x 256 tile is 196,608 channels, each
  * an identical capability under a different name: 33 MB of file describing
- * what `asls.bar` already says in a dozen numbers.
+ * what `beam.bar` already says in a dozen numbers.
  *
  * @public
  * @param {Object} profile a built profile
  * @returns {Object} the profile without `availableChannels` or `modes`
  */
 export function withoutLedBarChannels(profile) {
-  if (!profile || !profile.asls || !profile.asls.bar) return profile;
+  withBeamSection(profile);
+  if (!profile || !profile.beam || !profile.beam.bar) return profile;
   const { availableChannels, modes, ...rest } = profile;
   return rest;
 }
@@ -341,16 +344,17 @@ export function withoutLedBarChannels(profile) {
  * @returns {Object} a profile the fixture parser can read
  */
 export function expandLedBarProfile(profile) {
-  if (!profile || !profile.asls || !profile.asls.bar) return profile;
+  withBeamSection(profile);
+  if (!profile || !profile.beam || !profile.beam.bar) return profile;
   if (profile.availableChannels && Object.keys(profile.availableChannels).length) return profile;
-  return { ...profile, ...ledBarChannels(profile.asls.bar) };
+  return { ...profile, ...ledBarChannels(profile.beam.bar) };
 }
 
 /**
  * Builds an OFL-shaped profile for a bar.
  *
  * @param {Object} [overrides] parameters replacing the defaults
- * @returns {Object} profile, with its parameters kept under `asls.bar`
+ * @returns {Object} profile, with its parameters kept under `beam.bar`
  */
 export function buildLedBarProfile(overrides = {}) {
   const params = { ...DEFAULT_BAR_PARAMS, ...overrides };
@@ -363,13 +367,14 @@ export function buildLedBarProfile(overrides = {}) {
     categories: ['Matrix'],
     meta: { generated: true },
     physical: {
-      dimensions: [params.length * 1000, params.width * 1000, params.height * 1000],
+      // No `dimensions`: the size is the parameters', read through
+      // `FixtureKind.sizeOf`. A second copy drifts when a file is edited by hand.
       bulb: { type: 'LED' },
     },
     availableChannels,
     modes,
     // Everything OFL cannot express: where the emitters actually are.
-    asls: { bar: params, components },
+    beam: { bar: params, components },
   };
 }
 

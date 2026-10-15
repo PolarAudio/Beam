@@ -1,4 +1,5 @@
 import { withoutLedBarChannels, expandLedBarProfile } from './generic/led_bar';
+import withBeamSection from './generic/beam_section';
 
 /**
  * The manufacturer segment of a definition that belongs to the show.
@@ -80,7 +81,7 @@ class DefinitionStore {
   static fromJSON(data) {
     const store = new DefinitionStore();
     Object.entries(data || {}).forEach(([key, profile]) => {
-      if (profile) store._profiles[key] = expandLedBarProfile(profile);
+      if (profile) store._profiles[key] = expandLedBarProfile(withBeamSection(profile));
     });
     return store;
   }
@@ -110,7 +111,7 @@ class DefinitionStore {
    * @param {String} key
    * @param {Object} profile a full profile, channels and all
    */
-  add(key, profile) { this._profiles[key] = profile; }
+  add(key, profile) { this._profiles[key] = withBeamSection(profile); }
 
   /**
    * @param {String} key

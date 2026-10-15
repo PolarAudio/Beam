@@ -7,11 +7,6 @@
     "generated": true
   },
   "physical": {
-    "dimensions": [
-      1000,
-      25,
-      15
-    ],
     "bulb": {
       "type": "LED"
     }
@@ -565,7 +560,7 @@
       ]
     }
   ],
-  "asls": {
+  "beam": {
     "bar": {
       "length": 1,
       "width": 0.025,

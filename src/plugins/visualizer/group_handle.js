@@ -27,6 +27,8 @@ class GroupHandle {
   constructor(group) {
     this._group = group;
     this.unsupported = false;
+    /** Members drawn as selected while the group is, or null for all of them. */
+    this._lit = null;
     this._dummy = new THREE.Object3D();
     SceneManager.add(this._dummy);
 
@@ -110,12 +112,35 @@ class GroupHandle {
     if (!next && !this._highlighted) return;
     this._highlighted = next;
     this._group.members.forEach((member) => {
-      if (member && member.highlight) member.highlight(next, false);
+      if (member && member.highlight) member.highlight(next && this.isLit(member), false);
     });
   }
 
   get highlighted() {
     return !!this._highlighted;
+  }
+
+  /**
+   * Limits which members are drawn as selected while the group is: the ones
+   * a structure's member list has highlighted.
+   *
+   * @public
+   * @param {Array|null} members the members to draw, or null for all
+   */
+  setLitMembers(members) {
+    this._lit = members ? new Set(members.map((member) => toRaw(member))) : null;
+    if (!this._highlighted) return;
+    this._group.members.forEach((member) => {
+      if (member && member.highlight) member.highlight(this.isLit(member), false);
+    });
+  }
+
+  /**
+   * @param {Object} member
+   * @returns {Boolean} whether the member is drawn as selected with the group
+   */
+  isLit(member) {
+    return !this._lit || this._lit.has(toRaw(member));
   }
 
   setSinglyHighlighted(state) {

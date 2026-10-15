@@ -12,9 +12,13 @@ import LightField, {
 } from './light_field';
 import { castsContactShadow } from './contact_shadows';
 import Shapers, { bladePlanes, SHAPER_GLSL } from './shapers';
+import Animation, {
+  ANIMATION_GLSL, DEFAULT_ANIMATION_SYSTEM, windowCentre,
+} from './animation_wheel';
 import { DepthAtlas } from './projector_depth';
 import {
-  goboTexture, goboLayerFor, goboImageCell, GOBO_BLUR_LEVELS,
+  goboTexture, goboSourceAt, holdGobos, releaseGobos, warmGobos, onGoboDrawn,
+  GOBO_BLUR_LEVELS,
 } from './gobo_library';
 import BodyFinish from './body_finish';
 import { addInstancedSource } from './selection_outline';
@@ -97,6 +101,15 @@ const LENS_DARK = 0.05;
  * @constant {Number}
  */
 const LENS_FACE_MAX = 30000;
+/**
+ * The share of a lamp's light its lens scatters evenly over the front half
+ * space: surface and bulk scatter of the glass and reflections between the
+ * elements. It is why a lens seen from outside its beam still shows as a lit
+ * disc. Optical glass with coatings scatters in the order of 1 %.
+ *
+ * @constant {Number}
+ */
+const LENS_SCATTER = 0.01;
 /** Scratch for the lens colour write. */
 const lensColor = new THREE.Color();
 /**
@@ -221,7 +234,7 @@ const PENUMBRA_DEFOCUSED = 1.0;
  * the shape of the beam in the air, which narrows from the lens onto the
  * image at the focus and widens past it.
  */
-const FOCUS_NEAR = 1;
+const FOCUS_NEAR = 2.5;
 
 /**
  * The nearest surface whose blur the pool's cone test allows for, in metres:
@@ -332,6 +345,17 @@ let occlusionEnabled = true;
 export const HAZE_SCATTER_AT_FULL = Math.log(50) / 50;
 
 /**
+ * The share of the scattering coefficient that a beam loses per metre on its
+ * way out and on its way to the eye. A quarter, set by eye: at the full
+ * coefficient beams and pools faded with distance far more than real show
+ * haze does. How bright the haze makes a beam is unchanged.
+ */
+export const HAZE_EXTINCTION_SHARE = 0.25;
+
+/** Extinction per metre at full haze, for beams and the light reaching surfaces. */
+export const HAZE_EXTINCTION_AT_FULL = HAZE_SCATTER_AT_FULL * HAZE_EXTINCTION_SHARE;
+
+/**
  * The beam fragment shader, with the scene's haze configuration prepended.
  *
  * The mode, the field and its constants live in `haze_noise.js` and reach every
@@ -342,7 +366,10 @@ export const HAZE_SCATTER_AT_FULL = Math.log(50) / 50;
  */
 const BEAM_FRAGMENT_SHADER = `${hazeShaderPrelude()}
 uniform sampler2D shaperTable;
+uniform sampler2D animationTable;
+uniform sampler2D animationAtlas;
 ${SHAPER_GLSL}
+${ANIMATION_GLSL}
 ${VOLUMETRIC_BEAM_FRAGMENT_SHADER}`;
 
 const SPOTLIGHT_PHYSICALLY_CORRECT_DISTANCE = 0;
@@ -389,10 +416,6 @@ const SPOTLIGHT_PHYSICALLY_CORRECT_DECAY = 2.0;
  * spacing the end of one stood as a dark line against the other.
  */
 const SPOTLIGHT_PHYSICALLY_CORRECT_PENUMBRA = 0.5;
-/** Per-light shadow map resolution. Every casting light costs one depth pass. */
-const SPOTLIGHT_SHADOW_MAP_SIZE = 512;
-const SPOTLIGHT_SHADOW_NEAR = 0.5;
-const SPOTLIGHT_SHADOW_FAR = 60;
 
 /**
  * How far a light reaches, in metres.
@@ -400,15 +423,12 @@ const SPOTLIGHT_SHADOW_FAR = 60;
  * Not `distance = 0`, which three reads as unbounded. That is fine for a
  * handful of lights and impossible for hundreds: a light with infinite reach
  * cannot be culled, by the range test in the light field or by frustum
- * clusters. Sixty metres is what the shadow
- * camera already assumed, and past it a moving head is not lighting anything a
- * viewer can see.
+ * clusters. Past sixty metres a moving head is not lighting anything a viewer
+ * can see.
  *
  * @constant {Number}
  */
 const SPOTLIGHT_RANGE = 60;
-const SPOTLIGHT_SHADOW_BIAS = -0.0005;
-const SPOTLIGHT_SHADOW_NORMAL_BIAS = 0.02;
 
 const DEFAULT_COLOR_TEMP = 8000;
 
@@ -524,6 +544,12 @@ const haloClearColor = new THREE.Color();
 let capMesh;
 /** The lens faces a file draws as rectangles; the same slots as `capMesh`. */
 let rectCapMesh;
+/**
+ * Per lens face: cos of the field, cos of the inner cone, 1 / focus distance
+ * in 1/m, and the dark glass's radiance. See `writeLensCone`.
+ */
+let lensConeAttribute;
+let rectLensConeAttribute;
 let boundingBoxMesh;
 
 let camera_handle = null;
@@ -531,25 +557,13 @@ let scene_handle = null;
 
 const instances = [];
 
+// A gobo image reads open until it has loaded; then every light reads its
+// cells again.
+onGoboDrawn(() => instances.forEach((instance) => instance.writeOptics()));
+
 /** Scratch for the selection walk; read inside the callback. */
 const selectionMatrix = new THREE.Matrix4();
 const selectionOrigin = new THREE.Vector3();
-
-/**
- * How many fixtures may cast a shadow at once.
- *
- * Each shadow-casting light costs one fragment texture image unit, and a GPU
- * offers few of them -- 16 is common. Past that the standard material's
- * program fails to validate and everything drawn with it stops rendering, the
- * floor most visibly. Half the pool is kept back for the maps materials
- * themselves need, which leaves this.
- *
- * Exported because the limit is a fact about the renderer but has to be
- * enforced where the choice is made.
- *
- * @constant {Number} MAX_SHADOW_CASTERS
- */
-export const MAX_SHADOW_CASTERS = 8;
 
 let instanceCount = 0;
 
@@ -570,6 +584,23 @@ const ABSOLUTE_MAX_INSTANCES = 4096;
  * @param {THREE.InstancedBufferAttribute} attribute
  * @returns {THREE.InstancedBufferAttribute}
  */
+
+/**
+ * Lens cones for `count` faces not yet written: dark glass, and a field
+ * nothing can be seen inside.
+ *
+ * @param {Number} count
+ * @returns {Float32Array}
+ */
+function lensConeArray(count) {
+  const array = new Float32Array(count * 4);
+  for (let i = 0; i < count; i += 1) {
+    array[i * 4] = 1;
+    array[i * 4 + 1] = 1;
+    array[i * 4 + 3] = LENS_DARK;
+  }
+  return array;
+}
 
 function grownAttribute(attribute) {
   const array = new Float32Array(capacity * attribute.itemSize);
@@ -913,6 +944,7 @@ class Light {
      * beam.
      */
     this._wheels = Light.buildWheels(data.wheels || {});
+    this.warmWheelGobos();
     /** What the wheels and the lamp start as, for `resetOptics`. */
     this._wheelData = data.wheels || {};
     this._lampColorTemp = data.colorTemp;
@@ -977,6 +1009,14 @@ class Light {
     this._blades = [];
     this._shaperRotation = 0;
     this.writeBlades();
+    /**
+     * The animation disc in the gate, or null: its image, the window's path,
+     * how far in it is, its angle in radians and spin in rpm. See
+     * animation_wheel.js.
+     */
+    this._animation = null;
+    this._animationAngle = 0;
+    this._animationRpm = 0;
     this._prism = {
       on: false, facets: PRISM_DEFAULT_FACETS, linear: false, angle: 0, speedRpm: 0,
     };
@@ -1006,6 +1046,12 @@ class Light {
      * so white and amber can add to red/green/blue instead of overwriting them.
      */
     this._emitters = {};
+    /**
+     * A correction filter (CTO, CTB) in the light path: its colour scaled by
+     * its measured transmission, or null, and how far it is in, 0 to 1.
+     */
+    this._correction = null;
+    this._correctionAmount = 0;
     this._highlighted = false;
     /**
      * The fixture's own body from its GDTF file, or null for the shipped one,
@@ -1124,45 +1170,50 @@ class Light {
    */
   updateLensColor() {
     const lit = this.intensity;
-    // The face's radiance on the frame's scale: candela over the lens area,
-    // times lux per scene unit, as a lit surface's value is.
+    // The face's radiance on the frame's scale along the axis: peak candela
+    // over the lens area, times lux per scene unit, as a lit surface's value
+    // is. The face shader scales it by the beam's falloff toward the eye and
+    // holds it to LENS_FACE_MAX.
     const area = Math.PI * this.lensRadius * this.lensRadius;
     const candela = Light.peakCandela(
       this._lumens,
       this._spotLight.angle,
       this._spotLight.penumbra,
     );
-    const radiance = Math.min((candela / Math.max(area, 1e-4)) * LUX_SCALE, LENS_FACE_MAX);
+    const radiance = (candela / Math.max(area, 1e-4)) * LUX_SCALE;
     lensColor.copy(this.color).multiplyScalar(lit * radiance);
-    lensColor.r += LENS_DARK * (1 - lit);
-    lensColor.g += LENS_DARK * (1 - lit);
-    lensColor.b += LENS_DARK * (1 - lit);
     capMesh.setColorAt(this._id, lensColor);
     capMesh.instanceColor.needsUpdate = true;
     rectCapMesh.setColorAt(this._id, lensColor);
     rectCapMesh.instanceColor.needsUpdate = true;
+    this.writeLensCone(LENS_DARK * (1 - lit));
   }
 
   /**
-   * Whether this light casts a shadow.
+   * Writes the cone the lens face is lit within, its focus and its dark
+   * glass.
    *
-   * Off by default and never granted automatically: shadow maps are a fixed,
-   * small budget shared by the whole scene, and which few fixtures are worth
-   * spending it on is a judgement about the rig, not one this can make.
+   * Each point of the lens sends light toward the image of the gate at the
+   * focus distance, as the beam does. A point of the face is lit toward the
+   * eye when the ray from it to the eye meets the focus plane inside the
+   * field, at the falloff `smoothstep(cos outer, cos inner, cos angle)` that
+   * `peakCandela` integrates, over the projected area. Crossing the beam's
+   * edge the face fills across the lens rather than all at once. LENS_SCATTER
+   * of the lumens leave the face evenly, a radiance of f lumens / (pi area),
+   * which as a share of the peak is f solid angle / pi.
    *
-   * @type {Boolean}
+   * @private
+   * @param {Number} [dark] the unlit glass's radiance; kept when omitted
    */
-  set castsShadow(state) {
-    this._castsShadow = !!state;
-    if (this._spotLight) {
-      this._spotLight.castShadow = this._castsShadow;
-      // See `prepareInstance`: a three.js light only while it casts.
-      this._spotLight.visible = this._castsShadow && !this._hidden;
-    }
-  }
-
-  get castsShadow() {
-    return !!this._castsShadow;
+  writeLensCone(dark) {
+    if (!lensConeAttribute) return;
+    const outer = this._spotLight.angle;
+    const inner = outer * (1 - this._spotLight.penumbra);
+    const w = dark === undefined ? lensConeAttribute.getW(this._id) : dark;
+    lensConeAttribute.setXYZW(this._id, Math.cos(outer), Math.cos(inner), this._invFocus || 0, w);
+    lensConeAttribute.needsUpdate = true;
+    rectLensConeAttribute.copyAt(this._id, lensConeAttribute, this._id);
+    rectLensConeAttribute.needsUpdate = true;
   }
 
   /**
@@ -1178,7 +1229,6 @@ class Light {
   set hidden(state) {
     this._hidden = !!state;
     (this._lamps || []).forEach((lamp) => { lamp.hidden = state; });
-    if (this._spotLight) this._spotLight.visible = this._castsShadow && !this._hidden;
     // Written on the next frame's updateMatrix, either way.
     this._matrixNeedsUpdate = true;
   }
@@ -1398,6 +1448,8 @@ class Light {
     this._wheelSplit = 0;
     this._activeColorPreset = false;
     this._emitters = {};
+    this._correction = null;
+    this._correctionAmount = 0;
     this._prism = {
       on: false, facets: PRISM_DEFAULT_FACETS, linear: false, angle: 0, speedRpm: 0,
     };
@@ -1406,6 +1458,11 @@ class Light {
     this._blades = [];
     this._shaperRotation = 0;
     this.writeBlades();
+    this._animation = null;
+    this._animationValues = null;
+    this._animationAngle = 0;
+    this._animationRpm = 0;
+    this.writeAnimation();
     this._frostWheel = null;
     this._frostEffect = null;
     this.applyFrost(0);
@@ -1457,6 +1514,7 @@ class Light {
     this._spotLight.angle = Light.degToRad(this._angle);
     angle_buffer_attribute.setX(this._id, this._angle);
     angle_buffer_attribute.needsUpdate = true;
+    this.writeLensCone();
   }
 
   /**
@@ -1547,6 +1605,7 @@ class Light {
     const f = this._frost;
     const penumbra = this._basePenumbra + (PENUMBRA_DEFOCUSED - this._basePenumbra) * f;
     this._spotLight.penumbra = penumbra;
+    this.writeLensCone();
     this._goboDefocus = (GOBO_DEFOCUS_MAX + 1) * f;
     Light.writeBeamProfile(this._id, penumbra, this._invFocus);
     this.writeOptics();
@@ -2013,6 +2072,110 @@ class Light {
   }
 
   /**
+   * Puts an animation disc in the gate, or takes it out.
+   *
+   * @public
+   * @param {Object|null} values `{ wheel, slotNumber, insertion, angle }`:
+   *   the wheel and its slot from 1, how far in, 0 to 1, and an index angle
+   *   in degrees where the function holds one; slot 0 is the wheel's disc,
+   *   its first slot with a picture, for a function that says how far in
+   *   but names no slot. Null, an open slot or none at all takes it out.
+   */
+  setAnimation(values) {
+    // Kept, so a disc swapped while it is in can be put back in as it was.
+    this._animationValues = values;
+    const wheel = values && this._wheelData ? this._wheelData[values.wheel] : null;
+    const slots = (wheel && wheel.slots) || [];
+    const slot = values && values.slotNumber > 0
+      ? slots[values.slotNumber - 1]
+      : slots.find((s) => s && s.image);
+    const image = slot && slot.image;
+    if (values && Number.isFinite(values.angle)) {
+      this._animationRpm = 0;
+      this._animationAngle = THREE.MathUtils.degToRad(values.angle);
+    }
+    if (!image || !(values.insertion > 0)) {
+      this._animation = null;
+    } else {
+      this._animation = {
+        cell: Animation.cellFor(`animation:${image.key}`, image.url),
+        system: slot.animationSystem || DEFAULT_ANIMATION_SYSTEM,
+        insertion: values.insertion,
+      };
+    }
+    this.writeAnimation();
+  }
+
+  /**
+   * Gives the light new wheels, as a placement's swapped gobos and discs
+   * change them, keeping each wheel where it stands: its slot, its turn and
+   * any spin. The gobos and disc in the beam are drawn again from the new
+   * pictures.
+   *
+   * @public
+   * @param {Object} wheels wheel name to `{ slots }`
+   */
+  setWheels(wheels) {
+    this._wheelData = wheels || {};
+    const fresh = Light.buildWheels(this._wheelData);
+    Object.keys(fresh).forEach((name) => {
+      const was = this._wheels[name];
+      if (was) fresh[name] = { ...was, kind: fresh[name].kind, slots: fresh[name].slots };
+    });
+    this._wheels = fresh;
+    this.warmWheelGobos();
+    if (this._animationValues) this.setAnimation(this._animationValues);
+    this.writeOptics();
+  }
+
+  /**
+   * Holds the animation disc at an angle, from an index channel.
+   *
+   * @public
+   * @param {Number} degrees
+   */
+  setAnimationAngle(degrees) {
+    if (!Number.isFinite(degrees)) return;
+    this._animationRpm = 0;
+    this._animationAngle = THREE.MathUtils.degToRad(degrees);
+    this.writeAnimation();
+  }
+
+  /**
+   * Spins the animation disc, from a rotation channel.
+   *
+   * @public
+   * @param {Number} rpm signed
+   */
+  setAnimationRotation(rpm) {
+    if (!Number.isFinite(rpm)) return;
+    this._animationRpm = rpm;
+  }
+
+  /**
+   * Writes the animation disc into this light's row of the animation table,
+   * which the beam and the pool both read.
+   *
+   * @private
+   */
+  writeAnimation() {
+    if (!(this._id >= 0)) return;
+    const disc = this._animation;
+    if (!disc) {
+      Animation.write(this._id, null);
+      return;
+    }
+    const [x, y] = windowCentre(disc.system, disc.insertion);
+    Animation.write(this._id, {
+      cell: disc.cell,
+      angle: this._animationAngle,
+      x,
+      y,
+      radius: disc.system.radius > 0 ? disc.system.radius : DEFAULT_ANIMATION_SYSTEM.radius,
+    });
+  }
+
+  /**
    * Writes the blades into this light's row of the shaper table, which the
    * beam and the pool both read.
    *
@@ -2171,26 +2334,28 @@ class Light {
       this._prism.angle += (this._prism.speedRpm / 60) * Math.PI * 2 * dt;
       moving = true;
     }
+    if (this._animationRpm !== 0) {
+      this._animationAngle = (this._animationAngle
+        + (this._animationRpm / 60) * Math.PI * 2 * dt) % (Math.PI * 2);
+      if (this._animation) this.writeAnimation();
+    }
     if (moving) this.writeOptics();
   }
 
   /**
-   * The pattern a gobo wheel's slot shows: an OFL image for a gobo slot, 0,
-   * open, for anything else.
+   * Loads every gobo image on the light's wheels ahead of use; see
+   * `warmGobos`.
    *
    * @private
-   * @param {Object} wheel
-   * @param {Number} index slot index
-   * @returns {Number}
    */
-  static goboPatternAt(wheel, index) {
-    const slot = wheel.slots[index];
-    if (!slot || slot.type !== SLOT_TYPES.GOBO) return 0;
-    // A fixture that carries its own picture of the gobo draws that one.
-    if (slot.image) return goboImageCell(slot.image.key, slot.image.url);
-    const goboIndex = wheel.slots.slice(0, index)
-      .filter((s) => s && s.type === SLOT_TYPES.GOBO).length;
-    return goboLayerFor(slot, goboIndex);
+  warmWheelGobos() {
+    const sources = [];
+    Object.keys(this._wheels).forEach((name) => {
+      const wheel = this._wheels[name];
+      if (wheel.kind !== 'gobo') return;
+      wheel.slots.forEach((slot, i) => sources.push(goboSourceAt(wheel, i)));
+    });
+    warmGobos(sources);
   }
 
   /**
@@ -2212,6 +2377,10 @@ class Light {
       .map((name) => this._wheels[name])
       .filter((wheel) => wheel.kind === 'gobo' && wheel.slots.length);
     const pack = [0, 0, 0, 0];
+    // What the two places show, resolved to atlas cells at the end; the
+    // light holds those images in the atlas until it shows others.
+    const sources = [null, null];
+    let fraction = 0;
     wheels.forEach((wheel, n) => {
       if (n > 1) return;
       const count = wheel.slots.length;
@@ -2219,18 +2388,27 @@ class Light {
       const frac = wheel.position - whole;
       const index = ((whole % count) + count) % count;
       const { angle } = wheel;
+      // A gobo set in its slot at a turn of its own, as a swapped gobo can be.
+      const turn = (i) => Light.degToRad(Number((wheel.slots[i] || {}).rotation) || 0);
       if (n === 0 && frac > 0.001 && frac < 0.999) {
-        pack[0] = Light.goboPatternAt(wheel, index) + frac;
-        pack[1] = angle;
-        pack[2] = Light.goboPatternAt(wheel, (index + 1) % count);
-        pack[3] = angle;
+        const next = (index + 1) % count;
+        sources[0] = goboSourceAt(wheel, index);
+        fraction = frac;
+        pack[1] = angle + turn(index);
+        sources[1] = goboSourceAt(wheel, next);
+        pack[3] = angle + turn(next);
         return;
       }
-      if (n === 1 && pack[0] % 1 !== 0) return;
+      if (n === 1 && fraction > 0) return;
       const at = frac >= 0.999 ? (index + 1) % count : index;
-      pack[n * 2] = Light.goboPatternAt(wheel, at);
-      pack[n * 2 + 1] = angle;
+      sources[n] = goboSourceAt(wheel, at);
+      pack[n * 2 + 1] = angle + turn(at);
     });
+    const { held, cells } = holdGobos(this._goboHeld, sources);
+    this._goboHeld = held;
+    const [first, second] = cells;
+    pack[0] = first + fraction;
+    pack[2] = second;
     return pack;
   }
 
@@ -2241,7 +2419,8 @@ class Light {
    * @private
    */
   writeOptics() {
-    gobo_attribute.setXYZW(this._id, ...this.goboPack());
+    this._goboPacked = this.goboPack();
+    gobo_attribute.setXYZW(this._id, ...this._goboPacked);
     gobo_attribute.needsUpdate = true;
     const facets = this.prismCode;
     const defocus = this._goboDefocus;
@@ -2433,6 +2612,15 @@ class Light {
       mix[SUBTRACTIVE_EMITTERS[name]] *= 1.0 - level;
     });
 
+    // A correction filter part of the way in: that share of the light goes
+    // through the filter, the rest past it.
+    if (this._correction && this._correctionAmount > 0) {
+      const t = this._correctionAmount;
+      mix[0] *= 1 - t + t * this._correction.r;
+      mix[1] *= 1 - t + t * this._correction.g;
+      mix[2] *= 1 - t + t * this._correction.b;
+    }
+
     // Summed emitters past full are scaled back. A measured filter is not: a
     // deep blue passing its share of the light may need more than full blue.
     const peak = Math.max(mix[0], mix[1], mix[2]);
@@ -2444,6 +2632,21 @@ class Light {
       Math.max(mix[1] * scale, 0.00001),
       Math.max(mix[2] * scale, 0.00001),
     );
+  }
+
+  /**
+   * Slides a correction filter (CTO, CTB) into the light path, or takes it out.
+   *
+   * @param {Object|null} filter `{ color, transmission }`: a hex colour and the
+   *   share of the light it passes, 0 to 1, or null when not measured
+   * @param {Number} amount how far it is in, 0 out to 1 across the beam
+   */
+  setCorrectionFilter(filter, amount = 0) {
+    this._correction = filter && filter.color
+      ? gelColour({ type: 'Color', colors: [filter.color], transmission: filter.transmission })
+      : null;
+    this._correctionAmount = this._correction ? Math.min(Math.max(amount, 0), 1) : 0;
+    this.recomputeBeamColor();
   }
 
   /**
@@ -2498,36 +2701,15 @@ class Light {
       SPOTLIGHT_PHYSICALLY_CORRECT_DECAY,
     );
 
-    // The light sits at the lens (see below), so the fixture's own body stays
-    // behind the shadow frustum and cannot black out its own beam. Shadow
-    // camera fov tracks the cone angle automatically.
-    //
-    // Off unless asked for. Each shadow-casting light costs one fragment
-    // texture image unit and a GPU offers few of them -- 16 is common -- so if
-    // every light claimed one, two dozen movers would exhaust the pool, the
-    // standard material's program would fail to validate, and everything drawn
-    // with it -- the floor included -- would stop rendering.
-    this._spotLight.castShadow = !!this._castsShadow;
     // Kept as an object, hidden as a light. Every parameter a light writes --
     // colour, angle, penumbra, intensity -- still lands here, and the scene
     // graph still carries it around with the beam so its world transform is
     // maintained. What `visible = false` removes is three's *collection* of
     // it: `projectObject` returns early, so it never reaches the uniform
-    // array that cannot hold two hundred of them. Its contribution arrives
-    // through `LightField` instead.
-    //
-    // A shadow caster is the exception, because three's shadow machinery is
-    // driven from the light itself and there is no reason to reimplement it
-    // for the eight that are allowed one.
-    this._spotLight.visible = !!this._castsShadow;
-    this._spotLight.shadow.mapSize.width = SPOTLIGHT_SHADOW_MAP_SIZE;
-    this._spotLight.shadow.mapSize.height = SPOTLIGHT_SHADOW_MAP_SIZE;
-    this._spotLight.shadow.camera.near = SPOTLIGHT_SHADOW_NEAR;
-    this._spotLight.shadow.camera.far = SPOTLIGHT_SHADOW_FAR;
-    // Depth offsets: bias kills surface acne on the floor, normalBias closes
-    // the gap it opens at grazing angles.
-    this._spotLight.shadow.bias = SPOTLIGHT_SHADOW_BIAS;
-    this._spotLight.shadow.normalBias = SPOTLIGHT_SHADOW_NORMAL_BIAS;
+    // array that cannot hold two hundred of them. Its contribution and its
+    // shadow arrive through `LightField` and the depth tiles instead.
+    this._spotLight.castShadow = false;
+    this._spotLight.visible = false;
 
     this._dummy.add(this._bodyRoot);
     /** What the lens hangs from, and any lamps with it. */
@@ -3128,6 +3310,21 @@ class Light {
     return occlusionEnabled;
   }
 
+  /**
+   * Where the drawn beam starts, in world space: the lens face, as
+   * `updateDirectionVector` places it.
+   *
+   * @public
+   * @param {THREE.Vector3} out
+   * @returns {THREE.Vector3} `out`
+   */
+  lensWorldPosition(out) {
+    this._beamDummy.updateMatrixWorld(true);
+    const dir = this._beamDummy.getWorldDirection(new THREE.Vector3());
+    return this._beamDummy.getWorldPosition(out)
+      .addScaledVector(dir, this.beamOriginShift + BEAM_START);
+  }
+
   updateDirectionVector() {
     this._beamDummy.getWorldDirection(vector_beam.normalize());
     direction_buffer_attribute.setXYZ(this._id, vector_beam.x, vector_beam.y, vector_beam.z);
@@ -3454,6 +3651,7 @@ class Light {
         // and a surface it lights are on the same exposure.
         beamUnits: { value: SPOTLIGHT_PHYSICALLY_CORRECT_INTENSITY },
         hazeScatter: { value: HAZE_SCATTER_AT_FULL },
+        hazeExtinction: { value: HAZE_EXTINCTION_AT_FULL },
         haloSource: { value: false },
         fragScale: { value: 1 },
         // Which shader term the debug panel is drawing instead of the beam.
@@ -3474,6 +3672,10 @@ class Light {
         goboAtlas: { value: goboTexture() },
         // Every light's framing blades, a row each; see shapers.js.
         shaperTable: { value: Shapers.texture },
+        // Every light's animation disc, a row each, and the discs' images;
+        // see animation_wheel.js.
+        animationTable: { value: Animation.table },
+        animationAtlas: { value: Animation.atlas },
         // What each beam's own lens sees, from `renderDepth`.
         depthAtlas: { value: null },
         depthColumns: { value: MOVER_DEPTH.columns },
@@ -3517,10 +3719,61 @@ class Light {
     // Something a reflection can meet, though it writes no depth: see
     // reflections.js.
     capMaterial.userData.reflectionTarget = true;
+    // The face's radiance toward the eye: the beam's falloff at the viewing
+    // angle over the projected area, the scatter, and the dark glass. See
+    // `writeLensCone`.
+    capMaterial.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', `#include <common>
+attribute vec4 lensCone;
+varying vec4 vLensCone;
+varying vec3 vLensView;
+varying vec3 vLensNormal;
+varying vec3 vLensCenter;`)
+        .replace('#include <project_vertex>', `#include <project_vertex>
+vLensCone = lensCone;
+vLensView = -mvPosition.xyz;
+#ifdef USE_INSTANCING
+mat4 lensMatrix = modelViewMatrix * instanceMatrix;
+#else
+mat4 lensMatrix = modelViewMatrix;
+#endif
+vLensNormal = mat3( lensMatrix ) * vec3( 0.0, 0.0, 1.0 );
+vLensCenter = ( lensMatrix * vec4( 0.0, 0.0, ${LENS_FACE_OFFSET.toFixed(4)}, 1.0 ) ).xyz;`);
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', `#include <common>
+varying vec4 vLensCone;
+varying vec3 vLensView;
+varying vec3 vLensNormal;
+varying vec3 vLensCenter;`)
+        .replace('#include <color_fragment>', `#include <color_fragment>
+{
+  vec3 lensAxis = normalize( vLensNormal );
+  vec3 toEye = isOrthographic ? vec3( 0.0, 0.0, 1.0 ) : normalize( vLensView );
+  float cosView = dot( lensAxis, toEye );
+  // Where the ray from this point of the lens to the eye crosses the focus
+  // plane, as a tangent off the axis: offset x 1/focus + the ray's slope.
+  vec3 offset = -vLensView - vLensCenter;
+  offset -= dot( offset, lensAxis ) * lensAxis;
+  vec3 slope = ( toEye - cosView * lensAxis ) / max( cosView, 1e-4 );
+  vec3 atFocus = offset * vLensCone.z + slope;
+  float cosField = inversesqrt( 1.0 + dot( atFocus, atFocus ) );
+  float inner = max( vLensCone.y, vLensCone.x + 1e-5 );
+  float through = cosView > 0.0 ? smoothstep( vLensCone.x, inner, cosField ) : 0.0;
+  // f solid angle / pi, the solid angle being 2 pi (1 - (cos inner + cos outer) / 2).
+  float scatter = ${(2 * LENS_SCATTER).toFixed(4)} * ( 1.0 - 0.5 * ( vLensCone.x + vLensCone.y ) );
+  float spread = through / max( cosView, 0.05 ) + scatter;
+  diffuseColor.rgb = min( diffuseColor.rgb * spread, vec3( ${LENS_FACE_MAX.toFixed(1)} ) ) + vLensCone.w;
+}`);
+    };
 
     capGeometry.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 0, LENS_FACE_OFFSET));
 
     THREE.BufferGeometry.prototype.copy.call(targetGeo, capGeometry);
+
+    lensConeAttribute = new THREE.InstancedBufferAttribute(lensConeArray(capacity), 4);
+    lensConeAttribute.setUsage(THREE.DynamicDrawUsage);
+    targetGeo.setAttribute('lensCone', lensConeAttribute);
 
     capMesh = new THREE.InstancedMesh(targetGeo, capMaterial, capacity);
     capMesh.frustumCulled = false;
@@ -3539,6 +3792,9 @@ class Light {
     // file draws as a rectangle.
     const rectGeometry = new THREE.PlaneGeometry(BEAM_TOP_RADIUS * 2, BEAM_TOP_RADIUS * 2);
     rectGeometry.applyMatrix4(new THREE.Matrix4().makeTranslation(0, 0, LENS_FACE_OFFSET));
+    rectLensConeAttribute = new THREE.InstancedBufferAttribute(lensConeArray(capacity), 4);
+    rectLensConeAttribute.setUsage(THREE.DynamicDrawUsage);
+    rectGeometry.setAttribute('lensCone', rectLensConeAttribute);
     rectCapMesh = new THREE.InstancedMesh(rectGeometry, capMaterial, capacity);
     rectCapMesh.frustumCulled = false;
     rectCapMesh.count = instanceCount;
@@ -3622,9 +3878,6 @@ class Light {
     // most of a rig at any moment, and each one skipped is a light every
     // fragment does not test.
     if (!this._spotLight || this._spotLight.intensity <= 0) return false;
-    // A shadow caster is already a real light in three's own pass; adding it
-    // here as well would light everything twice.
-    if (this._spotLight.visible) return false;
 
     this._spotLight.getWorldPosition(record.position);
     this._aimDummy.getWorldPosition(vector_light_target);
@@ -3647,7 +3900,7 @@ class Light {
     record.inner = Math.min(Math.abs(1 - this._spotLight.penumbra), 0.99);
 
     // The gobos and the prism in the beam, the same numbers the beam draws.
-    record.gobo.set(...this.goboPack());
+    record.gobo.set(...(this._goboPacked || this.goboPack()));
     record.prism.set(
       prismOn ? this.prismCode : 0,
       this._prism.angle,
@@ -3656,6 +3909,7 @@ class Light {
     );
     record.iris = this._iris;
     record.shaperRow = this._blades && this.bladesIn() ? this._id : -1;
+    record.animationRow = this._animation ? this._id : -1;
 
     // The beam's depth tile, so the pool stops where the beam does. The slot
     // is last frame's, written by `renderDepth` after the field is read,
@@ -3743,6 +3997,10 @@ class Light {
     gobo_attribute = grownAttribute(gobo_attribute);
     prism_attribute = grownAttribute(prism_attribute);
     color_b_attribute = grownAttribute(color_b_attribute);
+    lensConeAttribute = grownAttribute(lensConeAttribute);
+    rectLensConeAttribute = grownAttribute(rectLensConeAttribute);
+    capMesh.geometry.setAttribute('lensCone', lensConeAttribute);
+    rectCapMesh.geometry.setAttribute('lensCone', rectLensConeAttribute);
 
     // Re-attached because `setAttribute` stores the attribute, not a reference
     // to whatever the variable holds now.
@@ -3772,6 +4030,9 @@ class Light {
   static deleteInstance(instance) {
     // Its lamps first, each its own slot.
     instance.removeLamps();
+    // Its gobos may give their atlas cells to other images.
+    releaseGobos(instance._goboHeld);
+    instance._goboHeld = [];
     // Its slot in its type's body meshes is emptied and given to the next.
     if (instance._bodySet) {
       instance.writeBodySlot(COLLAPSED, COLLAPSED, COLLAPSED);
@@ -3864,7 +4125,7 @@ class Light {
  */
 function syncEnvironment() {
   LightField.uniforms.lightFieldExtinction.value = SceneEnv.hazeEnabled
-    ? HAZE_SCATTER_AT_FULL * SceneEnv.hazeAmount : 0;
+    ? HAZE_EXTINCTION_AT_FULL * SceneEnv.hazeAmount : 0;
   if (!beamMesh || !beamMesh.material || !beamMesh.material.uniforms) return;
   const { uniforms } = beamMesh.material;
   uniforms.fogState.value = SceneEnv.hazeEnabled;

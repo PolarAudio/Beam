@@ -7,7 +7,8 @@
   Restarts Beam's dev build with no show, captures each scene from each of its
   cameras at each haze level with the clock frozen, then stops it. The user's
   preferences.json and window-state.json are copied aside first and put back
-  after, because the room and bloom are pinned through setters that write them.
+  after; the app runs without preferences.json, so the room and exposure are
+  the preference defaults a new install gets.
 
   With -Against, every shot is diffed against the same file in that set and a
   table says how many pixels moved by more than 8 levels. A step that is not
@@ -30,19 +31,31 @@ $repo = Resolve-Path (Join-Path $dev '..')
 $outRoot = Join-Path $dev 'out\regress'
 $outDir = Join-Path $outRoot $Label
 
-# Scene, camera; each at every haze level.
+# Scene, camera. House down at every haze level; house up at haze 0 only,
+# since raising the house lights clears the haze.
 $views = @(
-  @('movers', 'front'), @('movers', 'under'),
-  @('leds', 'front'), @('laser', 'front'), @('projector', 'front'), @('display', 'front'), @('strobe', 'front'),
+  @('movers', 'front'), @('movers', 'under'), @('movers', 'behind'),
+  @('lens', 'inside'), @('lens', 'edge'), @('lens', 'outside'), @('lens', 'side'),
+  @('leds', 'front'), @('laser', 'front'), @('laserclip', 'front'),
+  @('projector', 'front'), @('display', 'front'), @('strobe', 'front'),
   @('reflect', 'front')
 )
 $hazes = @(0, 25, 50, 100)
+$shots = foreach ($v in $views) {
+  foreach ($h in $hazes) {
+    [pscustomobject]@{ Scene = $v[0]; Camera = $v[1]; House = 'down'; Haze = $h; Name = "$($v[0])_$($v[1])_h$h.png" }
+  }
+  [pscustomobject]@{ Scene = $v[0]; Camera = $v[1]; House = 'up'; Haze = 0; Name = "$($v[0])_$($v[1])_up.png" }
+}
 
 if (-not $CompareOnly) {
   $prefs = Join-Path $env:APPDATA 'Beam'
   $keep = Join-Path $outRoot '_prefs'
   New-Item -ItemType Directory -Force $keep | Out-Null
   Copy-Item (Join-Path $prefs 'preferences.json'), (Join-Path $prefs 'window-state.json') $keep -Force
+  # The app starts on the preference defaults, as a new install; the user's
+  # file is put back in the finally block below.
+  Remove-Item (Join-Path $prefs 'preferences.json') -Force
 
   try {
     & powershell -NoProfile -File (Join-Path $dev 'stop.ps1') -Force | Out-Null
@@ -57,12 +70,9 @@ if (-not $CompareOnly) {
     Start-Sleep -Seconds 3
 
     New-Item -ItemType Directory -Force $outDir | Out-Null
-    foreach ($v in $views) {
-      foreach ($h in $hazes) {
-        $name = "$($v[0])_$($v[1])_h$h.png"
-        $r = & powershell -NoProfile -File (Join-Path $here 'capture.ps1') -Scene $v[0] -Camera $v[1] -Haze $h -Out (Join-Path $outDir $name)
-        Write-Output "$name  $(if ($r -like 'Shot failed*' -or $r -like 'Setup failed*') { $r } else { 'ok' })"
-      }
+    foreach ($s in $shots) {
+      $r = & powershell -NoProfile -File (Join-Path $here 'capture.ps1') -Scene $s.Scene -Camera $s.Camera -Haze $s.Haze -House $s.House -Out (Join-Path $outDir $s.Name)
+      Write-Output "$($s.Name)  $(if ($r -like 'Shot failed*' -or $r -like 'Setup failed*') { $r } else { 'ok' })"
     }
   } finally {
     & powershell -NoProfile -File (Join-Path $dev 'stop.ps1') -Force | Out-Null
@@ -78,18 +88,16 @@ if ($Against) {
   Write-Output "Against ${Against}: pixels moved by more than 8 levels, and the largest move"
   Push-Location $repo
   try {
-    foreach ($v in $views) {
-      foreach ($h in $hazes) {
-        $name = "$($v[0])_$($v[1])_h$h.png"
-        $a = Join-Path $base $name
-        $b = Join-Path $outDir $name
-        if (-not (Test-Path $a) -or -not (Test-Path $b)) { Write-Output ("{0,-28} missing" -f $name); continue }
-        $d = (& npx electron $tool diff $a $b) -join ' '
-        if ($d -match 'differing > 8: (\d+) of (\d+) pixels, largest difference (\d+)') {
-          Write-Output ("{0,-28} {1,8}  max {2}" -f $name, $Matches[1], $Matches[3])
-        } else {
-          Write-Output ("{0,-28} {1}" -f $name, $d.Trim())
-        }
+    foreach ($s in $shots) {
+      $name = $s.Name
+      $a = Join-Path $base $name
+      $b = Join-Path $outDir $name
+      if (-not (Test-Path $a) -or -not (Test-Path $b)) { Write-Output ("{0,-28} missing" -f $name); continue }
+      $d = (& npx electron $tool diff $a $b) -join ' '
+      if ($d -match 'differing > 8: (\d+) of (\d+) pixels, largest difference (\d+)') {
+        Write-Output ("{0,-28} {1,8}  max {2}" -f $name, $Matches[1], $Matches[3])
+      } else {
+        Write-Output ("{0,-28} {1}" -f $name, $d.Trim())
       }
     }
   } finally { Pop-Location }

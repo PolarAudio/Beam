@@ -140,7 +140,7 @@ contextBridge.exposeInMainWorld('laser', {
  */
 contextBridge.exposeInMainWorld('fileExport', {
   /**
-   * @param {Object} payload contents, defaultName, startIn, filters, title,
+   * @param {Object} payload contents or pdfFromHtml, defaultName, startIn, filters, title,
    *   an optional companion `{ contents, extension }` written beside it, and
    *   an optional `remember` key that reuses this session's chosen path
    * @returns {Promise<String|null>} path written, or null when cancelled
@@ -282,13 +282,60 @@ contextBridge.exposeInMainWorld('library', {
    */
   addMedia: () => ipcRenderer.invoke('library:addMedia'),
   /**
+   * ILDA files a laser clip list can play: the open document's, the user's
+   * `Library/Lasers` and the ones that ship with Beam.
+   *
+   * @returns {Promise<Array>} `{ key, name, origin, url }`
+   */
+  laserClips: () => ipcRenderer.invoke('library:laserClips'),
+  /**
+   * Gobo and animation disc images a placement may swap into its wheels: the
+   * open document's and those in `Library/Gobos`.
+   *
+   * @returns {Promise<Array>} `{ key, name, origin, url }`
+   */
+  gobos: () => ipcRenderer.invoke('library:gobos'),
+  /**
+   * Asks for images and copies them into `Library/Gobos`.
+   *
+   * @returns {Promise<Object>} `{ ok, entries, refused }` or `{ ok: false, reason }`
+   */
+  addGobos: () => ipcRenderer.invoke('library:addGobos'),
+  /**
+   * Asks for ILDA files and copies them into `Library/Lasers`.
+   *
+   * @returns {Promise<Object>} `{ ok, entries, refused }` or `{ ok: false, reason }`
+   */
+  addLaserClips: () => ipcRenderer.invoke('library:addLaserClips'),
+  /**
+   * Laser memory cards: named clip lists in `Library/Lasers/Cards`, and those
+   * the open document carries.
+   *
+   * @returns {Promise<Array>} `{ key, name, clips, origin }`
+   */
+  laserCards: () => ipcRenderer.invoke('library:laserCards'),
+  /**
+   * Writes a card to the library.
+   *
+   * @param {String} name
+   * @param {Array} clips
+   * @returns {Promise<Object>} `{ ok, key }` or `{ ok: false, reason }`
+   */
+  saveLaserCard: (name, clips) => ipcRenderer.invoke('library:saveLaserCard', name, clips),
+  /**
+   * Copies a clip list's files to a chosen folder, numbered in list order.
+   *
+   * @param {Array} clips `{ name, file }`
+   * @returns {Promise<Object>} `{ ok, folder, written, missing }` or `{ ok: false, reason }`
+   */
+  exportLaserClips: (clips) => ipcRenderer.invoke('library:exportLaserClips', clips),
+  /**
    * GDTF fixtures in `Library/Profiles`, metadata only. The bytes are served
    * as `library://profiles/<file>`.
    *
    * @returns {Promise<Array>} `{ key, file, name, manufacturer, fixtureTypeId, dataVersion }`
    */
   gdtfList: () => ipcRenderer.invoke('library:gdtfList'),
-  gdtfRemoved: () => ipcRenderer.invoke('library:gdtfRemoved'),
   /** Asks for .gdtf files. @returns {Promise<Array<String>>} absolute paths */
   pickGdtf: () => ipcRenderer.invoke('library:pickGdtf'),
   /**
@@ -457,7 +504,7 @@ contextBridge.exposeInMainWorld('documentStore', {
   /** @returns {Promise<String|null>} chosen path, or null when cancelled */
   open: () => ipcRenderer.invoke('document:open'),
   /** @returns {Promise<String|null>} chosen path, or null when cancelled */
-  saveAs: (name, title) => ipcRenderer.invoke('document:saveAs', name, title),
+  saveAs: (name, title, folderKey) => ipcRenderer.invoke('document:saveAs', name, title, folderKey),
   /** @returns {Promise<String>} the project's name, taken from its file name */
   projectName: (target) => ipcRenderer.invoke('document:projectName', target),
   /** @returns {Promise<String>} where the save dialog starts */

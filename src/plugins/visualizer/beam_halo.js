@@ -30,8 +30,9 @@
  * head for the eye -- into a target a quarter of the frame's size, where it
  * costs a sixteenth of the beams. Its alpha carries luminance times distance,
  * so every level knows how far away the light it holds is and how many
- * metres one of its texels spans. Pools, LEDs, lasers and projectors are not
- * in it; it touches the beams' air and nothing else.
+ * metres one of its texels spans. The mover beams and the laser beams are in
+ * it; pools, LEDs and projectors are not. It touches the beams' air and
+ * nothing else.
  *
  * The kernel is cut off at the rig's reach: light scattered out of a beam
  * that meets a wall before it is scattered again lights the wall, not the
@@ -42,6 +43,7 @@
 import * as THREE from 'three';
 import { Effect, BlendFunction } from 'postprocessing';
 import Light, { HAZE_SCATTER_AT_FULL } from './light';
+import Laser from './laser';
 import SceneEnv from './scene_env';
 
 /** The source's size against the frame's, per side. */
@@ -246,7 +248,9 @@ export default class BeamHaloEffect extends Effect {
     this.fit(inputBuffer.width, inputBuffer.height);
     const source = this.levels[0];
     const fragScale = inputBuffer.height / source.height;
-    if (!Light.renderHaloSource(renderer, this.camera, source, fragScale)) {
+    const movers = Light.renderHaloSource(renderer, this.camera, source, fragScale);
+    const lasers = Laser.renderHaloSource(renderer, this.camera, source, !movers);
+    if (!movers && !lasers) {
       strength.value = 0;
       return;
     }

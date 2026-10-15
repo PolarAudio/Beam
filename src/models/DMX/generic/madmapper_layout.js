@@ -349,7 +349,7 @@ function scenePoint(fixture) {
  * @returns {Array|null} two `THREE.Vector3`, or null when it has no length
  */
 export function fixtureEnds(fixture) {
-  const { bar } = (fixture.OFLData || {}).asls || {};
+  const { bar } = (fixture.OFLData || {}).beam || {};
   if (!bar || !bar.length) return null;
 
   const rotation = fixture.rotationRad;
@@ -379,7 +379,7 @@ function bandEnds(fixture, band) {
   const ends = fixtureEnds(fixture);
   if (band.count === 1) return ends;
 
-  const { bar } = fixture.OFLData.asls;
+  const { bar } = fixture.OFLData.beam;
   const rotation = fixture.rotationRad;
   const basis = new THREE.Euler(rotation.x, rotation.y, rotation.z);
 
@@ -678,7 +678,7 @@ function prepare(fixture, projection, definitionName, frame, perspective, option
     });
   }
 
-  const { bar } = fixture.OFLData.asls;
+  const { bar } = fixture.OFLData.beam;
   const middle = flatten(scenePoint(fixture));
   const period = 2 * Math.PI * frame.radius;
   const place = (points) => points

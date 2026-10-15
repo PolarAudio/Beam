@@ -22,7 +22,7 @@ export const DISPLAY_ATTRIBUTES = DISPLAY_CHANNELS;
 
 class DisplaySettings extends DeviceSettings {
   /**
-   * @param {Object} params the profile's `asls.display` -- the envelope
+   * @param {Object} params the profile's `beam.display` -- the envelope
    * @param {Object} [data] stored values from the show
    */
   constructor(params, data = {}) {

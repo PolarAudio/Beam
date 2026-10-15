@@ -827,7 +827,7 @@ export default {
      */
     alignmentPixelSize() {
       if (!this.fixture.loaded || !this.fixture.universeAligned) return 1;
-      const { components } = (this.fixture.OFLData || {}).asls || {};
+      const { components } = (this.fixture.OFLData || {}).beam || {};
       if (components && components.length) return components.length;
       const mode = this.fixture.modes[this.fixture.mode];
       return (mode && mode.channels && mode.channels.length) || 1;
@@ -1384,6 +1384,10 @@ export default {
     async removeFromLibrary() {
       const item = this.selectedItem;
       if (!item || !item.gdtf) return;
+      if (item.shipped) {
+        this.share.error = `${item.name} ships with Beam and is not in your library to remove.`;
+        return;
+      }
       const used = this.selectedInUse;
       let inShow = '';
       if (used === 1) inShow = '1 fixture in this project uses it. ';
@@ -1909,6 +1913,7 @@ export default {
         contents,
         defaultName: `${this.madMapperProduct.replace(/[<>:"/\\|?*]/g, ' ').trim()}.mmfl`,
         startIn: 'madmapperFixtures',
+        folderKey: 'madmapper-fixture',
         title: 'Export fixture to MadMapper',
         filters: [{ name: 'MadMapper fixture', extensions: ['mmfl'] }],
       });

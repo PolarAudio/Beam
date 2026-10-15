@@ -10,6 +10,7 @@ import path from 'path';
 import library from './library';
 import gdtfstore from './gdtfstore';
 import paths from './paths';
+import saveFolders from './savefolders';
 
 /**
  * Show documents at paths the user chose (main process).
@@ -416,15 +417,17 @@ async function openDialog() {
  * @param {String} [suggested] the open document's absolute path, or a
  *   project name, extension excluded, to place in the project root
  * @param {String} [title] dialog title
+ * @param {String} [folderKey] key for the folder this kind of save last went
+ *   to, used in place of the project root for a name without a folder
  * @returns {Promise<String|null>} chosen path, or null when cancelled
  */
-async function saveDialog(suggested, title) {
+async function saveDialog(suggested, title, folderKey) {
   let defaultPath;
   if (suggested && path.isAbsolute(String(suggested))) {
     defaultPath = String(suggested);
   } else {
     const name = suggested && String(suggested).trim() ? String(suggested) : 'Untitled';
-    const root = projectRoot();
+    const root = saveFolders.folderFor(folderKey) || projectRoot();
     try {
       fs.mkdirSync(root, { recursive: true });
     } catch (err) {
@@ -439,6 +442,7 @@ async function saveDialog(suggested, title) {
     properties: ['createDirectory'],
   });
   if (result.canceled || !result.filePath) return null;
+  saveFolders.remember(folderKey, result.filePath);
   return result.filePath;
 }
 

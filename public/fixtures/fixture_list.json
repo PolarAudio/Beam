@@ -1023,34 +1023,5 @@
         "supported": true
       }
     ]
-  },
-  {
-    "name": "wicked-lasers",
-    "fixtures": [
-      {
-        "file": "LaserCube 7.5W Ultra Wide Angle.json",
-        "name": "LaserCube 7.5W Ultra Wide Angle",
-        "category": "Other",
-        "supported": true
-      },
-      {
-        "file": "LaserCube 7.5W Ultra.json",
-        "name": "LaserCube 7.5W Ultra",
-        "category": "Other",
-        "supported": true
-      },
-      {
-        "file": "LaserCube Pro 2.5W Wide Angle.json",
-        "name": "LaserCube Pro 2.5W Wide Angle",
-        "category": "Other",
-        "supported": true
-      },
-      {
-        "file": "LaserCube Pro 2.5W.json",
-        "name": "LaserCube Pro 2.5W",
-        "category": "Other",
-        "supported": true
-      }
-    ]
   }
 ]

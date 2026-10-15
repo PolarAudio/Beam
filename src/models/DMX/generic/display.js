@@ -5,7 +5,7 @@
  * numbers for the same reason a projector is -- there are thousands of them and
  * no library will carry them all -- and OFL-shaped for the same reason too, so
  * `Fixture` reads it through the path a library profile takes. Everything OFL
- * cannot express lives under `asls.display`.
+ * cannot express lives under `beam.display`.
  *
  * **This is not an LED panel, and the difference is the data path.** A
  * `led_bar` with rows is driven pixel by pixel over DMX: every emitter has an
@@ -462,7 +462,7 @@ export function displayChannels(params) {
  * Whether a profile was made here.
  *
  * Asked of the geometry rather than of a category, for the same reason
- * `prepare3DModelInstance` asks it of `asls.bar`: a category string says
+ * `prepare3DModelInstance` asks it of `beam.bar`: a category string says
  * nothing about what the thing actually is, and a display's is 'Other'.
  *
  * @public
@@ -470,7 +470,7 @@ export function displayChannels(params) {
  * @returns {Boolean}
  */
 export function isDisplayProfile(profile) {
-  return !!(profile && profile.asls && profile.asls.display);
+  return !!(profile && profile.beam && profile.beam.display);
 }
 
 /**
@@ -486,7 +486,6 @@ export function buildDisplayProfile(overrides = {}) {
   // if the package table changes.
   if (params.emitterFill == null) params.emitterFill = emitterFill(params);
   const { availableChannels, modes } = displayChannels(params);
-  const bezel = Number(params.bezel) || 0;
 
   return {
     name: `Display ${params.pixelsWide}x${params.pixelsHigh}`,
@@ -495,18 +494,13 @@ export function buildDisplayProfile(overrides = {}) {
     categories: ['Other'],
     meta: { generated: true },
     physical: {
-      // OFL's order is width, height, depth, in millimetres -- the whole box,
-      // so the bezel counts on both sides.
-      dimensions: [
-        (params.width + bezel * 2) * 1000,
-        (params.height + bezel * 2) * 1000,
-        params.depth * 1000,
-      ],
+      // No `dimensions`: the size is the parameters', read through
+      // `FixtureKind.sizeOf`. A second copy drifts when a file is edited by hand.
       bulb: { type: 'LED' },
     },
     availableChannels,
     modes,
-    asls: { display: params },
+    beam: { display: params },
   };
 }
 

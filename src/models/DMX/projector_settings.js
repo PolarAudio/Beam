@@ -77,7 +77,7 @@ export const PROJECTOR_DEFS = [...CONTROL_DEFS, ...BLEND_DEFS];
 
 class ProjectorSettings extends DeviceSettings {
   /**
-   * @param {Object} params the profile's `asls.projector` -- the envelope
+   * @param {Object} params the profile's `beam.projector` -- the envelope
    * @param {Object} [data] stored values from the show
    */
   constructor(params, data = {}) {

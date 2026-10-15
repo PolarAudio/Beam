@@ -14,16 +14,17 @@
       :object="selectedObject"
     />
     <!-- High level to detail: what the fixture *is* (its definition), then
-         what this one is set to, then where it stands. -->
-    <!-- Several fixtures of one definition share these: the Model widget
+         what this one is set to, then where it stands. A geometry member of a
+         structure has no definition and no channels, so it skips both.
+         Several fixtures of one definition share these: the Model widget
          speaks for the definition anyway, and the settings write to all. -->
     <model-widget
-      v-show="shownFixture"
+      v-show="editedFixture && !selectedMemberIsObject"
       ref="model"
       :fixture="shownFixture"
     />
     <fixture-settings-widget
-      v-show="shownFixture"
+      v-show="editedFixture && !selectedMemberIsObject"
       ref="settings"
       :fixture="shownFixture"
       :fixtures="sharedFixtures"

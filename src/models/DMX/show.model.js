@@ -16,7 +16,7 @@ import Group from './group.model';
 import Structure from './structure.model';
 import SceneObject from './object.model';
 import {
-  SCENE_ITEM_KINDS, kindOf, readMemberRef,
+  SCENE_ITEM_KINDS, kindOf, readMemberRef, isObjectRecord,
 } from './scene_item';
 import { claimInstance, setSiblingResolver } from './item_naming';
 import Live from './live.model';
@@ -30,10 +30,10 @@ import Preferences from '../../plugins/visualizer/preferences';
 import SceneObjects from '../../plugins/visualizer/scene_objects';
 import Studio from './studio';
 import { normaliseMatrixProfile } from './ofl_matrix';
-import { MAX_SHADOW_CASTERS } from '../../plugins/visualizer/moving_head';
-import {
-  SCENE_ITEM_KINDS, kindOf, readMemberRef, isObjectRecord,
-} from './scene_item';
+import readGdtf, { wheelImages } from './gdtf/gdtf_reader';
+import buildBody from '../../plugins/visualizer/gdtf_body';
+import { headInputs } from './gdtf/fixture_parts';
+import { MAX_SHADOW_CASTERS } from '../../plugins/visualizer/light';
 
 const SHOWFILE_EXTENSIONS = {
   JSON: 'json',
@@ -951,10 +951,6 @@ class Show extends EventEmitter {
     this.loading.message = 'Restoring groups';
     this.prepareGroups(showData);
 
-    // Objects before structures, which may hold them.
-    this.loading.message = 'Placing objects';
-    await this.prepareObjects(showData);
-
     this.loading.message = 'Restoring structures';
     this.prepareStructures(showData);
 
@@ -1284,27 +1280,25 @@ class Show extends EventEmitter {
 
     const structure = {
       name: group.name,
-      members: group.members.map((member) => {
-        const local = member.localTransform
-          ? member.localTransform.clone()
-          : inverse.clone();
-        // An object keeps what it is -- its library key, or the parameters of
-        // a created one -- and its own scale, beside where it stands.
-        if (kindOf(member) === SCENE_ITEM_KINDS.OBJECT) {
-          const data = member.showData;
-          return {
-            kind: SCENE_ITEM_KINDS.OBJECT,
-            name: data.name,
-            model: data.model,
-            primitive: data.primitive,
-            scale: data.scale,
-            transform: local.elements.slice(),
-          };
+      members: group.members.map((member) => (kindOf(member) === SCENE_ITEM_KINDS.OBJECT
+        ? {
+          kind: SCENE_ITEM_KINDS.OBJECT,
+          name: member.name,
+          // A reference names a model; an inline object carries its own
+          // parameters, which is what makes it editable and what a placement
+          // cannot change. Never both, never neither.
+          model: member.isInline ? undefined : member.model,
+          primitive: member.isInline ? {
+            type: member.primitive.type,
+            size: { ...member.primitive.size },
+            color: member.primitive.color,
+          } : undefined,
+          // Copied, not carried by reference: the definition crosses IPC to be
+          // written, and a proxy left in it is what `structuredClone` refuses.
+          scale: { ...member.scale },
+          transform: localOf(member).elements.slice(),
         }
-        return {
-          // Written rather than left to be inferred: a reader that meets a
-          // record with no kind at all has to assume a fixture, and a record
-          // that reads the same written and loaded is worth the one field.
+        : {
           kind: SCENE_ITEM_KINDS.FIXTURE,
           manufacturer: member.manufacturer,
           model: member.model,
@@ -1707,19 +1701,17 @@ class Show extends EventEmitter {
    * are a hundred rows in an instanced buffer and appear as they arrive.
    *
    * The saved id is kept as an index rather than as the object's own id when
-   * `freshIds` is asked for, which is what a paste does: the structure that
-   * held the original refers to it by the id it had in the chunk, and a copy
-   * cannot keep that without colliding with the original. The same arrangement
-   * `prepareFixtures` makes -- see `loadedFixturesById`.
+   * the record carries one as `sourceId`, which is what a paste does: the
+   * structure that held the original refers to it by the id it had in the
+   * chunk, and a copy cannot keep that without colliding with the original.
+   * The same arrangement `prepareFixtures` makes -- see `loadedFixturesById`.
    *
    * @public
    * @async
    * @param {Object} showData raw showfile contents
-   * @param {Object} [options]
-   * @param {Boolean} [options.freshIds] mint new ids and index the saved ones
    * @returns {Array} the objects created
    */
-  async prepareObjects(showData, { freshIds = false } = {}) {
+  async prepareObjects(showData) {
     const records = showData.objects || [];
     const made = records.map((data) => new SceneObject(data));
     made.forEach((object, i) => restoreListOrder(object, records[i]));
@@ -1793,6 +1785,7 @@ class Show extends EventEmitter {
   prepareStructures(showData) {
     const made = (showData.structures || []).map((structureData) => {
       const structure = new Structure(structureData);
+      restoreListOrder(structure, structureData);
       (structureData.members || []).forEach((ref) => {
         // Resolved through the load indexes rather than the pool: addRaw hands
         // out fresh ids, so a saved member id means nothing once a fixture has
@@ -1802,7 +1795,7 @@ class Show extends EventEmitter {
       });
       return structure;
     });
-    this.structures.push(...made);
+    Show.joinNumbered(this.structures, made);
     return made;
   }
 

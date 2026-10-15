@@ -1470,10 +1470,15 @@ class Show extends EventEmitter {
             : { ...(entry || {}), name: member.name || (entry || {}).name, key: member.model },
           {
             position: { x: position.x, y: position.y, z: position.z },
+            // `SceneObject` stores rotation directly as radians (it has no
+            // degree-to-radian conversion in its constructor, unlike `Fixture`),
+            // and `ScenarioObjects.place` writes the same radians through. Members
+            // are recomputed from the matrix itself below, so this value only
+            // supplies the first construction.
             rotation: {
-              x: THREE.MathUtils.radToDeg(euler.x),
-              y: THREE.MathUtils.radToDeg(euler.y),
-              z: THREE.MathUtils.radToDeg(euler.z),
+              x: euler.x,
+              y: euler.y,
+              z: euler.z,
             },
             // The local matrix was composed at unit scale, so this is the only
             // place the object's own size is recorded.

@@ -12,27 +12,17 @@
       :object="selectedObject"
     />
     <!-- High level to detail: what the fixture *is* (its definition), then
-<<<<<<< Updated upstream
-         what this one is set to, then where it stands. -->
-    <!-- Several fixtures of one definition share these: the Model widget
+         what this one is set to, then where it stands. A geometry member of a
+         structure has no definition and no channels, so it skips both.
+         Several fixtures of one definition share these: the Model widget
          speaks for the definition anyway, and the settings write to all. -->
     <model-widget
-      v-show="shownFixture"
-=======
-         what this one is set to, then where it stands. A geometry member of a
-         structure has no definition and no channels, so it skips both. -->
-    <model-widget
       v-show="editedFixture && !selectedMemberIsObject"
->>>>>>> Stashed changes
       ref="model"
       :fixture="shownFixture"
     />
     <fixture-settings-widget
-<<<<<<< Updated upstream
-      v-show="shownFixture"
-=======
       v-show="editedFixture && !selectedMemberIsObject"
->>>>>>> Stashed changes
       ref="settings"
       :fixture="shownFixture"
       :fixtures="sharedFixtures"
@@ -77,7 +67,7 @@
 import EventBus from '@/plugins/eventbus';
 import Selection from '@/models/DMX/selection';
 import SelectionTransform from '@/models/DMX/selection_transform';
-import { SCENE_ITEM_KINDS, kindOf, rowId } from '@/models/DMX/scene_item';
+import { SCENE_ITEM_KINDS, kindOf } from '@/models/DMX/scene_item';
 
 import FixtureSettingsWidget from './_widgets/fixture.modifier.widget.settings.vue';
 import PlacementWidget from '../placement/placement.widget.vue';
@@ -203,14 +193,10 @@ export default {
      */
     selectedMember() {
       if (!this.selectedStructure || this.memberId === null) return null;
-<<<<<<< Updated upstream
       // By row id among the structure's own members: row ids are namespaced
       // by kind, so this finds an object member as readily as a fixture.
       return this.selectedStructure.members
         .find((member) => member.listable.id === this.memberId) || null;
-=======
-      return this.selectedStructure.members
-        .find((member) => rowId(kindOf(member), member.id) === this.memberId) || null;
     },
     /**
      * Whether the member on screen is geometry rather than a fixture.
@@ -227,7 +213,6 @@ export default {
     selectedMemberIsObject() {
       const member = this.selectedMember;
       return !!member && kindOf(member) === SCENE_ITEM_KINDS.OBJECT;
->>>>>>> Stashed changes
     },
     /**
      * Everything in the selection, of whatever kind.

@@ -15,7 +15,9 @@ import FixturePool from './fixture.pool.model';
 import Group from './group.model';
 import Structure from './structure.model';
 import SceneObject from './object.model';
-import { SCENE_ITEM_KINDS, kindOf } from './scene_item';
+import {
+  SCENE_ITEM_KINDS, kindOf, readMemberRef, isObjectRecord,
+} from './scene_item';
 import { claimInstance, setSiblingResolver } from './item_naming';
 import Live from './live.model';
 import {
@@ -28,17 +30,10 @@ import Preferences from '../../plugins/visualizer/preferences';
 import SceneObjects from '../../plugins/visualizer/scene_objects';
 import Studio from './studio';
 import { normaliseMatrixProfile } from './ofl_matrix';
-<<<<<<< Updated upstream
 import readGdtf, { wheelImages } from './gdtf/gdtf_reader';
 import buildBody from '../../plugins/visualizer/gdtf_body';
 import { headInputs } from './gdtf/fixture_parts';
 import { MAX_SHADOW_CASTERS } from '../../plugins/visualizer/light';
-=======
-import { MAX_SHADOW_CASTERS } from '../../plugins/visualizer/moving_head';
-import {
-  SCENE_ITEM_KINDS, kindOf, readMemberRef, isObjectRecord,
-} from './scene_item';
->>>>>>> Stashed changes
 
 const SHOWFILE_EXTENSIONS = {
   JSON: 'json',
@@ -873,13 +868,6 @@ class Show extends EventEmitter {
     this.loading.message = 'Restoring groups';
     this.prepareGroups(showData);
 
-<<<<<<< Updated upstream
-    // Objects before structures, which may hold them.
-    this.loading.message = 'Placing objects';
-    await this.prepareObjects(showData);
-
-=======
->>>>>>> Stashed changes
     this.loading.message = 'Restoring structures';
     this.prepareStructures(showData);
 
@@ -1229,26 +1217,6 @@ class Show extends EventEmitter {
 
     const structure = {
       name: group.name,
-<<<<<<< Updated upstream
-      members: group.members.map((member) => {
-        const local = member.localTransform
-          ? member.localTransform.clone()
-          : inverse.clone();
-        // An object keeps what it is -- its library key, or the parameters of
-        // a created one -- and its own scale, beside where it stands.
-        if (kindOf(member) === SCENE_ITEM_KINDS.OBJECT) {
-          const data = member.showData;
-          return {
-            kind: SCENE_ITEM_KINDS.OBJECT,
-            name: data.name,
-            model: data.model,
-            primitive: data.primitive,
-            scale: data.scale,
-            transform: local.elements.slice(),
-          };
-        }
-        return {
-=======
       members: group.members.map((member) => (kindOf(member) === SCENE_ITEM_KINDS.OBJECT
         ? {
           kind: SCENE_ITEM_KINDS.OBJECT,
@@ -1262,12 +1230,13 @@ class Show extends EventEmitter {
             size: { ...member.primitive.size },
             color: member.primitive.color,
           } : undefined,
-          scale: member.scale,
+          // Copied, not carried by reference: the definition crosses IPC to be
+          // written, and a proxy left in it is what `structuredClone` refuses.
+          scale: { ...member.scale },
           transform: localOf(member).elements.slice(),
         }
         : {
           kind: SCENE_ITEM_KINDS.FIXTURE,
->>>>>>> Stashed changes
           manufacturer: member.manufacturer,
           model: member.model,
           mode: member.mode ? member.mode.name : undefined,
@@ -1343,14 +1312,7 @@ class Show extends EventEmitter {
     // are not warmed -- an object has no profile, and asking for
     // `undefined/<library key>` would fetch nothing and look like a miss.
     const wanted = new Set();
-<<<<<<< Updated upstream
-    const isObject = (member) => member.kind === SCENE_ITEM_KINDS.OBJECT;
-    if (definition.members.some(isObject)) await this.preloadObjectLibrary();
-    const distinct = definition.members.filter((member) => {
-      if (isObject(member)) return false;
-=======
     const distinct = fixtures.filter((member) => {
->>>>>>> Stashed changes
       const key = `${member.manufacturer}/${member.model}`;
       if (wanted.has(key)) return false;
       wanted.add(key);
@@ -1360,36 +1322,8 @@ class Show extends EventEmitter {
       distinct.map((member) => this.resolveFixture(member.manufacturer, member.model)),
     );
 
-<<<<<<< Updated upstream
-    for (let i = 0; i < definition.members.length; i += 1) {
-      const member = definition.members[i];
-      if (isObject(member)) {
-        world.multiplyMatrices(origin, new THREE.Matrix4().fromArray(member.transform));
-        world.decompose(position, quaternion, scale);
-        euler.setFromQuaternion(quaternion);
-        // A missing library model still arrives, unresolved, as it does when
-        // a show is opened without it.
-        const object = new SceneObject({
-          model: member.primitive ? undefined : member.model,
-          primitive: member.primitive || null,
-          name: member.name || member.model || 'object',
-          position: { x: position.x, y: position.y, z: position.z },
-          rotation: { x: euler.x, y: euler.y, z: euler.z },
-          scale: member.scale,
-        });
-        // eslint-disable-next-line no-await-in-loop
-        await object.attach(member.primitive
-          ? null
-          : (this.objectLibrary[foldModelKey(member.model)] || null));
-        Show.joinNumbered(this.objects, [object]);
-        members.push(object);
-        // eslint-disable-next-line no-continue
-        continue;
-      }
-=======
     for (let i = 0; i < fixtures.length; i += 1) {
       const member = fixtures[i];
->>>>>>> Stashed changes
       // eslint-disable-next-line no-await-in-loop
       const resolved = await this.resolveFixture(member.manufacturer, member.model);
       if (resolved) {
@@ -1671,21 +1605,18 @@ class Show extends EventEmitter {
    * are a hundred rows in an instanced buffer and appear as they arrive.
    *
    * The saved id is kept as an index rather than as the object's own id when
-   * `freshIds` is asked for, which is what a paste does: the structure that
-   * held the original refers to it by the id it had in the chunk, and a copy
-   * cannot keep that without colliding with the original. The same arrangement
-   * `prepareFixtures` makes -- see `loadedFixturesById`.
+   * the record carries one as `sourceId`, which is what a paste does: the
+   * structure that held the original refers to it by the id it had in the
+   * chunk, and a copy cannot keep that without colliding with the original.
+   * The same arrangement `prepareFixtures` makes -- see `loadedFixturesById`.
    *
    * @public
    * @async
    * @param {Object} showData raw showfile contents
-   * @param {Object} [options]
-   * @param {Boolean} [options.freshIds] mint new ids and index the saved ones
    * @returns {Array} the objects created
    */
-  async prepareObjects(showData, { freshIds = false } = {}) {
+  async prepareObjects(showData) {
     const records = showData.objects || [];
-<<<<<<< Updated upstream
     const made = records.map((data) => new SceneObject(data));
     made.forEach((object, i) => restoreListOrder(object, records[i]));
     // By the id the record was saved or copied with, for the structures that
@@ -1696,22 +1627,6 @@ class Show extends EventEmitter {
       if (id !== undefined) this.loadedObjectsById.set(id, made[i]);
     });
     Show.joinNumbered(this.objects, made);
-=======
-    /**
-     * Showfile object id to the instance created for it. The counterpart of
-     * `loadedFixturesById`, and needed for the same reason: a structure names
-     * its object members by the id the file gave them.
-     */
-    this.loadedObjectsById = new Map();
-    const made = records.map((data) => {
-      const created = new SceneObject(
-        freshIds ? { ...data, id: undefined } : data,
-      );
-      if (data.id !== undefined) this.loadedObjectsById.set(data.id, created);
-      return created;
-    });
-    this.objects.push(...made);
->>>>>>> Stashed changes
     if (!made.length) return made;
     await this.preloadObjectLibrary();
     // Awaited, all of them. Fired and left to land, the load would report
@@ -1774,6 +1689,7 @@ class Show extends EventEmitter {
   prepareStructures(showData) {
     const made = (showData.structures || []).map((structureData) => {
       const structure = new Structure(structureData);
+      restoreListOrder(structure, structureData);
       (structureData.members || []).forEach((ref) => {
         // Resolved through the load indexes rather than the pool: addRaw hands
         // out fresh ids, so a saved member id means nothing once a fixture has
@@ -1783,7 +1699,7 @@ class Show extends EventEmitter {
       });
       return structure;
     });
-    this.structures.push(...made);
+    Show.joinNumbered(this.structures, made);
     return made;
   }
 
@@ -2012,7 +1928,6 @@ class Show extends EventEmitter {
 
     const groups = this.prepareGroups({ groups: fresh(data.groups) });
 
-<<<<<<< Updated upstream
     // Objects before structures, which may hold them. A copy gets a new id,
     // and keeps the one it was copied from as `sourceId`, which is what a
     // pasted structure names its members by.
@@ -2022,20 +1937,6 @@ class Show extends EventEmitter {
 
     const structures = this.prepareStructures({ structures: fresh(data.structures) });
 
-=======
-    // Before the structures, which hold their members rather than their ids:
-    // an object member has to exist before the structure can be given it. The
-    // saved ids are indexed rather than kept -- `freshIds` -- because a copy
-    // cannot hold the id of what it was copied from.
-    const objects = await this.prepareObjects({ objects: data.objects || [] }, { freshIds: true });
-    objects.forEach((object) => { object.name = this.uniqueObjectName(object.name, object.id); });
-
-    const structures = this.prepareStructures({ structures: fresh(data.structures) });
-    structures.forEach((structure) => {
-      structure.name = this.uniqueStructureName(structure.name, structure.id);
-    });
-
->>>>>>> Stashed changes
     this.capShadowCasters();
     // A member inside a pasted structure or group is not a loose item, and
     // handing it back would put the gizmo on the members as well as on the
@@ -2059,47 +1960,6 @@ class Show extends EventEmitter {
     object.dispose();
     this.objects.splice(index, 1);
     return true;
-  }
-
-<<<<<<< Updated upstream
-  prepareStructures(showData) {
-    const made = (showData.structures || []).map((structureData) => {
-      const structure = new Structure(structureData);
-      restoreListOrder(structure, structureData);
-      (structureData.members || []).forEach((ref) => {
-        // An object member is `{ kind, id }`, resolved through the objects
-        // just loaded.
-        if (ref && typeof ref === 'object') {
-          if (ref.kind !== SCENE_ITEM_KINDS.OBJECT) return;
-          const object = (this.loadedObjectsById || new Map()).get(ref.id);
-          if (object) structure.add(object);
-          return;
-        }
-        // Resolved through the load index rather than the pool: addRaw hands
-        // out fresh ids, so a saved member id means nothing once a fixture has
-        // been deleted and the rest have shuffled down.
-        const fixture = this.loadedFixturesById.get(ref);
-        if (fixture) structure.add(fixture);
-      });
-      return structure;
-    });
-    Show.joinNumbered(this.structures, made);
-    return made;
-=======
-  /**
-   * A name not already taken by another object.
-   *
-   * @public
-   * @param {String} base the model's name
-   * @returns {String}
-   */
-  numberedObjectName(base) {
-    const taken = new Set(this.objects.map((object) => object.name));
-    if (!taken.has(base)) return base;
-    let n = 2;
-    while (taken.has(`${base} ${n}`)) n += 1;
-    return `${base} ${n}`;
->>>>>>> Stashed changes
   }
 
   /**

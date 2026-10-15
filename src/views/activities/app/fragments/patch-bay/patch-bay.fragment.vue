@@ -4,12 +4,10 @@
       ref="header"
       class="patch_bay_header"
     >
-<<<<<<< Updated upstream
       <!-- Hidden rather than removed. A group is becoming a saved selection
            set for control, not a thing that moves in the scene -- structures
            do that -- so there is nothing to make one for from here yet.
            `createGroup` stays: the groups in existing shows still load. -->
-=======
       <h3>Patch Bay</h3>
       <span style="flex: 1" />
       <!-- Makes the selection one movable item. Fixtures and objects alike --
@@ -17,7 +15,6 @@
            already holds cannot join a second owner, so a selection of nothing
            structureable turns the button off rather than doing nothing on
            click. -->
->>>>>>> Stashed changes
       <uk-button
         icon="structure"
         style="margin-right: 8px"
@@ -207,7 +204,6 @@ export default {
       return this.highlightedIds.length > 1;
     },
     /**
-<<<<<<< Updated upstream
      * Whether anything is selected to export.
      *
      * @property {Boolean} canExport
@@ -216,9 +212,6 @@ export default {
       return this.highlightedIds.length > 0;
     },
     /**
-     * The patch bay as a tree: groups first, holding their members, then
-     * everything still at the root.
-=======
      * Whether there is anything to make a structure out of.
      *
      * One item is enough -- that is the common case, a truss with its heads
@@ -234,7 +227,6 @@ export default {
     /**
      * The patch bay as a tree: structures first, then objects, then groups
      * holding their members, then the fixtures still at the root.
->>>>>>> Stashed changes
      *
      * Built here rather than on the pool because grouping is a scene concern,
      * not something the pool knows about.
@@ -242,7 +234,6 @@ export default {
      * @type {Array}
      */
     listable() {
-<<<<<<< Updated upstream
       // How many items of each kind carry each name, counted once here rather
       // than by every row: a row shows its instance number only when its name
       // is shared.
@@ -254,19 +245,14 @@ export default {
         }));
       // By uid, which is unique across kinds: a structure holding object 3
       // must not hide fixture 3.
-=======
       // Keyed by kind and id, not by id alone: fixture 3 and object 3 are
       // different things, and a structure holding object 3 would otherwise
       // speak for fixture 3 as well and hide it from the list.
->>>>>>> Stashed changes
       const spokenFor = new Set();
       const speak = (member) => spokenFor.add(rowId(kindOf(member), member.id));
       const groups = this.show.groups.map((group) => {
-<<<<<<< Updated upstream
         group.members.forEach((member) => spokenFor.add(member.uid));
-=======
         group.members.forEach(speak);
->>>>>>> Stashed changes
         // Its own icon rather than the selector's folder: a group is a thing
         // in the show, not a place to look in.
         return [group, {
@@ -287,7 +273,6 @@ export default {
       // fixtures or objects; either way a structure is one row, which is what
       // keeps a stage of two hundred trusses from filling this column.
       const structures = this.show.structures.map((structure) => {
-<<<<<<< Updated upstream
         structure.members.forEach((member) => spokenFor.add(member.uid));
         return [structure, structure.listable];
       });
@@ -310,24 +295,6 @@ export default {
       return [...structures, ...objects, ...groups, ...loose]
         .sort((a, b) => place(a) - place(b))
         .map(([item, row]) => this.withVisibility(item, row, counts));
-=======
-        structure.members.forEach(speak);
-        return structure.listable;
-      });
-      // The same rule for a loose object as for a loose fixture: one that a
-      // structure holds is not a row of its own any more. The structures are
-      // walked first precisely so that by the time this runs, every member has
-      // been spoken for -- an object becoming a structure takes its row out of
-      // the list without anything being deleted, and `un-structure` puts it
-      // back.
-      const objects = (this.show.objects || [])
-        .filter((object) => !spokenFor.has(rowId(SCENE_ITEM_KINDS.OBJECT, object.id)))
-        .map((object) => object.listable);
-      const loose = this.pool.fixtures
-        .filter((fixture) => !spokenFor.has(rowId(SCENE_ITEM_KINDS.FIXTURE, fixture.id)))
-        .map((fixture) => this.describeFixture(fixture));
-      return [...structures, ...objects, ...groups, ...loose];
->>>>>>> Stashed changes
     },
   },
   mounted() {
@@ -595,14 +562,12 @@ export default {
       this.$show.createGroup(members);
     },
     /**
-<<<<<<< Updated upstream
      * Makes one structure out of the selected fixtures and objects.
      *
      * Structures take fixtures and objects, not other structures or groups,
      * so a selection that holds one contributes only its loose items. Each
      * entry is resolved by its kind: row ids are namespaced, and an object's
      * would never be found among the fixtures.
-=======
      * The selected items a structure could be made out of.
      *
      * Resolved through the selection store and the kind-aware lookup rather
@@ -628,16 +593,6 @@ export default {
         .filter((item) => !item.structure);
     },
     /**
-     * Makes one structure out of the selection.
-     *
-     * Fixtures and objects alike, which is what this is for on a stage: a
-     * truss, the heads on it and the weights under it are one arrangement, and
-     * a structure is the one item that moves them all and keeps them together.
->>>>>>> Stashed changes
-     *
-     * @public
-     */
-    /**
      * Opens the export popup on what is selected, taken now so that selecting
      * something else while it is open does not change what it writes.
      *
@@ -650,17 +605,22 @@ export default {
       if (!this.exportItems.length) return;
       this.exportPopupState = true;
     },
+    /**
+     * Makes one structure out of the selection.
+     *
+     * Fixtures and objects alike, which is what this is for on a stage: a
+     * truss, the heads on it and the weights under it are one arrangement, and
+     * a structure is the one item that moves them all and keeps them together.
+     *
+     * @public
+     */
     createStructure() {
-<<<<<<< Updated upstream
       const members = Selection.items
         .filter((entry) => entry.kind === SCENE_ITEM_KINDS.FIXTURE
           || entry.kind === SCENE_ITEM_KINDS.OBJECT)
         .map((entry) => this.itemOfKind(entry.kind, entry))
         .filter(Boolean)
         .filter((item) => !item.structure);
-=======
-      const members = this.structureableItems();
->>>>>>> Stashed changes
       if (!members.length) return;
       const structure = this.$show.createStructure(members);
       this.selectStructure(structure.id);
@@ -672,7 +632,6 @@ export default {
      * @public
      * @param {Object} payload `{ item, target, position }` from the list
      */
-<<<<<<< Updated upstream
     reorderItem({ item, target, position }) {
       const dragged = this.itemFromRow(item);
       const anchor = this.itemFromRow(target);
@@ -699,7 +658,7 @@ export default {
       const order = rows.filter((entry) => !moving.includes(entry));
       order.splice(at, 0, ...moving);
       this.$show.setListOrder(order);
-=======
+    },
     reparentItem({ item, target }) {
       // A structure is one item, and what it holds is not in this list, so
       // there is nothing to drag into or out of one.
@@ -717,7 +676,6 @@ export default {
         ? this.$show.groups.find((g) => g.id === target.groupId)
         : null;
       this.$show.moveToGroup(fixture, group);
->>>>>>> Stashed changes
     },
     /**
      * Routes to the selected fixture, which the modifier follows.

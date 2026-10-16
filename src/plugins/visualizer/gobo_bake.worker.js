@@ -137,6 +137,85 @@ function pack(sharp, size, sigmas, ground) {
   return packed;
 }
 
+/**
+ * What a disc's image says about its glass, from the packed levels: whether
+ * it is glass (mostly mid greys inside the circle, where a metal stencil is
+ * black and white), its feature size in disc radii (the mean run between
+ * crossings of the sharp level over the softest), its low and high
+ * levels (5th and 95th percentiles), its mean, and how much its features run
+ * one way across the whole disc and at what angle (structure tensor of the
+ * soft level).
+ */
+function measureDisc(pixels, size) {
+  const step = 4;
+  const n = Math.floor(size / step);
+  const centre = n / 2;
+  const at = (x, y, level) => pixels[((y * step) * size + x * step) * 4 + level];
+  const hist = new Array(256).fill(0);
+  let count = 0;
+  let sum = 0;
+  let grey = 0;
+  let crossings = 0;
+  let run = 0;
+  let jxx = 0;
+  let jyy = 0;
+  let jxy = 0;
+  const inside = (x, y) => Math.hypot(x - centre + 0.5, y - centre + 0.5) < centre * 0.85;
+  for (let y = 1; y < n - 1; y += 1) {
+    let previous = 0;
+    for (let x = 1; x < n - 1; x += 1) {
+      if (inside(x, y)) {
+        const v = at(x, y, 0);
+        hist[v] += 1;
+        count += 1;
+        sum += v;
+        if (v > 40 && v < 215) grey += 1;
+        // Above or below the softest level, with a dead band against noise.
+        const high = v - at(x, y, 2);
+        const sign = Math.abs(high) > 4 ? Math.sign(high) : 0;
+        if (sign !== 0) {
+          if (previous !== 0 && sign !== previous) crossings += 1;
+          previous = sign;
+        }
+        run += 1;
+        const gx = at(x + 1, y, 1) - at(x - 1, y, 1);
+        const gy = at(x, y + 1, 1) - at(x, y - 1, 1);
+        jxx += gx * gx;
+        jyy += gy * gy;
+        jxy += gx * gy;
+      } else {
+        previous = 0;
+      }
+    }
+  }
+  if (!count) return null;
+  const percentile = (p) => {
+    let target = p * count;
+    for (let v = 0; v < 256; v += 1) {
+      target -= hist[v];
+      if (target <= 0) return v / 255;
+    }
+    return 1;
+  };
+  // A run of samples is step pixels each, a disc radius size / 2 pixels.
+  const runRadii = (run * step) / (size / 2);
+  const tr = jxx + jyy;
+  return {
+    glass: grey / count > 0.12,
+    // The mean run between crossings: half a period by count, but crossings
+    // inside the dead band go uncounted, and this matches the median of the
+    // image's spectrum on the discs checked.
+    size: crossings > 0 ? Math.min(Math.max(runRadii / crossings, 0.02), 1) : 0.3,
+    low: percentile(0.05),
+    high: percentile(0.95),
+    mean: sum / count / 255,
+    stretch: tr > 0 ? Math.sqrt((jxx - jyy) ** 2 + 4 * jxy * jxy) / tr : 0,
+    // Along the features: across the mean gradient, in the image's own
+    // coordinates, y down.
+    angle: 0.5 * Math.atan2(2 * jxy, jxx - jyy) + Math.PI / 2,
+  };
+}
+
 // eslint-disable-next-line no-restricted-globals
 self.onmessage = ({ data }) => {
   const {
@@ -146,6 +225,7 @@ self.onmessage = ({ data }) => {
     ? pack(drawDisc(bitmap, size), size, sigmas, '#fff')
     : pack(drawSharp(bitmap, lightOnDark, size, aperture), size, sigmas, '#000');
   bitmap.close();
+  const stats = disc ? measureDisc(pixels, size) : null;
   // eslint-disable-next-line no-restricted-globals
-  self.postMessage({ id, pixels }, [pixels.buffer]);
+  self.postMessage({ id, pixels, stats }, [pixels.buffer]);
 };

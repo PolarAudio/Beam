@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.1.0-alpha.23
+
+### Gobos and animation wheels
+
+- 270 stock gobos at 256 px: small line-art gobos upscaled, metal gobos cleaned to black and white with smooth edges. They ship with the installer.
+- Gobos are drawn from an atlas of 64 cells that loads images as fixtures need them and drops unused ones. Images are prepared in a background worker, so loading a rig no longer stalls the view.
+- GDTF animation wheels and animation systems are drawn in beams and pools. 12 stock discs at 768 px ship with the installer.
+- Glass animation discs draw a moving caustic web measured from the disc image: its size, stretch, direction and brightness. It moves with the disc's rotation and stops when the disc stops; part of it turns against the disc. Defocus washes it out. Metal discs are drawn as their image.
+- Gobos and animation discs can be swapped per fixture, in a window opened from Fixture settings: stock images, images in your library, or an open slot. The swaps are saved with the project.
+- Lens blur past the softest level fades a gobo or disc to its average brightness. Nearest focus is 2.5 m; a Focus(n)Distance channel sets the focus distance in metres.
+
+### Beams
+
+- Framing blades no longer draw copies of the cut beam inside it, except with a prism. Blade edges are at least as soft as the lens blur.
+- A CTO or CTB channel linked to a filter is drawn as that filter.
+
+### Export
+
+- **Export** at the top of the patch bay writes a **MadMapper layout** or a **Patch sheet (PDF)**. Both cover the selection, or the whole scene when nothing is selected, and follow the selection while the dialog is open. File → Export Patch Sheet is gone.
+- Patch sheet: each view on its own page, measurements on the page after the views, empty lists left out.
+- Export Project suggests the project name with `_Export` added.
+
+### Fixtures
+
+- Tomshine 60W LED Mini Moving Head ships as GDTF. LaserCube GDTF files carry a thumbnail and channel names GDTF Share accepts. Elation Proteus Hybrid added as a test fixture.
+- Fixture settings keep their scroll position per fixture model for the session.
+- The placement widget follows gizmo drags with several items selected.
+- The per-light shadow checkbox is removed. Removing an item from the library deletes its file.
+
 ## 0.1.0-alpha.22
 
 ### Lasers

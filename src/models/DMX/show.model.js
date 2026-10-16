@@ -771,8 +771,11 @@ class Show extends EventEmitter {
    */
   async exportDocument() {
     if (typeof window === 'undefined' || !window.documentStore) return false;
+    // Suffixed so the export does not default to overwriting the project it came from.
+    const base = this.projectName || 'Untitled';
+    const name = /_Export$/i.test(base) ? base : `${base}_Export`;
     const target = await window.documentStore.saveAs(
-      this.projectName,
+      name,
       'Export project',
       `project-export|${this.documentPath || ''}`,
     );

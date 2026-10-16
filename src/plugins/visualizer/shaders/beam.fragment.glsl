@@ -541,8 +541,10 @@ vec2 beamStencil(vec2 p, vec2 along, float lod) {
   int facets = int(abs(vPrism.x));
   bool linear = vPrism.x < 0.0;
   // Framing blades sit in the gate with the gobos, as sharp as the focus
-  // makes them.
-  float bladeSoft = 0.01 + 0.06 * sampleDefocus;
+  // makes them: at least as soft as the lens's blur here, so near the lens,
+  // where the blur covers the lens, the beam leaves the whole lens, dimmed by
+  // the blades, rather than narrowing to the planes their edges make.
+  float bladeSoft = max(0.01 + 0.06 * sampleDefocus, sampleBlur);
   // An animation disc sits in the gate with the gobos, never sharper than
   // they are in the air. Its table row is the light's, as the shapers' is.
   float discDefocus = max(sampleDefocus, 1.0);
@@ -763,6 +765,51 @@ float beamProfile(vec3 viewDir, out float zAlong, out float sAlong, out float fa
   bLo = max(bLo, sNear);
   bHi = min(bHi, sFar);
   hasB = hasB && bHi > bLo;
+
+  // And only inside the framing blades. A blade's edge in the gate is a
+  // plane through the lens in the air, flat walls inside the cone; spread
+  // over the whole cone, the four samples stepped across such a wall and
+  // drew a copy of the cut beam at each step. Clipped like the cone's own
+  // wall, they sit inside it. Each plane is set out by the blade's softness
+  // and the lens's blur at the stretch's ends, so a soft edge keeps its
+  // falloff. Not with a prism: its copies are cut at different places.
+  if (vShaperRow >= 0.0 && abs(vPrism.x) < 2.0 && (hasA || hasB)) {
+    float slope = m / vSpread;
+    float sEnd0 = hasA ? aLo : bLo;
+    float sEnd1 = hasB ? bHi : aHi;
+    float z0 = max(oz + vz * sEnd0, 1e-3);
+    float z1 = max(oz + vz * sEnd1, 1e-3);
+    float blurEnds = max(r0 * abs(1.0 - z0 * vInvFocus) / (slope * z0),
+      r0 * abs(1.0 - z1 * vInvFocus) / (slope * z1));
+    float margin = 0.01 + 0.06 * max(vPrism.w, beamBlurLevels(blurEnds)) + blurEnds;
+    for (int k = 0; k < 8; k++) {
+      vec4 blade = texelFetch(shaperTable, ivec2(k, int(vShaperRow)), 0);
+      if (blade.w < 0.5) break;
+      // Lit where n . aperture < offset, the aperture being the offset from
+      // the axis over the image's radius, slope z: linear along the ray.
+      vec3 normal = blade.x * vAxisX + blade.y * vAxisY;
+      float limit = (blade.z + margin) * slope;
+      float f0 = dot(oR, normal) - limit * oz;
+      float f1 = dot(vR, normal) - limit * vz;
+      if (abs(f1) < 1e-9) {
+        if (f0 >= 0.0) {
+          hasA = false;
+          hasB = false;
+        }
+        continue;
+      }
+      float root = -f0 / f1;
+      if (f1 > 0.0) {
+        aHi = min(aHi, root);
+        bHi = min(bHi, root);
+      } else {
+        aLo = max(aLo, root);
+        bLo = max(bLo, root);
+      }
+    }
+    hasA = hasA && aHi > aLo;
+    hasB = hasB && bHi > bLo;
+  }
 
   // In ray order, as one piece where they meet.
   if (!hasA && hasB) {

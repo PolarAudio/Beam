@@ -26,10 +26,6 @@
     <credits-popup v-model="creditsPopupState" />
     <newshow-popup v-model="newProjectPopupState" />
     <project-popup v-model="projectPopupState" />
-    <patch-sheet-popup
-      v-model="patchSheetPopupState"
-      @export="exportPatchSheet"
-    />
     <video-popup
       v-model="videoPopupState"
       :focus-id="videoFocusId"
@@ -53,13 +49,11 @@ import confirm from '@/plugins/confirm';
 import importGdtfFiles from '@/plugins/gdtf_import';
 import ViewMode from '@/plugins/view_mode';
 import Screenshot from '@/plugins/visualizer/screenshot';
-import { exportPatchSheet } from '@/models/DMX/patch_sheet';
 import PreferencesPopup from './_popups/popup.preferences.vue';
 import LicensePopup from './_popups/popup.license.vue';
 import CreditsPopup from './_popups/popup.credits.vue';
 import NewshowPopup from './_popups/popup.newshow.vue';
 import ProjectPopup from './_popups/popup.project.vue';
-import PatchSheetPopup from './_popups/popup.patchsheet.vue';
 import VideoPopup from './_popups/popup.video.vue';
 import LaserClipsPopup from './_popups/popup.laserclips.vue';
 import WheelsPopup from './_popups/popup.wheels.vue';
@@ -76,7 +70,6 @@ export default {
     CreditsPopup,
     NewshowPopup,
     ProjectPopup,
-    PatchSheetPopup,
     VideoPopup,
     LaserClipsPopup,
     WheelsPopup,
@@ -111,7 +104,6 @@ export default {
       newProjectPopupState: false,
       /** Project Details: the project's notes. */
       projectPopupState: false,
-      patchSheetPopupState: false,
       /** Full window, full screen and stay on top. */
       view: ViewMode.state,
       /** Whether the Preferences window is open, and the tab it opens on. */
@@ -187,13 +179,6 @@ export default {
               icon: 'wrench',
               callback: () => {
                 this.projectPopupState = true;
-              },
-            },
-            {
-              name: 'Export Patch Sheet (PDF)...',
-              icon: 'export',
-              callback: () => {
-                this.patchSheetPopupState = true;
               },
             },
             {
@@ -543,20 +528,6 @@ export default {
      */
     async exportShow() {
       await this.$show.exportDocument();
-    },
-    /**
-     * Writes the patch sheet as a PDF.
-     *
-     * @public
-     * @async
-     * @param {Object} options what to print, from the export dialog
-     */
-    async exportPatchSheet(options) {
-      try {
-        await exportPatchSheet(this.$show, options);
-      } catch (err) {
-        EventBus.emit('app_error', new Error(`Could not export the patch sheet: ${err.message}`));
-      }
     },
     /**
      * Replaces the profiles and objects an exported project carries with the

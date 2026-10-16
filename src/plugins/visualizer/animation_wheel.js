@@ -12,7 +12,8 @@ import BakeWorker from './gobo_bake.worker?worker';
  *
  * Every renderer reads a light's disc from one row of a table: texel 0 is
  * (atlas cell + 1, 0 for none; the disc's angle in radians; the window's
- * centre x, y), texel 1 is (the window's radius, 0, 0, 0). The discs' images
+ * centre x, y), texel 1 is (the window's radius, the turns the disc has made
+ * either way, 0, 0). The discs' images
  * are drawn into their own atlas, larger than the gobo atlas's cells
  * because the gate sees only a part of the disc, with the same three baked
  * blur levels in red, green and blue. A disc is drawn into its cell by the
@@ -59,6 +60,37 @@ const baking = new Map();
 let bakes = 0;
 /** Cells drawn since the last upload: `{ index, pixels }`. */
 const pending = [];
+
+/**
+ * What each disc cell's image measured (see gobo_bake.worker.js), a row per
+ * cell: texel 0 (glass 1 or 0, feature size in disc radii, low, high), texel
+ * 1 (mean, stretch 0 to 1, angle of the features in radians, 0).
+ */
+const measures = new Float32Array(ANIMATION_GRID * ANIMATION_GRID * 2 * 4);
+const MEASURE_ROWS = ANIMATION_GRID * ANIMATION_GRID;
+const { RGBAFormat, FloatType } = THREE;
+const measureTable = new THREE.DataTexture(measures, 2, MEASURE_ROWS, RGBAFormat, FloatType);
+measureTable.magFilter = THREE.NearestFilter;
+measureTable.minFilter = THREE.NearestFilter;
+measureTable.needsUpdate = true;
+
+/**
+ * The fake caustics on glass discs: strength 0 (off) to 1, how far the web
+ * flows per turn of the disc, and its size against the disc's own features.
+ * The web moves only as the disc turns: a disc at rest throws a still web. The real glass
+ * scatters light into a moving web of bright lines; this draws such a web,
+ * shaped by the disc's measures, rather than tracing the light.
+ */
+export const GLASS_CAUSTIC = 0.7;
+export const GLASS_FLOW = 10;
+export const GLASS_SIZE = 1;
+
+const glass = {
+  animationParams: { value: measureTable },
+  animationCaustic: { value: GLASS_CAUSTIC },
+  animationFlow: { value: GLASS_FLOW },
+  animationSize: { value: GLASS_SIZE },
+};
 
 const data = new Float32Array(ROWS * TEXELS * 4);
 const table = new THREE.DataTexture(data, TEXELS, ROWS, THREE.RGBAFormat, THREE.FloatType);
@@ -112,9 +144,19 @@ function onBaked({ data: baked }) {
   const pixels = new Uint8ClampedArray(baked.pixels.buffer);
   canvas.getContext('2d').putImageData(new ImageData(pixels, ANIMATION_CELL, ANIMATION_CELL), x, y);
   pending.push({ index, pixels: new Uint8Array(baked.pixels.buffer) });
+  const m = baked.stats;
+  const row = index * 8;
+  if (m) {
+    measures.set([m.glass ? 1 : 0, m.size, m.low, m.high, m.mean, m.stretch, m.angle, 0], row);
+  } else {
+    measures.fill(0, row, row + 8);
+  }
+  measureTable.needsUpdate = true;
 }
 
 const Animation = {
+  /** @type {Object} the glass uniforms the beam and pool shaders share */
+  glass,
   /**
    * The disc atlas, built once, every cell open until its image loads.
    *
@@ -207,6 +249,7 @@ const Animation = {
       data[at + 2] = disc.x;
       data[at + 3] = disc.y;
       data[at + 4] = disc.radius;
+      data[at + 5] = disc.turns || 0;
     }
     table.needsUpdate = true;
   },
@@ -241,6 +284,64 @@ export function windowCentre(system, t) {
  */
 export const ANIMATION_GLSL = `
 #define ANIMATION_GRID ${ANIMATION_GRID}.0
+uniform sampler2D animationParams;
+uniform float animationCaustic;
+uniform float animationFlow;
+uniform float animationSize;
+// A web of bright lines, 0 to 1, tiling every unit of uv and flowing with
+// t: the classic iterated water caustic. The exponent sets how thin its
+// lines are, 8 crisp; its mean is then about 0.79 exp(-0.19 (exponent - 1)).
+float animationWeb( vec2 uv, float t, float exponent ) {
+  vec2 p = mod( uv * 6.2831853, 6.2831853 ) - 250.0;
+  vec2 i = p;
+  float c = 1.0;
+  for ( int n = 0; n < 5; n ++ ) {
+    float tn = t * ( 1.0 - 3.5 / float( n + 1 ) );
+    i = p + vec2( cos( tn - i.x ) + sin( tn + i.y ), sin( tn - i.y ) + cos( tn + i.x ) );
+    c += 1.0 / length( vec2( p.x / ( sin( i.x + tn ) / 0.005 ), p.y / ( cos( i.y + tn ) / 0.005 ) ) );
+  }
+  c = 1.17 - pow( c / 5.0, 1.4 );
+  return clamp( pow( abs( c ), exponent ), 0.0, 1.0 );
+}
+// What a glass disc passes at a point of it, faked: the web sized and
+// stretched as the disc's features, between the disc's own low and high
+// levels, at the disc's own mean. Drawn on the disc, so it turns with it,
+// and flowing as the disc turns, so its lines wander in every direction
+// while it moves and stand still when it stops. The lens blurs it by its
+// blur against the web's cell: crisp lines in focus, wider and fainter as
+// the blur grows, even light once the blur spans a cell. The mean stays.
+// The web's coordinates at a point of the disc, turned to the features'
+// direction, stretched along it and scaled to the cell.
+vec2 animationWebUv( vec4 a, vec4 b, vec2 q ) {
+  float c = cos( -b.z );
+  float s = sin( -b.z );
+  vec2 r = vec2( c * q.x - s * q.y, s * q.x + c * q.y );
+  return vec2( r.x / ( 1.0 + 2.0 * b.y ), r.y ) / ( max( a.y, 0.02 ) * animationSize );
+}
+float animationGlass( vec4 a, vec4 b, vec2 q, float turns, float blurDisc, float angle ) {
+  float cell = max( a.y, 0.02 ) * animationSize;
+  vec2 uv = animationWebUv( a, b, q );
+  // A second, fainter web turning against the disc at 0.6 of its speed,
+  // with its own flow: refracted light does not all travel with the glass,
+  // and the brighter of the two puts some lines against the disc's travel.
+  float back = angle * 1.6;
+  vec2 qb = vec2( cos( back ) * q.x - sin( back ) * q.y, sin( back ) * q.x + cos( back ) * q.y );
+  vec2 uvb = animationWebUv( a, b, qb ) * 1.3 + vec2( 0.37, 0.11 );
+  // One tile of the web holds three to four of its cells. Glass caustics
+  // form where light converges, so they are sharp only near focus and wash
+  // out four times faster than a stencil's edge.
+  float soft = clamp( 4.0 * blurDisc / ( cell / 3.5 ), 0.0, 1.0 );
+  float exponent = mix( 8.0, 1.5, soft );
+  float web = max( animationWeb( uv, turns * animationFlow, exponent ),
+    0.5 * animationWeb( uvb, turns * animationFlow * 0.7 + 17.3, exponent ) );
+  // The brighter of two raises the mean by about 1 + 0.0084 (exponent - 1.5)^1.5.
+  float webMean = 0.79 * exp( -0.19 * ( exponent - 1.0 ) )
+    * ( 1.0 + 0.0084 * pow( max( exponent - 1.5, 0.0 ), 1.5 ) );
+  float shaped = mix( a.z, a.w, web / webMean * 0.5 );
+  float meanShaped = mix( a.z, a.w, 0.5 );
+  shaped = mix( shaped, meanShaped, smoothstep( 0.4, 1.0, soft ) );
+  return shaped * b.x / max( meanShaped, 0.02 );
+}
 // The disc's softest level at a point of the disc image; 1 past the image,
 // where there is no disc.
 float animationSoftest( sampler2D atlas, vec2 cell, vec2 q ) {
@@ -252,7 +353,8 @@ float animationMask( sampler2D table, sampler2D atlas, float row, vec2 p, float 
   if ( row < 0.0 ) return 1.0;
   vec4 disc = texelFetch( table, ivec2( 0, int( row ) ), 0 );
   if ( disc.x < 0.5 ) return 1.0;
-  float radius = texelFetch( table, ivec2( 1, int( row ) ), 0 ).x;
+  vec4 window = texelFetch( table, ivec2( 1, int( row ) ), 0 );
+  float radius = window.x;
   // The point of the disc image the gate shows here: the window's centre
   // plus the gate scaled to the window, turned back by the disc's angle.
   vec2 q = disc.zw + p * radius;
@@ -283,6 +385,15 @@ float animationMask( sampler2D table, sampler2D atlas, float row, vec2 p, float 
       sum += animationSoftest( atlas, cell, q + vec2( cos( a ), sin( a ) ) * spread * 0.6 );
     }
     v = mix( v, sum / 7.0, wash );
+  }
+  // Glass discs, faked: the web instead of the image, by the strength.
+  if ( animationCaustic > 0.0 && max( abs( q.x ), abs( q.y ) ) < 1.0 && length( q ) < 1.0 ) {
+    vec4 ma = texelFetch( animationParams, ivec2( 0, int( index ) ), 0 );
+    if ( ma.x > 0.5 ) {
+      vec4 mb = texelFetch( animationParams, ivec2( 1, int( index ) ), 0 );
+      float rim = 1.0 - smoothstep( 0.9, 1.0, length( q ) );
+      v = mix( v, animationGlass( ma, mb, q, window.y, blur * radius, disc.y ), animationCaustic * rim );
+    }
   }
   return v;
 }

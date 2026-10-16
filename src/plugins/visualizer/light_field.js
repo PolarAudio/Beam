@@ -231,6 +231,8 @@ const uniforms = {
   lightFieldShapers: { value: Shapers.texture },
   // Every light's animation disc and the discs' images; see animation_wheel.js.
   lightFieldAnimation: { value: Animation.table },
+  // The glass discs' measures and fake caustics; see animation_wheel.js.
+  ...Animation.glass,
   // Built on first read: the atlas is a canvas, and this module also loads
   // where there is no document.
   lightFieldAnimationAtlas: { get value() { return Animation.atlas; } },
@@ -706,8 +708,9 @@ vec2 fieldStencil( vec2 p, float inner, vec4 gobo, vec4 prism, float split, floa
   bool linear = prism.x < 0.0;
   // The gobo is as soft as the frost or the lens makes it, whichever is more.
   float defocus = max( prism.w, fieldBlurLevels( blur ) );
-  // Framing blades sit in the gate with the gobos.
-  float bladeSoft = 0.01 + 0.06 * defocus;
+  // Framing blades sit in the gate with the gobos, at least as soft as the
+  // lens's blur, as the beam has them.
+  float bladeSoft = max( 0.01 + 0.06 * defocus, blur );
   if ( facets < 2 ) {
     float v = fieldEdge( length( p ), inner, blur )
       * fieldGobos( p, gobo, defocus )

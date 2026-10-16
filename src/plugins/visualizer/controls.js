@@ -1869,17 +1869,19 @@ class Controls {
     SCENE_RENDERERS.forEach((renderer) => renderer.clearHighlighting());
   }
 
-  setFocus(state, { force = false } = {}) {
+  setFocus(state, { force = false, always = false } = {}) {
     // Zooming back out obeys the auto-focus setting as framing does: with it
     // off, dropping a selection leaves the view where it is.
-    if (!force && !this.autoFocus) return;
+    if (!force && !always && !this.autoFocus) return;
     // An empty group has nothing to frame, and an empty box carries infinite
     // bounds -- which would send the camera somewhere unreachable rather than
     // simply leaving it alone.
     if (state && this.boundingBox.isEmpty()) return;
     // Selecting a fixture that is already framed should not yank the camera
-    // around; only move when the selection is off-screen or clipped.
-    if (state && this.isSelectionInView()) return;
+    // around; only move when the selection is off-screen or clipped. `always`
+    // is the explicit request from Period: focus the selection even if it is
+    // already on screen.
+    if (state && !always && this.isSelectionInView()) return;
     this.cameraHandle.updateMatrixWorld();
     const startPos = new THREE.Vector3();
     startPos.setFromMatrixPosition(this.cameraHandle.matrixWorld);

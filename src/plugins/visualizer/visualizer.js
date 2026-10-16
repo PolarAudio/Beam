@@ -1975,8 +1975,9 @@ class Visualizer {
           break;
         case 'Period':
         case 'NumpadDecimal':
+        case 'Decimal':
           action = () => {
-            if (Controls.pooledInstances.length) Controls.setFocus(true, { force: true });
+            if (Controls.pooledInstances.length) Controls.setFocus(true, { force: true, always: true });
             else Controls.frameAll();
           };
           break;

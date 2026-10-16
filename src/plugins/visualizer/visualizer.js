@@ -1938,6 +1938,63 @@ class Visualizer {
   }
 
   /**
+   * Blender's numpad views, while Blender navigation is selected.
+   *
+   * The six axis views, the perspective/orthographic toggle, and Period to focus
+   * the selection (or the whole scene when nothing is selected) are the keys a
+   * Blender user reaches for without thinking. Nothing here runs in original
+   * navigation mode, so the existing shortcuts stay exactly as they were.
+   *
+   * @private
+   */
+  prepareBlenderKeys() {
+    window.addEventListener('keydown', (event) => {
+      if (this.navigationStyle !== 'blender') return;
+      const target = event.target;
+      const tag = target && target.tagName;
+      // Never steal a keystroke from a text field, select, or anything the user
+      // is editing in the browser.
+      if (target && (target.isContentEditable
+        || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT')) return;
+
+      const ctrl = event.ctrlKey || event.metaKey;
+      let action = null;
+
+      switch (event.code) {
+        case 'Numpad1':
+          action = () => Controls.setView(ctrl ? 'back' : 'front');
+          break;
+        case 'Numpad3':
+          action = () => Controls.setView(ctrl ? 'left' : 'right');
+          break;
+        case 'Numpad7':
+          action = () => Controls.setView(ctrl ? 'bottom' : 'top');
+          break;
+        case 'Numpad5':
+          action = () => { this.orthographic = !this.orthographic; };
+          break;
+        case 'Period':
+        case 'NumpadDecimal':
+          action = () => {
+            if (Controls.pooledInstances.length) Controls.setFocus(true, { force: true });
+            else Controls.frameAll();
+          };
+          break;
+        default:
+          break;
+      }
+
+      if (!action) return;
+      // Cancel any flight the user had running *before* starting the new one;
+      // doing it afterwards would cancel the view we just asked for.
+      cancelAnimationFrame(Controls.rafID);
+      Controls.flying = false;
+      action();
+      event.preventDefault();
+    });
+  }
+
+  /**
    * One wheel move, toward the point under the pointer.
    *
    * @public
@@ -2266,6 +2323,7 @@ class Visualizer {
 
     this.prepareLookAround();
     this.prepareWheel();
+    this.prepareBlenderKeys();
     this.controls.autoRotate = this.autoRotate;
     this.controls.autoRotateSpeed = 2.5
     AnimationManager.add(() => {

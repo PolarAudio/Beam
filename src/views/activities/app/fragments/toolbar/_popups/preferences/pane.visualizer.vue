@@ -278,7 +278,7 @@ export default {
         hazeTurbulence: 'How fast the haze moves and churns.',
         grid: 'Show the infinite reference grid.',
         gridSize: 'Metres between grid lines, and the distance the gizmo snaps by. The same on all three axes.',
-        navigation: 'Camera navigation style. Original: right-mouse orbits, middle pans. Blender: middle orbits, Shift+middle pans, Ctrl+middle walks.',
+        navigation: 'Camera navigation style. Original: right-mouse orbits, middle pans. Blender: middle orbits, Shift+middle pans, Ctrl+middle walks, Numpad 1/3/7 axis views, Ctrl+Numpad 1/3/7 reverse views, Numpad 5 toggles ortho, and Period focuses the selection.',
         anchorReach: 'How close a truss end has to come to another before the two join. Not the grid: this is how near the connection has to be. A tight reach suits short trusses, where half a metre would put several connections in range at once.',
         gridBrightness: 'How strongly the grid draws. What reads as subtle depends on the background behind it.',
         gridLineWidth: 'In pixels. Below 1 the lines go fainter rather than narrower: a line thinner than a pixel cannot be drawn, only dimmed.',

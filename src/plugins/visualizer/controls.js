@@ -489,6 +489,9 @@ class Controls {
       this.selectionBandEl = null;
       // Initilising instance pool
       this.pooledInstances = [];
+      // Original: right mouse orbits, middle pans/shift-lifts.
+      // Blender: middle mouse orbits, Shift+middle pans, Ctrl+middle walks.
+      this.navigationStyle = 'original';
       // The anchor the user picked to join from, or null for the nearest one.
       // Held as the placement and the model's own name for it, because the
       // anchors themselves are rebuilt every frame.
@@ -1781,6 +1784,14 @@ class Controls {
 
   get anchorReach() {
     return this._anchorReach || SNAP_POSITION_TOLERANCE;
+  }
+
+  set navigationStyle(style) {
+    this._navigationStyle = style === 'blender' ? 'blender' : 'original';
+  }
+
+  get navigationStyle() {
+    return this._navigationStyle || 'original';
   }
 
   /**

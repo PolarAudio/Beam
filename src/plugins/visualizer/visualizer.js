@@ -495,6 +495,7 @@ class Visualizer {
     this.snapEnabled = source.snapEnabled !== false;
     this.snapSpacing = source.snapSpacing;
     this.anchorReach = source.anchorReach;
+    this.navigationStyle = source.navigationStyle;
     this.showGrid = source.showGrid;
     this.reflections = source.reflections;
     this.gridOpacity = source.gridOpacity;
@@ -1018,6 +1019,28 @@ class Visualizer {
   // eslint-disable-next-line class-methods-use-this
   get snapSpacing() {
     return Controls.snapSpacing;
+  }
+
+  /**
+   * Navigation style.
+   *
+   * `original` keeps right-mouse orbit and middle pan. `blender` moves the
+   * camera to the middle mouse instead, so left click remains free for
+   * selecting and transforming -- the one hand-over-the-mouse behaviour
+   * Blender users expect.
+   *
+   * @type {String}
+   */
+  // eslint-disable-next-line class-methods-use-this
+  set navigationStyle(value) {
+    const stored = value === 'blender' ? 'blender' : 'original';
+    Controls.navigationStyle = stored;
+    Preferences.set('navigationStyle', stored);
+  }
+
+  // eslint-disable-next-line class-methods-use-this
+  get navigationStyle() {
+    return Controls.navigationStyle;
   }
 
   /**
@@ -1727,10 +1750,17 @@ class Visualizer {
     window.addEventListener('pointerdown', (event) => {
       if (event.target !== this.domElement) return;
       let mode = null;
+      // Blender navigation moves the camera onto the middle mouse, so right
+      // stays free for whatever the rest of the UI does with it. In the
+      // original mode the right mouse still orbits and the middle pans.
+      const blender = this.navigationStyle === 'blender';
       if (event.shiftKey) {
         mode = (event.button === RIGHT_BUTTON && DRAG_LOOK)
-          || (event.button === MIDDLE_BUTTON && DRAG_LIFT);
-      } else if (event.button === RIGHT_BUTTON) {
+          || (event.button === MIDDLE_BUTTON && (blender ? DRAG_PAN : DRAG_LIFT));
+      } else if (
+        (blender && event.button === MIDDLE_BUTTON)
+        || (!blender && event.button === RIGHT_BUTTON)
+      ) {
         mode = DRAG_ORBIT;
         const press = { clientX: event.clientX, clientY: event.clientY, currentTarget: this.domElement };
         if (!Controls.scenePointAt(press, orbitPivot)) {
@@ -1748,7 +1778,7 @@ class Visualizer {
           mode = DRAG_WALK;
           this.walkCursor = { x: event.clientX, y: event.clientY };
         }
-      } else if (event.button === MIDDLE_BUTTON) {
+      } else if (event.button === MIDDLE_BUTTON && !blender) {
         mode = DRAG_PAN;
         // A camera pan moves at the depth of what is under the pointer, so
         // that is what follows it exactly.

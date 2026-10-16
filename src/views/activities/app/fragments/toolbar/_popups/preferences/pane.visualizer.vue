@@ -178,6 +178,17 @@
     </div>
     <div
       class="row"
+      :title="tips.navigation"
+    >
+      <span class="label">Navigation</span>
+      <uk-select-input
+        v-model="$show.visualizerHandle.navigationStyle"
+        class="span"
+        :options="['original', 'blender']"
+      />
+    </div>
+    <div
+      class="row"
       :title="tips.gridBrightness"
     >
       <span class="label">Grid brightness</span>
@@ -267,6 +278,7 @@ export default {
         hazeTurbulence: 'How fast the haze moves and churns.',
         grid: 'Show the infinite reference grid.',
         gridSize: 'Metres between grid lines, and the distance the gizmo snaps by. The same on all three axes.',
+      navigation: 'Camera navigation style. Original: right-mouse orbits, middle pans. Blender: middle orbits, Shift+middle pans, Ctrl+middle walks.',
         anchorReach: 'How close a truss end has to come to another before the two join. Not the grid: this is how near the connection has to be. A tight reach suits short trusses, where half a metre would put several connections in range at once.',
         gridBrightness: 'How strongly the grid draws. What reads as subtle depends on the background behind it.',
         gridLineWidth: 'In pixels. Below 1 the lines go fainter rather than narrower: a line thinner than a pixel cannot be drawn, only dimmed.',
@@ -409,6 +421,7 @@ export default {
       handle.houseExposureDown = initial.houseEVDown;
       handle.snapSpacing = initial.snapSpacing;
       handle.anchorReach = initial.anchorReach;
+      handle.navigationStyle = initial.navigationStyle;
       handle.showGrid = initial.showGrid;
       handle.gridOpacity = initial.gridOpacity;
       handle.gridLineWidth = initial.gridLineWidth;

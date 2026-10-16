@@ -112,6 +112,8 @@ const DEFAULTS = {
    * are in range at once and the nearest one wins.
    */
   anchorReach: 0.5,
+  /** Navigation style: 'original' or 'blender'. */
+  navigationStyle: 'original',
   showGrid: true,
   /**
    * How strongly the reference grid draws, 0 to 1.

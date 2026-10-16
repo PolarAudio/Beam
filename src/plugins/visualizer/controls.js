@@ -2086,6 +2086,14 @@ class Controls {
     if (!this.snapEnabled || !this.groupedInstances || !this.pooledInstances.length) {
       return null;
     }
+    // The anchor positions are read through the selected items' transform
+    // nodes, which are children of the gizmo group. TransformControls has just
+    // moved that group, but its world matrix is still the previous frame's until
+    // it is updated here -- so reading anchors first measures the join from
+    // where the piece used to be. That is the first-snap offset: the release
+    // writes the corrected transform, and the next drag starts from fresh
+    // coordinates and looks right.
+    this.groupedInstances.updateMatrixWorld(true);
     const { mine, theirs } = this.anchorSets();
     if (!mine.length || !theirs.length) return null;
 
@@ -2146,6 +2154,9 @@ class Controls {
     // because the anchors are rebuilt every frame and a pair held from the last
     // `objectChange` no longer refers to the same objects -- it would draw a
     // stale dot at the position the piece was at before the snap moved it.
+    // Markers are anchors too, so they need the current gizmo world matrix for the
+    // same reason `snapAnchors` does.
+    this.groupedInstances.updateMatrixWorld(true);
     const { free, mine, theirs } = this.anchorSets();
     const joining = this.handle && this.handle.dragging
       ? nearestJoin(mine, theirs, { positionTolerance: this.anchorReach })

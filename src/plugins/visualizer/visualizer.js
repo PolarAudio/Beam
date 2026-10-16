@@ -1819,8 +1819,10 @@ class Visualizer {
         this.orbitAbout(this.controls.target.clone(), pixelsX, pixels);
       } else if (this.lookingFrom.mode === DRAG_LOOK) this.lookAround(dx, dy);
       else if (this.lookingFrom.mode === DRAG_ORBIT) this.orbitAbout(orbitPivot, pixelsX, pixels);
-      else if (this.lookingFrom.mode === DRAG_PAN && this.recordFrame) this.panView(pixelsX, pixels);
-      else if (this.lookingFrom.mode === DRAG_PAN) this.shiftLens(pixelsX, pixels);
+      else if (this.lookingFrom.mode === DRAG_PAN
+        && (this.recordFrame || this.navigationStyle === 'blender')) {
+        this.panView(pixelsX, pixels);
+      } else if (this.lookingFrom.mode === DRAG_PAN) this.shiftLens(pixelsX, pixels);
       else this.liftView(pixels);
       event.stopPropagation();
     }, true);
@@ -1922,7 +1924,15 @@ class Visualizer {
       event.preventDefault();
       cancelAnimationFrame(Controls.rafID);
       Controls.flying = false;
-      const pixels = event.deltaY * (event.deltaMode === 1 ? WHEEL_LINE_PX : 1);
+      const unit = event.deltaMode === 1 ? WHEEL_LINE_PX : 1;
+      const pixels = event.deltaY * unit;
+      // Blender-style navigation treats Shift+wheel as a true screen-space
+      // pan: camera and target move together, so the view angle never changes.
+      // Without the modifier the wheel keeps zooming toward the pointer.
+      if (this.navigationStyle === 'blender' && event.shiftKey) {
+        this.panView(event.deltaX * unit, pixels);
+        return;
+      }
       this.wheelToward(event, pixels);
     }, { passive: false });
   }

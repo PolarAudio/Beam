@@ -182,9 +182,9 @@
     >
       <span class="label">Navigation</span>
       <uk-select-input
-        v-model="$show.visualizerHandle.navigationStyle"
+        v-model="navigationIndex"
         class="span"
-        :options="['original', 'blender']"
+        :options="['Original', 'Blender']"
       />
     </div>
     <div
@@ -278,7 +278,7 @@ export default {
         hazeTurbulence: 'How fast the haze moves and churns.',
         grid: 'Show the infinite reference grid.',
         gridSize: 'Metres between grid lines, and the distance the gizmo snaps by. The same on all three axes.',
-      navigation: 'Camera navigation style. Original: right-mouse orbits, middle pans. Blender: middle orbits, Shift+middle pans, Ctrl+middle walks.',
+        navigation: 'Camera navigation style. Original: right-mouse orbits, middle pans. Blender: middle orbits, Shift+middle pans, Ctrl+middle walks.',
         anchorReach: 'How close a truss end has to come to another before the two join. Not the grid: this is how near the connection has to be. A tight reach suits short trusses, where half a metre would put several connections in range at once.',
         gridBrightness: 'How strongly the grid draws. What reads as subtle depends on the background behind it.',
         gridLineWidth: 'In pixels. Below 1 the lines go fainter rather than narrower: a line thinner than a pixel cannot be drawn, only dimmed.',
@@ -319,6 +319,27 @@ export default {
         });
       }
       return entries;
+    },
+    /**
+     * Navigation style, as the index the select works in.
+     *
+     * The select emits option positions, not option values, so the value that
+     * actually reaches the handle has to be chosen here. Without this the
+     * second option wrote `1`, which the visualizer read as an unknown style
+     * and quietly fell back to the original camera.
+     *
+     * @type {Number}
+     */
+    navigationIndex: {
+      get() {
+        return this.$show.visualizerHandle
+          && this.$show.visualizerHandle.navigationStyle === 'blender' ? 1 : 0;
+      },
+      set(index) {
+        if (this.$show.visualizerHandle) {
+          this.$show.visualizerHandle.navigationStyle = index === 1 ? 'blender' : 'original';
+        }
+      },
     },
     /** @type {Array<String>} what the selects display */
     environmentOptions() {
